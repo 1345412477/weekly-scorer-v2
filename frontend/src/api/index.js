@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { emitDataChanged, DataEventType } from '../utils/dataEvents'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -6,6 +7,9 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  paramsSerializer: {
+    indexes: null  // 数组序列化为 report_ids=id1&report_ids=id2 而非 report_ids[]=id1
+  }
 })
 
 const uploadApi = axios.create({
@@ -40,6 +44,46 @@ api.interceptors.request.use(
   error => Promise.reject(error)
 )
 
+// 响应拦截器：自动触发数据变更事件
+function emitEventsForResponse(res) {
+  const url = res.config?.url || ''
+  const method = (res.config?.method || '').toLowerCase()
+
+  // GET 请求不触发变更事件
+  if (method === 'get') return
+
+  // 周报相关操作
+  if (url.includes('/reports')) {
+    emitDataChanged(DataEventType.REPORTS_CHANGED, { source: url, method })
+    emitDataChanged(DataEventType.LEADERBOARD_CHANGED, { source: url, method })
+    clearCacheByUrl('/api/v1/reports')
+    clearCacheByUrl('/api/v1/leaderboard')
+  }
+
+  // 评分配置变更
+  if (url.includes('/config')) {
+    emitDataChanged(DataEventType.CONFIG_CHANGED, { source: url, method })
+    clearCache()
+  }
+
+  // 部门变更
+  if (url.includes('/departments')) {
+    emitDataChanged(DataEventType.DEPARTMENTS_CHANGED, { source: url, method })
+    clearCacheByUrl('/api/v1/departments')
+  }
+
+  // 人员变更
+  if (url.includes('/persons')) {
+    emitDataChanged(DataEventType.PERSONS_CHANGED, { source: url, method })
+    clearCacheByUrl('/api/v1/persons')
+  }
+
+  // 模板变更
+  if (url.includes('/templates')) {
+    clearCacheByUrl('/api/v1/templates')
+  }
+}
+
 api.interceptors.response.use(
   res => {
     // 检查是否是缓存命中
@@ -51,6 +95,10 @@ api.interceptors.response.use(
       const key = getCacheKey(res.config.url, res.config.params)
       cache.set(key, { timestamp: Date.now(), data: res })
     }
+
+    // 非 GET 请求成功后触发数据变更事件
+    emitEventsForResponse(res)
+
     return res
   },
   err => {
@@ -132,7 +180,7 @@ export const reportAPI = {
   get: (id) => api.get(`/reports/${id}`),
   submit: (id) => api.post(`/reports/${id}/submit`),
   delete: (id) => api.delete(`/reports/${id}`),
-  batchDelete: (ids) => api.delete('/reports/batch', { params: { report_ids: ids } }),
+  batchDelete: (ids) => api.delete('/reports/batch', { data: { report_ids: ids } }),
   download: (id) => api.get(`/reports/${id}/download`, { responseType: 'blob' }),
   export: (params) => api.get('/reports/export', { params, responseType: 'blob' }),
   downloadTemplate: () => api.get('/reports/template/download', { responseType: 'blob' }),

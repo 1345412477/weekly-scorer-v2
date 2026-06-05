@@ -343,6 +343,9 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { configAPI, departmentAPI, personAPI, reportAPI, clearCache } from '../api'
+import { useDataRefresh, getConfigEvents } from '../composables/useDataRefresh'
+import { useDataOperation } from '../composables/useDataOperation'
+import { DataEventType, emitDataChanged } from '../utils/dataEvents'
 import Card from 'primevue/card'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
@@ -354,6 +357,8 @@ import Tag from 'primevue/tag'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
+const { execute } = useDataOperation()
+
 const saving = ref(false)
 const testing = ref(false)
 const checkingAi = ref(false)
@@ -434,7 +439,7 @@ async function loadConfig() {
     if (d.dimensions?.length) dimensions.value = d.dimensions
     if (d.grade_thresholds) gradeThresholds.value = d.grade_thresholds
     if (d.prompt_template) promptTemplate.value = d.prompt_template
-  } catch (e) { console.error(e) }
+  } catch (e) { console.error('[Config] 加载配置失败:', e) }
 }
 
 function validateDimensions() {
@@ -486,6 +491,7 @@ async function saveConfig() {
       prompt_template: promptTemplate.value,
     })
     clearCache()
+    emitDataChanged(DataEventType.CONFIG_CHANGED, { source: 'saveConfig' })
     toast.add({ severity: 'success', summary: '配置保存成功', life: 2000 })
   } catch (e) {
     toast.add({ severity: 'error', summary: '保存失败', life: 2000 })
@@ -565,6 +571,10 @@ async function runTest() {
         ai_suggestion: detail.ai_suggestion || '',
       }
       toast.add({ severity: 'success', summary: uploadData.message || '评分完成', life: 3000 })
+      // 测试完成后清理测试数据
+      try {
+        await reportAPI.delete(uploadData.report_id)
+      } catch { /* 清理失败不阻塞流程 */ }
     } else {
       toast.add({ severity: 'warn', summary: uploadData.message || '上传成功但未获取到评分', life: 3000 })
     }
@@ -586,37 +596,47 @@ async function loadDepartments() {
   try {
     const res = await departmentAPI.list()
     departments.value = res.data || []
-  } catch (e) { console.error(e) }
+  } catch (e) { console.error('[Config] 加载部门失败:', e) }
 }
 
 async function loadPersons() {
   try {
     const res = await personAPI.list()
     persons.value = res.data || []
-  } catch (e) { console.error(e) }
+  } catch (e) { console.error('[Config] 加载人员失败:', e) }
+}
+
+async function loadManagementData() {
+  await Promise.all([loadDepartments(), loadPersons()])
 }
 
 async function addDepartment() {
   if (!newDeptName.value.trim()) return
-  try {
-    await departmentAPI.create({ name: newDeptName.value, description: newDeptDesc.value })
+  const { success } = await execute(
+    () => departmentAPI.create({ name: newDeptName.value, description: newDeptDesc.value }),
+    {
+      name: '添加部门',
+      eventTypes: DataEventType.DEPARTMENTS_CHANGED,
+      successMsg: '部门添加成功',
+    }
+  )
+  if (success) {
     newDeptName.value = ''
     newDeptDesc.value = ''
-    toast.add({ severity: 'success', summary: '部门添加成功', life: 2000 })
     loadDepartments()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: e.response?.data?.detail || '添加失败', life: 2000 })
   }
 }
 
 async function deleteDepartment(id) {
-  try {
-    await departmentAPI.delete(id)
-    toast.add({ severity: 'success', summary: '部门已删除', life: 2000 })
-    loadDepartments()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: '删除失败', life: 2000 })
-  }
+  const { success } = await execute(
+    () => departmentAPI.delete(id),
+    {
+      name: '删除部门',
+      eventTypes: DataEventType.DEPARTMENTS_CHANGED,
+      successMsg: '部门已删除',
+    }
+  )
+  if (success) loadDepartments()
 }
 
 function startEditDepartment(dept) {
@@ -636,49 +656,59 @@ async function saveEditDepartment(id) {
     toast.add({ severity: 'warn', summary: '部门名称不能为空', life: 2000 })
     return
   }
-  try {
-    await departmentAPI.update(id, {
+  const { success } = await execute(
+    () => departmentAPI.update(id, {
       name: editingDeptName.value.trim(),
       description: editingDeptDesc.value.trim(),
-    })
-    toast.add({ severity: 'success', summary: '部门更新成功', life: 2000 })
+    }),
+    {
+      name: '更新部门',
+      eventTypes: DataEventType.DEPARTMENTS_CHANGED,
+      successMsg: '部门更新成功',
+    }
+  )
+  if (success) {
     cancelEditDepartment()
     loadDepartments()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: e.response?.data?.detail || '更新失败', life: 2000 })
   }
 }
 
 async function addPerson() {
   if (!newPersonName.value.trim()) return
-  try {
-    const data = {
-      name: newPersonName.value,
-      position: newPersonPosition.value,
+  const data = {
+    name: newPersonName.value,
+    position: newPersonPosition.value,
+  }
+  if (newPersonDept.value) {
+    data.department_id = newPersonDept.value.id
+    data.department_name = newPersonDept.value.name
+  }
+  const { success } = await execute(
+    () => personAPI.create(data),
+    {
+      name: '添加人员',
+      eventTypes: DataEventType.PERSONS_CHANGED,
+      successMsg: '人员添加成功',
     }
-    if (newPersonDept.value) {
-      data.department_id = newPersonDept.value.id
-      data.department_name = newPersonDept.value.name
-    }
-    await personAPI.create(data)
+  )
+  if (success) {
     newPersonName.value = ''
     newPersonDept.value = null
     newPersonPosition.value = ''
-    toast.add({ severity: 'success', summary: '人员添加成功', life: 2000 })
     loadPersons()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: e.response?.data?.detail || '添加失败', life: 2000 })
   }
 }
 
 async function deletePerson(id) {
-  try {
-    await personAPI.delete(id)
-    toast.add({ severity: 'success', summary: '人员已删除', life: 2000 })
-    loadPersons()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: '删除失败', life: 2000 })
-  }
+  const { success } = await execute(
+    () => personAPI.delete(id),
+    {
+      name: '删除人员',
+      eventTypes: DataEventType.PERSONS_CHANGED,
+      successMsg: '人员已删除',
+    }
+  )
+  if (success) loadPersons()
 }
 
 function startEditPerson(person) {
@@ -704,24 +734,28 @@ async function saveEditPerson(id) {
     toast.add({ severity: 'warn', summary: '姓名不能为空', life: 2000 })
     return
   }
-  try {
-    const data = {
-      name: editingPersonName.value.trim(),
-      position: editingPersonPosition.value.trim(),
+  const data = {
+    name: editingPersonName.value.trim(),
+    position: editingPersonPosition.value.trim(),
+  }
+  if (editingPersonDept.value) {
+    data.department_id = editingPersonDept.value.id
+    data.department_name = editingPersonDept.value.name
+  } else {
+    data.department_id = ''
+    data.department_name = ''
+  }
+  const { success } = await execute(
+    () => personAPI.update(id, data),
+    {
+      name: '更新人员',
+      eventTypes: DataEventType.PERSONS_CHANGED,
+      successMsg: '人员信息更新成功',
     }
-    if (editingPersonDept.value) {
-      data.department_id = editingPersonDept.value.id
-      data.department_name = editingPersonDept.value.name
-    } else {
-      data.department_id = ''
-      data.department_name = ''
-    }
-    await personAPI.update(id, data)
-    toast.add({ severity: 'success', summary: '人员信息更新成功', life: 2000 })
+  )
+  if (success) {
     cancelEditPerson()
     loadPersons()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: e.response?.data?.detail || '更新失败', life: 2000 })
   }
 }
 
@@ -739,9 +773,16 @@ async function checkAiStatus() {
 
 onMounted(() => {
   loadConfig()
-  loadDepartments()
-  loadPersons()
+  loadManagementData()
   checkAiStatus()
+})
+
+// 部门人员数据自动监听刷新
+const { loading: managementLoading } = useDataRefresh({
+  loadFn: loadManagementData,
+  watchEvents: getConfigEvents(),
+  debounceMs: 300,
+  autoLoad: false, // 已在 onMounted 中手动加载
 })
 </script>
 

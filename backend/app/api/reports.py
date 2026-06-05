@@ -10,9 +10,20 @@ from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
+from pydantic import BaseModel
 from app.database import get_db
 from app.models.models import WeeklyReport, ReportScore, Person
 from app.schemas.schemas import ReportCreate, ReportResponse
+
+
+class BatchDeleteRequest(BaseModel):
+    report_ids: list[str]
+
+
+class BatchDeleteResponse(BaseModel):
+    message: str
+    deleted_count: int
+    deleted_ids: list[str]
 from app.services.scoring import trigger_scoring
 from app.services.ai_scorer import AIScoringError
 from app.services.document_parser import (
@@ -443,39 +454,13 @@ async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
     )
 
 
-@router.delete("/{report_id}")
-async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
-    """删除周报"""
-    result = await db.execute(
-        select(WeeklyReport).where(WeeklyReport.id == report_id)
-    )
-    report = result.scalar_one_or_none()
-    if not report:
-        raise HTTPException(status_code=404, detail="周报不存在")
-
-    # 删除关联的评分记录
-    scores_r = await db.execute(
-        select(ReportScore).where(ReportScore.report_id == report_id)
-    )
-    score = scores_r.scalar_one_or_none()
-    if score:
-        await db.delete(score)
-
-    # 删除文件
-    if report.file_path and os.path.exists(report.file_path):
-        os.remove(report.file_path)
-
-    await db.delete(report)
-    await db.commit()
-    return {"message": "周报已删除"}
-
-
-@router.delete("/batch")
+@router.delete("/batch", response_model=BatchDeleteResponse)
 async def batch_delete_reports(
-    report_ids: List[str] = Query(None),
+    req: BatchDeleteRequest,
     db: AsyncSession = Depends(get_db),
 ):
     """批量删除周报"""
+    report_ids = req.report_ids
     if not report_ids or len(report_ids) == 0:
         raise HTTPException(status_code=400, detail="请选择要删除的周报")
 
@@ -516,6 +501,33 @@ async def batch_delete_reports(
         "deleted_count": deleted_count,
         "deleted_ids": deleted_ids,
     }
+
+
+@router.delete("/{report_id}")
+async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
+    """删除周报"""
+    result = await db.execute(
+        select(WeeklyReport).where(WeeklyReport.id == report_id)
+    )
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="周报不存在")
+
+    # 删除关联的评分记录
+    scores_r = await db.execute(
+        select(ReportScore).where(ReportScore.report_id == report_id)
+    )
+    score = scores_r.scalar_one_or_none()
+    if score:
+        await db.delete(score)
+
+    # 删除文件
+    if report.file_path and os.path.exists(report.file_path):
+        os.remove(report.file_path)
+
+    await db.delete(report)
+    await db.commit()
+    return {"message": "周报已删除"}
 
 
 @router.get("/export")

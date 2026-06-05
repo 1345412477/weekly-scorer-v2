@@ -78,8 +78,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, nextTick } from 'vue'
+import { ref, nextTick } from 'vue'
 import { leaderboardAPI, reportAPI } from '../api'
+import { useDataRefresh, getDashboardEvents } from '../composables/useDataRefresh'
 import Card from 'primevue/card'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -87,7 +88,6 @@ import Tag from 'primevue/tag'
 import Button from 'primevue/button'
 import * as echarts from 'echarts'
 
-const loading = ref(false)
 const recentReports = ref([])
 const trendChartRef = ref(null)
 const gradeChartRef = ref(null)
@@ -112,28 +112,28 @@ function statusSeverity(s) {
 }
 
 async function loadData() {
-  loading.value = true
-  try {
-    const [statsRes, reportsRes] = await Promise.all([
-      leaderboardAPI.stats(),
-      reportAPI.list({ size: 5 }),
-    ])
-    const d = statsRes.data
-    stats.value[0].value = d.total_reports
-    stats.value[1].value = d.scored_reports
-    stats.value[2].value = d.avg_score
-    stats.value[3].value = d.total_reports // 简化
-    recentReports.value = reportsRes.data.items || []
+  const [statsRes, reportsRes] = await Promise.all([
+    leaderboardAPI.stats(),
+    reportAPI.list({ size: 5 }),
+  ])
+  const d = statsRes.data
+  stats.value[0].value = d.total_reports
+  stats.value[1].value = d.scored_reports
+  stats.value[2].value = d.avg_score
+  stats.value[3].value = d.total_reports // 简化
+  recentReports.value = reportsRes.data.items || []
 
-    await nextTick()
-    renderTrendChart(d.weekly_trend || [])
-    renderGradeChart(d.grade_distribution || {})
-  } catch (e) {
-    console.error(e)
-  } finally {
-    loading.value = false
-  }
+  await nextTick()
+  renderTrendChart(d.weekly_trend || [])
+  renderGradeChart(d.grade_distribution || {})
 }
+
+// 使用自动刷新 composable，监听报表和配置变更事件
+const { loading } = useDataRefresh({
+  loadFn: loadData,
+  watchEvents: getDashboardEvents(),
+  debounceMs: 300,
+})
 
 function renderTrendChart(data) {
   if (!trendChartRef.value || !data.length) return
@@ -204,7 +204,6 @@ function renderGradeChart(data) {
   window.addEventListener('resize', () => chart.resize())
 }
 
-onMounted(loadData)
 </script>
 
 <style scoped>

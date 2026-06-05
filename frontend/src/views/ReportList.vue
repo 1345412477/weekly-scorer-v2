@@ -55,7 +55,7 @@
 
     <!-- 表格区域 -->
     <div class="list-container">
-      <DataTable :value="reports" :loading="loading" :paginator="true" :rows="pageSize"
+      <DataTable :key="tableRefreshKey" :value="reports" :loading="loading || deleting" :paginator="true" :rows="pageSize"
           :totalRecords="total" @page="onPage" :lazy="true"
           paginatorPosition="bottom"
           class="dark-table" dataKey="id"
@@ -181,8 +181,11 @@
 </template>
 
 <script setup>
-import { ref, onMounted, computed } from 'vue'
+import { ref, computed } from 'vue'
 import { reportAPI } from '../api'
+import { useDataRefresh, getReportEvents } from '../composables/useDataRefresh'
+import { useDataOperation } from '../composables/useDataOperation'
+import { DataEventType } from '../utils/dataEvents'
 import { formatBeijingTime } from '../utils/timeUtil'
 import Card from 'primevue/card'
 import DataTable from 'primevue/datatable'
@@ -197,8 +200,10 @@ import Dialog from 'primevue/dialog'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
-const loading = ref(false)
+const { operationInProgress: deleting, execute } = useDataOperation()
+
 const exportLoading = ref(false)
+const tableRefreshKey = ref(0)
 const reports = ref([])
 const total = ref(0)
 const page = ref(1)
@@ -255,43 +260,32 @@ function getGradeName(g) {
 }
 
 async function loadReports() {
-  loading.value = true
-  try {
-    console.log('[ReportList] 开始加载数据, page:', page.value, 'filters:', filters.value)
-
-    const params = {
-      page: page.value,
-      size: pageSize.value
-    }
-
-    if (filters.value.author_name) {
-      params.author_name = filters.value.author_name
-    }
-    if (filters.value.department) {
-      params.department = filters.value.department
-    }
-    if (filters.value.is_catch_up) {
-      params.is_catch_up = filters.value.is_catch_up
-    }
-    if (filters.value.sort_by) {
-      params.sort_by = filters.value.sort_by
-      params.sort_order = filters.value.sort_order
-    }
-
-    const res = await reportAPI.list(params)
-    console.log('[ReportList] API 响应:', res.data)
-    reports.value = res.data.items || []
-    total.value = res.data.total || 0
-    console.log('[ReportList] 数据加载完成, 条数:', reports.value.length, '总数:', total.value)
-    
-    // 重置选择状态
-    selectedReports.value = []
-  } catch (e) {
-    console.error('[ReportList] 加载失败:', e)
-    toast.add({ severity: 'error', summary: '加载失败', detail: e.userMessage || '请稍后重试', life: 3000 })
-  } finally {
-    loading.value = false
+  const params = {
+    page: page.value,
+    size: pageSize.value
   }
+
+  if (filters.value.author_name) {
+    params.author_name = filters.value.author_name
+  }
+  if (filters.value.department) {
+    params.department = filters.value.department
+  }
+  if (filters.value.is_catch_up) {
+    params.is_catch_up = filters.value.is_catch_up
+  }
+  if (filters.value.sort_by) {
+    params.sort_by = filters.value.sort_by
+    params.sort_order = filters.value.sort_order
+  }
+
+  const res = await reportAPI.list(params)
+  reports.value = res.data.items || []
+  total.value = res.data.total || 0
+  
+  // 重置选择状态并强制刷新表格
+  selectedReports.value = []
+  tableRefreshKey.value++
 }
 
 function onPage(e) {
@@ -385,14 +379,20 @@ async function executeDelete() {
   const reportId = deleteDialog.value.report?.id
   if (!reportId) return
 
-  try {
-    await reportAPI.delete(reportId)
-    toast.add({ severity: 'success', summary: '删除成功', life: 2000 })
-    deleteDialog.value.visible = false
-    loadReports()
-  } catch (e) {
-    console.error('[ReportList] 删除失败:', e)
-    toast.add({ severity: 'error', summary: '删除失败', detail: e.userMessage || '请稍后重试', life: 3000 })
+  deleteDialog.value.visible = false
+
+  const { success } = await execute(
+    () => reportAPI.delete(reportId),
+    {
+      name: '删除周报',
+      eventTypes: [DataEventType.REPORTS_CHANGED, DataEventType.LEADERBOARD_CHANGED],
+      successMsg: '删除成功',
+      errorMsg: '删除失败',
+    }
+  )
+
+  if (success) {
+    await loadReports()
   }
 }
 
@@ -407,19 +407,30 @@ async function executeBatchDelete() {
     return
   }
 
-  try {
-    const res = await reportAPI.batchDelete(reportIds)
-    toast.add({ severity: 'success', summary: `${res.data.deleted_count}条记录已删除`, life: 2000 })
-    batchDeleteDialog.value.visible = false
+  batchDeleteDialog.value.visible = false
+
+  const { success, data } = await execute(
+    () => reportAPI.batchDelete(reportIds),
+    {
+      name: '批量删除',
+      eventTypes: [DataEventType.REPORTS_CHANGED, DataEventType.LEADERBOARD_CHANGED],
+      successMsg: `${data?.data?.deleted_count || reportIds.length}条记录已删除`,
+      errorMsg: '批量删除失败',
+    }
+  )
+
+  if (success) {
     selectedReports.value = []
-    loadReports()
-  } catch (e) {
-    console.error('[ReportList] 批量删除失败:', e)
-    toast.add({ severity: 'error', summary: '批量删除失败', detail: e.userMessage || '请稍后重试', life: 3000 })
+    await loadReports()
   }
 }
 
-onMounted(loadReports)
+// 使用自动刷新 composable（autoLoad 默认 true，会在挂载时自动加载）
+const { loading } = useDataRefresh({
+  loadFn: loadReports,
+  watchEvents: getReportEvents(),
+  debounceMs: 300,
+})
 </script>
 
 <style scoped>

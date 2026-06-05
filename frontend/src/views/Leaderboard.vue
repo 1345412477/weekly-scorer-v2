@@ -129,8 +129,9 @@
 </template>
 
 <script setup>
-import { ref, onMounted, watch, nextTick } from 'vue'
+import { ref, watch, nextTick } from 'vue'
 import { leaderboardAPI } from '../api'
+import { useDataRefresh, getLeaderboardEvents } from '../composables/useDataRefresh'
 import Card from 'primevue/card'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
@@ -140,7 +141,6 @@ import Avatar from 'primevue/avatar'
 import Tag from 'primevue/tag'
 import * as echarts from 'echarts'
 
-const loading = ref(false)
 const rankings = ref([])
 const totalReports = ref(0)
 const period = ref('week')
@@ -179,37 +179,26 @@ function rowPt(index) {
 }
 
 async function loadLeaderboard() {
-  loading.value = true
-  try {
-    console.log('[Leaderboard] 开始加载数据, period:', period.value, 'sort:', sortBy.value)
-    const res = await leaderboardAPI.get({
-      period: period.value,
-      sort_by: sortBy.value,
-    })
-    console.log('[Leaderboard] API 响应:', res.data)
-    rankings.value = res.data.rankings || []
-    totalReports.value = res.data.total_reports || 0
-    console.log('[Leaderboard] 排行数据条数:', rankings.value.length, '总记录:', totalReports.value)
-    if (rankings.value.length === 0) {
-      console.log('[Leaderboard] 无数据状态 - emptyMessage 应生效')
-    }
+  const res = await leaderboardAPI.get({
+    period: period.value,
+    sort_by: sortBy.value,
+  })
+  rankings.value = res.data.rankings || []
+  totalReports.value = res.data.total_reports || 0
 
-    await nextTick()
-    const emptyRow = document.querySelector('.table-card .empty-state')
-    console.log('[Leaderboard] 空状态DOM元素:', emptyRow ? '已渲染' : '未渲染')
-    if (emptyRow) {
-      console.log('[Leaderboard] 空状态高度:', emptyRow.offsetHeight, 'px')
-    }
-    const tableEl = document.querySelector('.table-card .p-datatable')
-    console.log('[Leaderboard] 表格容器高度:', tableEl?.offsetHeight, 'px')
-    renderBarChart()
-    renderRadarChart()
-  } catch (e) {
-    console.error('[Leaderboard] 加载失败:', e)
-  } finally {
-    loading.value = false
-  }
+  await nextTick()
+  renderBarChart()
+  renderRadarChart()
 }
+
+// 使用自动刷新 composable，监听排行榜和报表变更事件
+const { loading } = useDataRefresh({
+  loadFn: loadLeaderboard,
+  watchEvents: getLeaderboardEvents(),
+  debounceMs: 300,
+})
+
+watch([period, sortBy], () => { loadLeaderboard() })
 
 function renderBarChart() {
   if (!barChartRef.value || !rankings.value.length) return
@@ -291,9 +280,6 @@ function renderRadarChart() {
   })
   window.addEventListener('resize', () => chart.resize())
 }
-
-onMounted(loadLeaderboard)
-watch([period, sortBy], loadLeaderboard)
 </script>
 
 <style scoped>

@@ -142,6 +142,7 @@
 <script setup>
 import { ref, computed, onMounted } from 'vue'
 import { reportAPI, personAPI, departmentAPI } from '../api'
+import { emitDataChanged, DataEventType } from '../utils/dataEvents'
 import Card from 'primevue/card'
 import Button from 'primevue/button'
 import Dropdown from 'primevue/dropdown'
@@ -295,6 +296,12 @@ async function doUpload(weekStart, weekEnd) {
     } else {
       toast.add({ severity: 'success', summary: '上传成功', life: 3000 })
     }
+
+    // 上传成功后通知其他组件刷新数据
+    if (res.data.report_type !== 'future') {
+      emitDataChanged(DataEventType.REPORTS_CHANGED, { source: 'upload' })
+      emitDataChanged(DataEventType.LEADERBOARD_CHANGED, { source: 'upload' })
+    }
   } catch (e) {
     const msg = e.response?.data?.detail || '上传失败'
     uploadResult.value = { message: msg, needs_confirmation: false }
@@ -326,7 +333,7 @@ async function loadData() {
     persons.value = personsRes.data || []
     departments.value = deptsRes.data || []
   } catch (e) {
-    console.error(e)
+    console.error('[WriteReport] 加载失败:', e)
   }
 }
 
