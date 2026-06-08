@@ -2,9 +2,11 @@
 
 基于 AI 的智能周报评估平台，通过自动化评分机制提升团队周报质量，为管理者提供数据化的团队工作表现洞察。
 
+**GitHub 仓库**: [https://github.com/1345412477/weekly-scorer-v2](https://github.com/1345412477/weekly-scorer-v2) (私人仓库)
+
 ## 📋 产品文档
 
-完整的产品需求文档（PRD）请查看：[PRD.md](./PRD.md)
+完整的产品需求文档（PRD）请查看：[PRD-精简版.md](./PRD-精简版.md)
 
 ## ✨ 核心功能
 
