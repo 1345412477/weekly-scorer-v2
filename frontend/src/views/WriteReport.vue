@@ -293,14 +293,10 @@ async function doUpload(weekStart, weekEnd) {
       toast.add({ severity: 'error', summary: '无法提交未来时间的周报', life: 5000 })
     } else if (res.data.report_type === 'catch_up') {
       toast.add({ severity: 'warn', summary: `补周报上传成功（${res.data.week_diff}周前）`, life: 3000 })
+      emitDataChanged(DataEventType.REPORTS_CHANGED, { source: 'upload' })
     } else {
       toast.add({ severity: 'success', summary: '上传成功', life: 3000 })
-    }
-
-    // 上传成功后通知其他组件刷新数据
-    if (res.data.report_type !== 'future') {
       emitDataChanged(DataEventType.REPORTS_CHANGED, { source: 'upload' })
-      emitDataChanged(DataEventType.LEADERBOARD_CHANGED, { source: 'upload' })
     }
   } catch (e) {
     const msg = e.response?.data?.detail || '上传失败'
@@ -333,7 +329,7 @@ async function loadData() {
     persons.value = personsRes.data || []
     departments.value = deptsRes.data || []
   } catch (e) {
-    console.error('[WriteReport] 加载失败:', e)
+    console.error(e)
   }
 }
 

@@ -180,7 +180,7 @@ function renderTrendChart(data) {
 function renderGradeChart(data) {
   if (!gradeChartRef.value || !Object.keys(data).length) return
   const chart = echarts.init(gradeChartRef.value)
-  const colors = { you: '#D97706', liang: '#16A34A', yiban: '#2563EB', cha: '#DC2626' }
+  const colors = { '优': '#22C55E', '良': '#3B82F6', '一般': '#F59E0B', '差': '#EF4444' }
   chart.setOption({
     backgroundColor: 'transparent',
     series: [{

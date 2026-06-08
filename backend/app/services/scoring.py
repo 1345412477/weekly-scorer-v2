@@ -1,5 +1,5 @@
 """评分调度服务"""
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 import time
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,7 +66,7 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
 
         # 更新周报状态
         report.status = "scored"
-        report.score_time = datetime.utcnow()
+        report.score_time = datetime.now(timezone(timedelta(hours=8)))
 
         await db.commit()
 

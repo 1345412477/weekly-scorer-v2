@@ -2,42 +2,22 @@
 import os
 import uuid
 import shutil
-from io import BytesIO
-from datetime import date, datetime, timedelta
-from typing import Optional, List
+from datetime import date, datetime, timedelta, timezone
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
-from pydantic import BaseModel
 from app.database import get_db
 from app.models.models import WeeklyReport, ReportScore, Person
 from app.schemas.schemas import ReportCreate, ReportResponse
-
-
-class BatchDeleteRequest(BaseModel):
-    report_ids: list[str]
-
-
-class BatchDeleteResponse(BaseModel):
-    message: str
-    deleted_count: int
-    deleted_ids: list[str]
 from app.services.scoring import trigger_scoring
 from app.services.ai_scorer import AIScoringError
 from app.services.document_parser import (
     parse_report, extract_week_dates, get_template_path,
     classify_report_week, get_current_week, SUPPORTED_EXTENSIONS,
 )
-
-try:
-    from openpyxl import Workbook
-    from openpyxl.styles import Font, Alignment, PatternFill, Border, Side
-    from openpyxl.utils import get_column_letter
-    OPENPYXL_AVAILABLE = True
-except ImportError:
-    OPENPYXL_AVAILABLE = False
 
 router = APIRouter(prefix="/api/v1/reports", tags=["周报管理"])
 
@@ -173,7 +153,7 @@ async def upload_report(
             status="submitted",
             report_type=report_type,
             week_diff=week_diff,
-            submit_time=datetime.utcnow(),
+            submit_time=datetime.now(timezone(timedelta(hours=8))),
         )
         db.add(report)
         await db.commit()
@@ -257,58 +237,46 @@ async def list_reports(
     page: int = Query(1, ge=1),
     size: int = Query(20, ge=1, le=100),
     status: Optional[str] = None,
-    author_name: Optional[str] = None,
-    department: Optional[str] = None,
-    is_catch_up: Optional[str] = None,
-    sort_by: Optional[str] = Query(None, description="排序字段：week_num, submit_time, total_score"),
-    sort_order: Optional[str] = Query("desc", description="排序方向：asc, desc"),
+    author_name: Optional[str] = Query(None),
+    department: Optional[str] = Query(None),
+    is_catch_up: Optional[str] = Query(None),
+    sort_by: Optional[str] = Query(None),
+    sort_order: Optional[str] = Query("desc"),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取周报列表，支持筛选和排序"""
+    """获取周报列表"""
     query = select(WeeklyReport)
     count_query = select(func.count()).select_from(WeeklyReport)
 
-    # 状态筛选
     if status:
         statuses = status.split(",")
         query = query.where(WeeklyReport.status.in_(statuses))
         count_query = count_query.where(WeeklyReport.status.in_(statuses))
 
-    # 提交人筛选
     if author_name:
-        query = query.where(WeeklyReport.author_name.ilike(f"%{author_name}%"))
-        count_query = count_query.where(WeeklyReport.author_name.ilike(f"%{author_name}%"))
-
-    # 部门筛选
+        query = query.where(WeeklyReport.author_name.contains(author_name))
+        count_query = count_query.where(WeeklyReport.author_name.contains(author_name))
     if department:
-        query = query.where(WeeklyReport.department.ilike(f"%{department}%"))
-        count_query = count_query.where(WeeklyReport.department.ilike(f"%{department}%"))
-
-    # 是否补周报筛选
-    if is_catch_up:
-        if is_catch_up == "yes":
-            query = query.where(WeeklyReport.report_type == "catch_up")
-            count_query = count_query.where(WeeklyReport.report_type == "catch_up")
-        elif is_catch_up == "no":
-            query = query.where(WeeklyReport.report_type != "catch_up")
-            count_query = count_query.where(WeeklyReport.report_type != "catch_up")
+        query = query.where(WeeklyReport.department.contains(department))
+        count_query = count_query.where(WeeklyReport.department.contains(department))
+    if is_catch_up == "yes":
+        query = query.where(WeeklyReport.report_type == "catch_up")
+        count_query = count_query.where(WeeklyReport.report_type == "catch_up")
+    elif is_catch_up == "no":
+        query = query.where(WeeklyReport.report_type == "normal")
+        count_query = count_query.where(WeeklyReport.report_type == "normal")
 
     # 排序
-    sort_column = WeeklyReport.created_at  # 默认排序
-    if sort_by == "week_num":
-        sort_column = WeeklyReport.week_start
+    sort_col = WeeklyReport.created_at
+    if sort_by == "week":
+        sort_col = WeeklyReport.week_start
     elif sort_by == "submit_time":
-        sort_column = WeeklyReport.submit_time
-    elif sort_by == "total_score":
-        # 需要关联 ReportScore 表进行排序
-        query = query.outerjoin(ReportScore, WeeklyReport.id == ReportScore.report_id)
-        count_query = count_query.outerjoin(ReportScore, WeeklyReport.id == ReportScore.report_id)
-        sort_column = ReportScore.total_score
+        sort_col = WeeklyReport.submit_time
 
     if sort_order == "asc":
-        query = query.order_by(sort_column.asc())
+        query = query.order_by(sort_col.asc())
     else:
-        query = query.order_by(sort_column.desc())
+        query = query.order_by(desc(sort_col))
 
     total_r = await db.execute(count_query)
     total = total_r.scalar() or 0
@@ -328,6 +296,50 @@ async def list_reports(
     items = [build_report_dict(r, scores_map.get(r.id)) for r in reports]
 
     return {"items": items, "total": total, "page": page, "size": size}
+
+
+@router.post("/export")
+async def export_reports(report_ids: list[str], db: AsyncSession = Depends(get_db)):
+    """批量导出周报原始文件为 ZIP"""
+    import zipfile
+    from io import BytesIO
+    import urllib.parse
+
+    result = await db.execute(
+        select(WeeklyReport).where(WeeklyReport.id.in_(report_ids))
+    )
+    reports = result.scalars().all()
+
+    if not reports:
+        raise HTTPException(status_code=404, detail="未找到所选周报")
+
+    zip_buffer = BytesIO()
+    with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+        added = set()
+        for r in reports:
+            if r.file_path and os.path.exists(r.file_path):
+                # 避免重复文件
+                base_name = r.original_filename or f"{r.author_name}_周报.xlsx"
+                name = base_name
+                counter = 1
+                while name in added:
+                    stem, ext = os.path.splitext(base_name)
+                    name = f"{stem}_{counter}{ext}"
+                    counter += 1
+                added.add(name)
+                zf.write(r.file_path, name)
+
+    if not added:
+        raise HTTPException(status_code=404, detail="所选周报没有可下载的文件")
+
+    zip_buffer.seek(0)
+    filename = f"周报_{datetime.now().strftime('%Y%m%d')}.zip"
+    encoded = urllib.parse.quote(filename)
+    return StreamingResponse(
+        zip_buffer,
+        media_type="application/zip",
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{encoded}"},
+    )
 
 
 @router.get("/{report_id}")
@@ -392,7 +404,7 @@ async def submit_report(report_id: str, db: AsyncSession = Depends(get_db)):
         raise HTTPException(status_code=400, detail="周报已提交，不可重复提交")
 
     report.status = "submitted"
-    report.submit_time = datetime.utcnow()
+    report.submit_time = datetime.now(timezone(timedelta(hours=8)))
     await db.commit()
 
     try:
@@ -422,87 +434,6 @@ async def submit_report(report_id: str, db: AsyncSession = Depends(get_db)):
         }
 
 
-@router.get("/{report_id}/download")
-async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
-    """下载周报文件"""
-    result = await db.execute(
-        select(WeeklyReport).where(WeeklyReport.id == report_id)
-    )
-    report = result.scalar_one_or_none()
-    if not report:
-        raise HTTPException(status_code=404, detail="周报不存在")
-
-    if not report.file_path or not os.path.exists(report.file_path):
-        raise HTTPException(status_code=404, detail="周报文件不存在或已被删除")
-
-    filename = report.original_filename or f"周报_{report_id}.xlsx"
-
-    # 根据文件扩展名确定 MIME 类型
-    file_ext = os.path.splitext(filename)[1].lower()
-    mime_types = {
-        '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        '.xls': 'application/vnd.ms-excel',
-        '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-        '.pdf': 'application/pdf',
-    }
-    media_type = mime_types.get(file_ext, 'application/octet-stream')
-
-    return FileResponse(
-        path=report.file_path,
-        filename=filename,
-        media_type=media_type,
-    )
-
-
-@router.delete("/batch", response_model=BatchDeleteResponse)
-async def batch_delete_reports(
-    req: BatchDeleteRequest,
-    db: AsyncSession = Depends(get_db),
-):
-    """批量删除周报"""
-    report_ids = req.report_ids
-    if not report_ids or len(report_ids) == 0:
-        raise HTTPException(status_code=400, detail="请选择要删除的周报")
-
-    if len(report_ids) > 100:
-        raise HTTPException(status_code=400, detail="单次最多删除100条记录")
-
-    result = await db.execute(
-        select(WeeklyReport).where(WeeklyReport.id.in_(report_ids))
-    )
-    reports = result.scalars().all()
-
-    deleted_count = 0
-    deleted_ids = []
-    for report in reports:
-        # 删除关联的评分记录
-        scores_r = await db.execute(
-            select(ReportScore).where(ReportScore.report_id == report.id)
-        )
-        score = scores_r.scalar_one_or_none()
-        if score:
-            await db.delete(score)
-
-        # 删除文件
-        if report.file_path and os.path.exists(report.file_path):
-            os.remove(report.file_path)
-
-        await db.delete(report)
-        deleted_count += 1
-        deleted_ids.append(report.id)
-
-    await db.commit()
-
-    # 记录操作日志（实际项目中应存储到数据库）
-    print(f"[批量删除] 操作时间: {datetime.utcnow()}, 删除数量: {deleted_count}, 删除ID: {deleted_ids}")
-
-    return {
-        "message": f"成功删除{deleted_count}条周报",
-        "deleted_count": deleted_count,
-        "deleted_ids": deleted_ids,
-    }
-
-
 @router.delete("/{report_id}")
 async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
     """删除周报"""
@@ -513,7 +444,6 @@ async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="周报不存在")
 
-    # 删除关联的评分记录
     scores_r = await db.execute(
         select(ReportScore).where(ReportScore.report_id == report_id)
     )
@@ -521,131 +451,48 @@ async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
     if score:
         await db.delete(score)
 
-    # 删除文件
-    if report.file_path and os.path.exists(report.file_path):
-        os.remove(report.file_path)
-
     await db.delete(report)
     await db.commit()
     return {"message": "周报已删除"}
 
 
-@router.get("/export")
-async def export_reports(
-    status: Optional[str] = None,
-    author_name: Optional[str] = None,
-    department: Optional[str] = None,
-    is_catch_up: Optional[str] = None,
-    db: AsyncSession = Depends(get_db),
-):
-    """导出周报列表为Excel文件"""
-    if not OPENPYXL_AVAILABLE:
-        raise HTTPException(status_code=500, detail="导出功能不可用，缺少openpyxl依赖")
-
-    query = select(WeeklyReport)
-
-    # 状态筛选
-    if status:
-        statuses = status.split(",")
-        query = query.where(WeeklyReport.status.in_(statuses))
-
-    # 提交人筛选
-    if author_name:
-        query = query.where(WeeklyReport.author_name.ilike(f"%{author_name}%"))
-
-    # 部门筛选
-    if department:
-        query = query.where(WeeklyReport.department.ilike(f"%{department}%"))
-
-    # 是否补周报筛选
-    if is_catch_up:
-        if is_catch_up == "yes":
-            query = query.where(WeeklyReport.report_type == "catch_up")
-        elif is_catch_up == "no":
-            query = query.where(WeeklyReport.report_type != "catch_up")
-
-    query = query.order_by(desc(WeeklyReport.created_at))
-    query = query.limit(1000)  # 限制导出数量
-
-    result = await db.execute(query)
+@router.post("/batch-delete")
+async def batch_delete_reports(report_ids: list[str], db: AsyncSession = Depends(get_db)):
+    """批量删除周报"""
+    result = await db.execute(
+        select(WeeklyReport).where(WeeklyReport.id.in_(report_ids))
+    )
     reports = result.scalars().all()
 
-    report_ids = [r.id for r in reports]
-    scores_map = {}
-    if report_ids:
-        scores_r = await db.execute(
-            select(ReportScore).where(ReportScore.report_id.in_(report_ids))
-        )
-        for s in scores_r.scalars().all():
-            scores_map[s.report_id] = s
+    # 删除关联的评分记录
+    scores_result = await db.execute(
+        select(ReportScore).where(ReportScore.report_id.in_(report_ids))
+    )
+    for score in scores_result.scalars().all():
+        await db.delete(score)
 
-    # 创建Excel文件
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "周报列表"
-
-    # 设置表头
-    headers = [
-        "序号", "周次", "提交人", "部门", "评分", "等级",
-        "是否补周报", "提交时间", "状态", "原始文件名"
-    ]
-
-    # 设置表头样式
-    header_font = Font(bold=True, color="FFFFFF")
-    header_fill = PatternFill(start_color="4B5563", end_color="4B5563", fill_type="solid")
-    header_alignment = Alignment(horizontal="center", vertical="center")
-    thin_border = Border(left=Side(style='thin'), 
-                        right=Side(style='thin'), 
-                        top=Side(style='thin'), 
-                        bottom=Side(style='thin'))
-
-    for col_num, header in enumerate(headers, 1):
-        cell = ws.cell(row=1, column=col_num, value=header)
-        cell.font = header_font
-        cell.fill = header_fill
-        cell.alignment = header_alignment
-        cell.border = thin_border
-
-    # 填充数据
-    row_num = 2
     for report in reports:
-        scores = scores_map.get(report.id)
-        ws.cell(row=row_num, column=1, value=row_num - 1).border = thin_border
-        ws.cell(row=row_num, column=2, value=f"第{iso_week_number(report.week_start)}周").border = thin_border
-        ws.cell(row=row_num, column=3, value=report.author_name).border = thin_border
-        ws.cell(row=row_num, column=4, value=report.department or "-").border = thin_border
-        ws.cell(row=row_num, column=5, value=float(scores.total_score) if scores else "-").border = thin_border
-        ws.cell(row=row_num, column=6, value=scores.grade if scores else "-").border = thin_border
-        ws.cell(row=row_num, column=7, value="是" if report.report_type == "catch_up" else "否").border = thin_border
-        
-        # 格式化时间为北京时间
-        submit_time = ""
-        if report.submit_time:
-            submit_time = report.submit_time.strftime("%Y-%m-%d %H:%M:%S")
-        ws.cell(row=row_num, column=8, value=submit_time).border = thin_border
-        
-        ws.cell(row=row_num, column=9, value={"draft": "草稿", "submitted": "已提交", "scored": "已评分"}.get(report.status, report.status)).border = thin_border
-        ws.cell(row=row_num, column=10, value=report.original_filename or "-").border = thin_border
-        row_num += 1
+        await db.delete(report)
 
-    # 设置列宽
-    column_widths = [8, 12, 15, 20, 8, 8, 12, 22, 12, 30]
-    for i, width in enumerate(column_widths, 1):
-        ws.column_dimensions[get_column_letter(i)].width = width
+    await db.commit()
+    return {"message": "批量删除成功", "deleted_count": len(reports)}
 
-    # 保存到内存
-    output = BytesIO()
-    wb.save(output)
-    output.seek(0)
 
-    # 生成文件名
-    filename = f"周报列表_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+@router.get("/{report_id}/download")
+async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
+    """下载周报原始文件"""
+    result = await db.execute(
+        select(WeeklyReport).where(WeeklyReport.id == report_id)
+    )
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="周报不存在")
 
-    return StreamingResponse(
-        output,
-        media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        headers={
-            "Content-Disposition": f"attachment; filename={filename}",
-            "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        }
+    if not report.file_path or not os.path.exists(report.file_path):
+        raise HTTPException(status_code=404, detail="文件不存在，可能已被清理")
+
+    return FileResponse(
+        report.file_path,
+        filename=report.original_filename or f"周报_{report.author_name}.xlsx",
+        media_type="application/octet-stream",
     )

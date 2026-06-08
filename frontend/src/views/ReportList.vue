@@ -56,7 +56,7 @@
     <!-- 表格区域 -->
     <div class="list-container">
       <DataTable :key="tableRefreshKey" :value="reports" :loading="loading || deleting" :paginator="true" :rows="pageSize"
-          :totalRecords="total" @page="onPage" :lazy="true"
+          :totalRecords="total" @page="onPage" :first="(page - 1) * pageSize" :lazy="true"
           paginatorPosition="bottom"
           class="dark-table" dataKey="id"
           responsiveLayout="scroll"
@@ -110,7 +110,7 @@
           <Column header="是否补周报" style="min-width:100px">
             <template #body="{ data }">
               <Tag :value="data.report_type === 'catch_up' ? '是' : '否'"
-                :severity="data.report_type === 'catch_up' ? 'warning' : 'success'" />
+                :severity="data.report_type === 'catch_up' ? 'warn' : 'success'" />
             </template>
           </Column>
 
@@ -228,9 +228,8 @@ const catchUpOptions = [
 
 const sortOptions = [
   { label: '默认排序', value: null },
-  { label: '周次', value: 'week_num' },
-  { label: '提交时间', value: 'submit_time' },
-  { label: '评分', value: 'total_score' }
+  { label: '周次', value: 'week' },
+  { label: '提交时间', value: 'submit_time' }
 ]
 
 const orderOptions = [
@@ -333,28 +332,33 @@ async function downloadReport(report) {
 }
 
 async function exportReports() {
+  if (!selectedReports.value || selectedReports.value.length === 0) {
+    toast.add({ severity: 'warn', summary: '请先选择要导出的周报', life: 2000 })
+    return
+  }
+
   exportLoading.value = true
   try {
-    const params = {}
-    
-    if (filters.value.author_name) {
-      params.author_name = filters.value.author_name
-    }
-    if (filters.value.department) {
-      params.department = filters.value.department
-    }
-    if (filters.value.is_catch_up) {
-      params.is_catch_up = filters.value.is_catch_up
-    }
-
-    const res = await reportAPI.export(params)
+    const reportIds = selectedReports.value.map(r => r.id)
+    const res = await reportAPI.export(reportIds)
     
     const url = window.URL.createObjectURL(new Blob([res.data]))
     const link = document.createElement('a')
     link.href = url
     
-    const filename = res.headers['content-disposition']?.split('filename=')[1] || `周报列表_${new Date().getTime()}.xlsx`
-    link.setAttribute('download', decodeURIComponent(filename))
+    let filename = null
+    const disposition = res.headers['content-disposition']
+    if (disposition) {
+      const match = disposition.match(/filename\*=UTF-8''(.+)/)
+      if (match) {
+        filename = decodeURIComponent(match[1])
+      } else {
+        const fallback = disposition.split('filename=')[1]
+        if (fallback) filename = fallback.replace(/"/g, '')
+      }
+    }
+    if (!filename) filename = `周报_${new Date().getTime()}.zip`
+    link.setAttribute('download', filename)
     
     document.body.appendChild(link)
     link.click()
@@ -409,12 +413,12 @@ async function executeBatchDelete() {
 
   batchDeleteDialog.value.visible = false
 
-  const { success, data } = await execute(
+  const { success } = await execute(
     () => reportAPI.batchDelete(reportIds),
     {
       name: '批量删除',
       eventTypes: [DataEventType.REPORTS_CHANGED, DataEventType.LEADERBOARD_CHANGED],
-      successMsg: `${data?.data?.deleted_count || reportIds.length}条记录已删除`,
+      successMsg: '批量删除成功',
       errorMsg: '批量删除失败',
     }
   )
