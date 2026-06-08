@@ -95,7 +95,10 @@ weekly-scorer-v2/
 │   │   └── assets/          # 全局样式
 │   ├── package.json
 │   └── vite.config.js
-├── PRD.md                    # 产品需求文档
+├── .vscode/                 # VS Code 配置
+│   └── mcp.json             # MCP 服务器配置
+├── .gitignore               # Git 忽略文件
+├── PRD-精简版.md            # 产品需求文档
 └── README.md                 # 项目说明文档
 ```
 
