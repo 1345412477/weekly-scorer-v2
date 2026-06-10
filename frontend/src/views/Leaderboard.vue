@@ -1,9 +1,18 @@
 <template>
-  <div class="leaderboard page-content">
+  <div class="leaderboard page-content" :class="{ 'public-page': isPublicMode, 'embedded-mode': embedded }">
+    <div v-if="isPublicMode && !embedded" class="public-nav">
+      <router-link to="/" class="brand">周报评分</router-link>
+      <div class="public-links">
+        <router-link to="/write">提交周报</router-link>
+        <router-link to="/leaderboard">排行榜</router-link>
+        <router-link to="/admin/login">管理员登录</router-link>
+      </div>
+    </div>
     <div class="page-header">
       <div>
-        <h1>排行榜</h1>
-        <p class="page-subtitle">周报评分排名与可视化分析</p>
+        <span v-if="embedded" class="embedded-kicker">排行榜分析</span>
+        <h1>{{ embedded ? '评分结果' : '排行榜' }}</h1>
+        <p class="page-subtitle">{{ embedded ? '按周期查看团队评分排名与趋势。' : '周报评分排名与可视化分析' }}</p>
       </div>
     </div>
 
@@ -109,18 +118,19 @@
         </Card>
 
         <!-- 评分柱状图 -->
-        <Card class="side-card" style="margin-top:16px">
-          <template #title>📊 评分分布</template>
+        <Card class="side-card chart-card" :class="{ 'empty-chart-card': !rankings.length }" style="margin-top:16px">
+          <template #title>评分分布</template>
           <template #content>
-            <div ref="barChartRef" class="chart-container"></div>
+            <div v-if="rankings.length" ref="barChartRef" class="chart-container"></div>
+            <div v-else class="chart-empty-hint">暂无评分分布数据</div>
           </template>
         </Card>
 
-        <!-- 雷达图 -->
-        <Card class="side-card" style="margin-top:16px">
+        <Card class="side-card chart-card" :class="{ 'empty-chart-card': !rankings.length }" style="margin-top:16px">
           <template #title>🎯 维度雷达图</template>
           <template #content>
-            <div ref="radarChartRef" class="chart-container"></div>
+            <div v-if="rankings.length" ref="radarChartRef" class="chart-container"></div>
+            <div v-else class="chart-empty-hint">暂无维度分析数据</div>
           </template>
         </Card>
       </div>
@@ -129,7 +139,8 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick } from 'vue'
+import { ref, watch, nextTick, computed } from 'vue'
+import { useRoute } from 'vue-router'
 import { leaderboardAPI } from '../api'
 import { useDataRefresh, getLeaderboardEvents } from '../composables/useDataRefresh'
 import Card from 'primevue/card'
@@ -140,13 +151,22 @@ import Dropdown from 'primevue/dropdown'
 import Avatar from 'primevue/avatar'
 import Tag from 'primevue/tag'
 import * as echarts from 'echarts'
+import { useEChart } from '../composables/useEChart'
 
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+})
+
+const route = useRoute()
+const isPublicMode = computed(() => props.embedded || !route.path.startsWith('/admin'))
 const rankings = ref([])
 const totalReports = ref(0)
 const period = ref('week')
 const sortBy = ref('total_score')
 const barChartRef = ref(null)
 const radarChartRef = ref(null)
+const barChart = useEChart()
+const radarChart = useEChart()
 
 const periodOptions = [
   { label: '本周', value: 'week' },
@@ -202,33 +222,36 @@ watch([period, sortBy], () => { loadLeaderboard() })
 
 function renderBarChart() {
   if (!barChartRef.value || !rankings.value.length) return
-  const chart = echarts.init(barChartRef.value)
   const top10 = rankings.value.slice(0, 10)
-  chart.setOption({
+  barChart.render(barChartRef, {
     backgroundColor: 'transparent',
     grid: { top: 10, right: 10, bottom: 30, left: 50 },
     xAxis: {
       type: 'category',
       data: top10.map(r => r.author_name),
-      axisLabel: { color: '#6B7280', fontSize: 11, rotate: 30 },
-      axisLine: { lineStyle: { color: '#E2E4E9' } },
+      axisLabel: { color: '#7C8698', fontSize: 11, rotate: 30 },
+      axisLine: { lineStyle: { color: '#E6EAF2' } },
+      axisTick: { show: false },
     },
     yAxis: {
       type: 'value',
       min: 0,
       max: 100,
-      axisLabel: { color: '#6B7280', fontSize: 11 },
-      splitLine: { lineStyle: { color: '#E2E4E9' } },
+      axisLabel: { color: '#7C8698', fontSize: 11 },
+      splitLine: { lineStyle: { color: '#EEF2F8', type: 'dashed' } },
     },
     series: [{
       data: top10.map(r => ({
         value: r.total_score,
         itemStyle: {
           color: new echarts.graphic.LinearGradient(0, 0, 0, 1, [
-            { offset: 0, color: '#5B5FC7' },
-            { offset: 1, color: '#7B7FD7' },
+            { offset: 0, color: '#45D0B5' },
+            { offset: 0.55, color: '#4F8CFF' },
+            { offset: 1, color: '#746BFF' },
           ]),
-          borderRadius: [4, 4, 0, 0],
+          borderRadius: [8, 8, 0, 0],
+          shadowColor: 'rgba(79, 140, 255, 0.18)',
+          shadowBlur: 8,
         },
       })),
       type: 'bar',
@@ -241,18 +264,13 @@ function renderBarChart() {
       textStyle: { color: '#1A1D26' },
     },
   })
-  window.addEventListener('resize', () => chart.resize())
 }
 
 function renderRadarChart() {
   if (!radarChartRef.value || !rankings.value.length) return
-  const chart = echarts.init(radarChartRef.value)
-
-  // 取前5名的平均分作为雷达图数据
   const top5 = rankings.value.slice(0, 5)
   const indicators = top5.map(r => ({ name: r.author_name, max: 100 }))
-
-  chart.setOption({
+  radarChart.render(radarChartRef, {
     backgroundColor: 'transparent',
     radar: {
       indicator: indicators,
@@ -278,11 +296,87 @@ function renderRadarChart() {
       textStyle: { color: '#1A1D26' },
     },
   })
-  window.addEventListener('resize', () => chart.resize())
 }
 </script>
 
 <style scoped>
+.public-page {
+  min-height: 100vh;
+  padding: var(--content-padding);
+  background: var(--public-bg-gradient);
+}
+
+.public-nav {
+  max-width: 1120px;
+  margin: 0 auto var(--spacing-lg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  background: rgba(255,255,255,0.86);
+  box-shadow: var(--shadow-sm);
+}
+
+.brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.public-links {
+  display: flex;
+  gap: 18px;
+  font-weight: 700;
+}
+
+.public-page .page-header,
+.public-page .filter-bar,
+.public-page .content-layout {
+  max-width: 1120px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.embedded-mode.public-page {
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+}
+
+.embedded-mode.public-page .page-header,
+.embedded-mode.public-page .filter-bar,
+.embedded-mode.public-page .content-layout {
+  max-width: none;
+}
+
+.embedded-mode .page-header {
+  margin-bottom: var(--spacing-xs);
+}
+
+.embedded-mode .page-header h1 {
+  font-size: var(--text-lg);
+  color: var(--text-secondary);
+}
+
+.embedded-mode .page-subtitle {
+  font-size: var(--text-xs);
+}
+
+.embedded-kicker {
+  color: var(--primary);
+  font-size: var(--text-xs);
+  font-weight: var(--font-bold);
+}
+
+.embedded-mode .side-panel {
+  position: static;
+}
+
+.embedded-mode .filter-bar {
+  margin-bottom: var(--spacing-sm);
+}
+
 /* ========== 筛选栏 ========== */
 .filter-bar {
   display: flex;
@@ -325,9 +419,14 @@ function renderRadarChart() {
 /* ========== 布局 ========== */
 .content-layout {
   display: grid;
-  grid-template-columns: 1fr 360px;
-  gap: var(--spacing-lg);
+  grid-template-columns: minmax(0, 1fr) 340px;
+  gap: var(--spacing-md);
   align-items: start;
+}
+
+.embedded-mode .content-layout {
+  grid-template-columns: minmax(0, 1fr) 320px;
+  gap: var(--spacing-md);
 }
 
 .table-area {
@@ -347,6 +446,8 @@ function renderRadarChart() {
 .table-card :deep(.p-card-body) { padding: 0; }
 .table-card :deep(.p-card-content) { padding: 0; width: 100%; overflow-x: auto; }
 .table-card :deep(.p-datatable) { min-width: 600px; }
+.table-card :deep(.p-datatable-table-container) { min-height: 236px; }
+.embedded-mode .table-card :deep(.p-datatable-table-container) { min-height: 212px; }
 .table-card :deep(.p-datatable-emptymessage) {
   background: var(--bg-card) !important;
 }
@@ -356,15 +457,20 @@ function renderRadarChart() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 300px;
-  padding: var(--spacing-3xl);
+  min-height: 180px;
+  padding: var(--spacing-xl) var(--spacing-md);
   color: var(--text-muted);
 }
 
+.embedded-mode .table-card .empty-state {
+  min-height: 164px;
+  padding: var(--spacing-lg) var(--spacing-md);
+}
+
 .table-card .empty-state .empty-icon {
-  font-size: 4rem;
-  opacity: 0.4;
-  margin-bottom: var(--spacing-lg);
+  font-size: 2.5rem;
+  opacity: 0.36;
+  margin-bottom: var(--spacing-sm);
 }
 
 .table-card .empty-state .empty-text {
@@ -391,6 +497,31 @@ function renderRadarChart() {
 .text-muted { color: var(--text-muted); font-size: var(--text-sm); }
 
 /* ========== 侧边卡片 ========== */
+.side-card {
+  min-height: 150px;
+}
+
+.side-card :deep(.p-card-body) {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+}
+
+.side-card :deep(.p-card-content) {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.embedded-mode .side-card {
+  min-height: 136px;
+}
+
+.chart-card,
+.embedded-mode .chart-card {
+  min-height: 212px;
+}
+
 .side-card :deep(.p-card-title) {
   color: var(--text-secondary) !important;
   font-size: var(--text-sm) !important;
@@ -433,41 +564,129 @@ function renderRadarChart() {
 
 .chart-container { 
   width: 100%; 
-  height: 220px; 
-  min-height: 180px;
+  height: 180px; 
+  min-height: 150px;
 }
 
-.empty-hint {
+.embedded-mode .chart-container {
+  height: 150px;
+  min-height: 132px;
+}
+
+.empty-hint,
+.chart-empty-hint {
+  flex: 1;
+  min-height: 96px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   text-align: center;
   color: var(--text-muted);
-  padding: var(--spacing-lg);
+  padding: var(--spacing-md);
   font-size: var(--text-sm);
+}
+
+.chart-empty-hint {
+  min-height: 132px;
+}
+
+.embedded-mode .chart-empty-hint {
+  min-height: 118px;
+}
+
+.empty-chart-card :deep(.p-card-body) {
+  padding-bottom: var(--spacing-md);
 }
 
 /* ========== 响应式断点 ========== */
 
-@media (max-width: 1024px) {
-  .content-layout {
+@media (max-width: 1200px) {
+  .content-layout,
+  .embedded-mode .content-layout {
     grid-template-columns: 1fr;
+    gap: var(--spacing-md);
   }
-  
+
   .side-panel {
     position: static;
     display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--spacing-md);
+  }
+
+  .side-card[style] {
+    margin-top: 0 !important;
+  }
+
+  .side-card:first-child {
+    grid-column: 1 / -1;
   }
 }
 
 @media (max-width: 640px) {
+  .leaderboard.public-page {
+    padding: 14px;
+  }
+
+  .embedded-mode.public-page {
+    padding: 0;
+  }
+
+  .public-nav {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-sm);
+  }
+
+  .public-links {
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    font-size: var(--text-xs);
+  }
+
   .filter-bar {
     flex-direction: column;
     align-items: stretch;
+    gap: var(--spacing-sm);
+  }
+
+  .side-panel {
+    grid-template-columns: 1fr;
+  }
+
+  .side-card:first-child {
+    grid-column: auto;
+  }
+
+  .filter-bar :deep(.p-selectbutton) {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    width: 100%;
+  }
+
+  .filter-bar :deep(.p-selectbutton .p-button) {
+    min-width: 0;
+    padding: 7px 8px !important;
   }
   
   .filter-spacer { display: none; }
+
+  .total-info {
+    text-align: center;
+  }
   
   .side-panel {
     grid-template-columns: 1fr;
+  }
+
+  .chart-container {
+    height: 180px;
+    min-height: 160px;
+  }
+
+  .table-card .empty-state {
+    min-height: 180px;
+    padding: var(--spacing-lg);
   }
 }
 </style>

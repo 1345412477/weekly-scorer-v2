@@ -1,18 +1,28 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isAdminLoggedIn } from '../utils/auth'
 
 const routes = [
-  { path: '/', redirect: '/dashboard' },
-  { path: '/dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '仪表盘' } },
-  { path: '/config', name: 'Config', component: () => import('../views/Config.vue'), meta: { title: '配置管理' } },
-  { path: '/write', name: 'WriteReport', component: () => import('../views/WriteReport.vue'), meta: { title: '提交周报' } },
-  { path: '/reports', name: 'Reports', component: () => import('../views/ReportList.vue'), meta: { title: '周报列表' } },
-  { path: '/reports/:id', name: 'ReportDetail', component: () => import('../views/ReportDetail.vue'), meta: { title: '周报详情' } },
-  { path: '/leaderboard', name: 'Leaderboard', component: () => import('../views/Leaderboard.vue'), meta: { title: '排行榜' } },
+  { path: '/', name: 'Home', component: () => import('../views/PublicHome.vue'), meta: { title: '周报评分系统', public: true, noLayout: true } },
+  { path: '/admin/login', name: 'AdminLogin', component: () => import('../views/AdminLogin.vue'), meta: { title: '管理员登录', public: true, noLayout: true } },
+  { path: '/admin', redirect: '/admin/dashboard', meta: { requiresAdmin: true } },
+  { path: '/admin/dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '仪表盘', requiresAdmin: true } },
+  { path: '/admin/config', name: 'Config', component: () => import('../views/Config.vue'), meta: { title: '系统设置', requiresAdmin: true } },
+  { path: '/admin/reports', name: 'Reports', component: () => import('../views/ReportList.vue'), meta: { title: '周报列表', requiresAdmin: true } },
+  { path: '/admin/reports/:id', name: 'ReportDetail', component: () => import('../views/ReportDetail.vue'), meta: { title: '周报详情', requiresAdmin: true } },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
   routes,
+})
+
+router.beforeEach((to) => {
+  if (to.meta.requiresAdmin && !isAdminLoggedIn()) {
+    return { path: '/admin/login', query: { redirect: to.fullPath } }
+  }
+  if (to.path === '/admin/login' && isAdminLoggedIn()) {
+    return '/admin/dashboard'
+  }
 })
 
 export default router

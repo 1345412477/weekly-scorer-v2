@@ -17,12 +17,12 @@ def get_template_path() -> str:
     return TEMPLATE_PATH
 
 
-SUPPORTED_EXTENSIONS = {".xlsx", ".xls", ".docx", ".pdf"}
+SUPPORTED_EXTENSIONS = {".xlsx", ".docx", ".pdf"}
 
 
 def parse_report(file_path: str) -> dict:
     ext = os.path.splitext(file_path)[1].lower()
-    if ext in (".xlsx", ".xls"):
+    if ext == ".xlsx":
         return _parse_excel(file_path)
     elif ext == ".docx":
         return _parse_docx(file_path)
@@ -34,7 +34,7 @@ def parse_report(file_path: str) -> dict:
 
 def extract_week_dates(file_path: str) -> tuple[Optional[date], Optional[date]]:
     ext = os.path.splitext(file_path)[1].lower()
-    if ext in (".xlsx", ".xls"):
+    if ext == ".xlsx":
         return _extract_dates_from_excel(file_path)
     elif ext == ".docx":
         return _extract_dates_from_docx(file_path)

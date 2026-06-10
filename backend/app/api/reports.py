@@ -4,16 +4,17 @@ import uuid
 import shutil
 from datetime import date, datetime, timedelta, timezone
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
 from app.database import get_db
-from app.models.models import WeeklyReport, ReportScore, Person
+from app.models.models import WeeklyReport, ReportScore, Person, AdminUser
 from app.schemas.schemas import ReportCreate, ReportResponse
 from app.services.scoring import trigger_scoring
 from app.services.ai_scorer import AIScoringError
+from app.core.auth import require_admin, write_operation_log
 from app.services.document_parser import (
     parse_report, extract_week_dates, get_template_path,
     classify_report_week, get_current_week, SUPPORTED_EXTENSIONS,
@@ -21,8 +22,20 @@ from app.services.document_parser import (
 
 router = APIRouter(prefix="/api/v1/reports", tags=["周报管理"])
 
-UPLOAD_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads")
+UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads"))
 os.makedirs(UPLOAD_DIR, exist_ok=True)
+
+
+def is_safe_upload_path(file_path: str) -> bool:
+    if not file_path:
+        return False
+    resolved_path = os.path.abspath(file_path)
+    return resolved_path.startswith(UPLOAD_DIR + os.sep) and os.path.isfile(resolved_path)
+
+
+def safe_download_name(filename: Optional[str], fallback: str) -> str:
+    name = os.path.basename(filename or fallback).replace("\x00", "")
+    return name or fallback
 
 
 def iso_week_number(d):
@@ -75,6 +88,57 @@ async def download_template():
     )
 
 
+async def extract_author_and_match_department(
+    file_path: str,
+    original_filename: str,
+    parsed_content: dict,
+    db: AsyncSession,
+):
+    """
+    从文件内容 / 文件名中尝试识别提交人并匹配部门
+    返回 (author_name, department, person_id, department_id, auto_detected: bool)
+    """
+    import re as _re
+
+    # 1. 先从解析内容的表格数据中查找 "汇报人"
+    candidate_name = None
+    all_items = parsed_content.get("last_week_work", []) + parsed_content.get("this_week_plan", [])
+    for item in all_items:
+        reporter = item.get("汇报人") or item.get("提交人") or item.get("姓名")
+        if reporter and isinstance(reporter, str) and 2 <= len(reporter.strip()) <= 10:
+            candidate_name = reporter.strip()
+            break
+
+    # 2. 回退到文件名识别：xxx周报_xxx.xlsx
+    if not candidate_name and original_filename:
+        stem = os.path.splitext(original_filename)[0]
+        match = _re.search(r"[\u4e00-\u9fa5]{2,4}", stem)
+        if match:
+            candidate_name = match.group(0)
+
+    if not candidate_name:
+        return None, "", None, "", False
+
+    # 3. 匹配 persons 表中是否存在此人
+    try:
+        person_q = select(Person).where(Person.name == candidate_name)
+        person_r = await db.execute(person_q)
+        person = person_r.scalar_one_or_none()
+        if person:
+            return (
+                person.name,
+                person.department_name or "",
+                person.id,
+                person.department_id or "",
+                True,
+            )
+    except Exception:
+        pass
+
+    # 4. 未在人员库中找到，使用识别到的姓名但无部门信息
+    return candidate_name, "", None, "", False
+
+
 @router.post("/upload")
 async def upload_report(
     file: UploadFile = File(...),
@@ -86,13 +150,15 @@ async def upload_report(
     confirmed_week_end: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """上传周报文件，支持 .xlsx/.xls/.docx/.pdf"""
-    file_ext = os.path.splitext(file.filename)[1].lower()
+    """上传周报文件，支持 .xlsx/.xls/.docx/.pdf。自动识别提交人并匹配部门。"""
+    file_ext = os.path.splitext(file.filename or "")[1].lower()
     if file_ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
             status_code=400,
             detail=f"不支持的文件格式: {file_ext}，支持：{', '.join(sorted(SUPPORTED_EXTENSIONS))}"
         )
+
+    original_filename = file.filename or ""
 
     if person_id:
         person_r = await db.execute(select(Person).where(Person.id == person_id))
@@ -136,6 +202,22 @@ async def upload_report(
             week_start = monday
             week_end = sunday
 
+        # 自动识别提交人并匹配部门（仅当用户未显式指定 person_id 时生效）
+        auto_detected = False
+        if not person_id:
+            detected_name, detected_dept, detected_person_id, detected_dept_id, detected = await (
+                extract_author_and_match_department(file_path, original_filename, parsed, db)
+            )
+            if detected and detected_name:
+                author_name = detected_name
+                if not department and detected_dept:
+                    department = detected_dept
+                if detected_person_id:
+                    person_id = detected_person_id
+                if detected_dept_id:
+                    department_id = detected_dept_id
+                auto_detected = True
+
         report_type = classification["report_type"]
         week_diff = classification["week_diff"]
 
@@ -149,7 +231,7 @@ async def upload_report(
             week_end=week_end,
             content=content,
             file_path=file_path,
-            original_filename=file.filename,
+            original_filename=original_filename,
             status="submitted",
             report_type=report_type,
             week_diff=week_diff,
@@ -168,6 +250,22 @@ async def upload_report(
         except Exception as e:
             scoring_error = f"评分失败：{str(e)}"
 
+        # 评分完成后读取完整 score 信息（含 ai_comment / ai_suggestion）
+        dimension_scores = []
+        ai_comment = ""
+        ai_suggestion = ""
+        if score_result and not scoring_error:
+            try:
+                detail_q = select(ReportScore).where(ReportScore.report_id == report.id)
+                detail_r = await db.execute(detail_q)
+                score_row = detail_r.scalar_one_or_none()
+                if score_row:
+                    dimension_scores = score_row.dimension_scores or []
+                    ai_comment = score_row.ai_comment or ""
+                    ai_suggestion = score_row.ai_suggestion or ""
+            except Exception:
+                pass
+
         result = {
             "message": "上传成功",
             "report_id": report.id,
@@ -177,9 +275,14 @@ async def upload_report(
             "needs_confirmation": classification["needs_confirmation"],
             "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(),
-            "content_preview": content[:300] + "..." if len(content) > 300 else content,
+            "author_name": author_name,
+            "department": department,
+            "auto_detected": auto_detected,
             "total_score": score_result["total_score"] if score_result else None,
             "grade": score_result["grade"] if score_result else None,
+            "dimension_scores": dimension_scores,
+            "ai_comment": ai_comment,
+            "ai_suggestion": ai_suggestion,
             "scoring_error": scoring_error,
         }
 
@@ -243,6 +346,7 @@ async def list_reports(
     sort_by: Optional[str] = Query(None),
     sort_order: Optional[str] = Query("desc"),
     db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
 ):
     """获取周报列表"""
     query = select(WeeklyReport)
@@ -299,7 +403,12 @@ async def list_reports(
 
 
 @router.post("/export")
-async def export_reports(report_ids: list[str], db: AsyncSession = Depends(get_db)):
+async def export_reports(
+    report_ids: list[str],
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """批量导出周报原始文件为 ZIP"""
     import zipfile
     from io import BytesIO
@@ -317,9 +426,8 @@ async def export_reports(report_ids: list[str], db: AsyncSession = Depends(get_d
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         added = set()
         for r in reports:
-            if r.file_path and os.path.exists(r.file_path):
-                # 避免重复文件
-                base_name = r.original_filename or f"{r.author_name}_周报.xlsx"
+            if is_safe_upload_path(r.file_path):
+                base_name = safe_download_name(r.original_filename, f"{r.author_name}_周报.xlsx")
                 name = base_name
                 counter = 1
                 while name in added:
@@ -327,10 +435,21 @@ async def export_reports(report_ids: list[str], db: AsyncSession = Depends(get_d
                     name = f"{stem}_{counter}{ext}"
                     counter += 1
                 added.add(name)
-                zf.write(r.file_path, name)
+                zf.write(os.path.abspath(r.file_path), name)
 
     if not added:
         raise HTTPException(status_code=404, detail="所选周报没有可下载的文件")
+
+    await write_operation_log(
+        db,
+        user,
+        "export",
+        "report",
+        "",
+        request,
+        {"report_ids": report_ids, "exported_count": len(added)},
+    )
+    await db.commit()
 
     zip_buffer.seek(0)
     filename = f"周报_{datetime.now().strftime('%Y%m%d')}.zip"
@@ -342,8 +461,36 @@ async def export_reports(report_ids: list[str], db: AsyncSession = Depends(get_d
     )
 
 
+@router.post("/batch-delete")
+async def batch_delete_reports(
+    report_ids: list[str],
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
+    """批量删除周报"""
+    result = await db.execute(
+        select(WeeklyReport).where(WeeklyReport.id.in_(report_ids))
+    )
+    reports = result.scalars().all()
+
+    # 删除关联的评分记录
+    scores_result = await db.execute(
+        select(ReportScore).where(ReportScore.report_id.in_(report_ids))
+    )
+    for score in scores_result.scalars().all():
+        await db.delete(score)
+
+    for report in reports:
+        await db.delete(report)
+
+    await write_operation_log(db, user, "batch_delete", "report", "", request, {"report_ids": report_ids})
+    await db.commit()
+    return {"message": "批量删除成功", "deleted_count": len(reports)}
+
+
 @router.get("/{report_id}")
-async def get_report(report_id: str, db: AsyncSession = Depends(get_db)):
+async def get_report(report_id: str, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
     """获取周报详情（含评分维度）"""
     result = await db.execute(
         select(WeeklyReport).where(WeeklyReport.id == report_id)
@@ -435,7 +582,12 @@ async def submit_report(report_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.delete("/{report_id}")
-async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_report(
+    report_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """删除周报"""
     result = await db.execute(
         select(WeeklyReport).where(WeeklyReport.id == report_id)
@@ -452,34 +604,19 @@ async def delete_report(report_id: str, db: AsyncSession = Depends(get_db)):
         await db.delete(score)
 
     await db.delete(report)
+
+    await write_operation_log(db, user, "delete", "report", report_id, request, {"author_name": report.author_name})
     await db.commit()
     return {"message": "周报已删除"}
 
 
-@router.post("/batch-delete")
-async def batch_delete_reports(report_ids: list[str], db: AsyncSession = Depends(get_db)):
-    """批量删除周报"""
-    result = await db.execute(
-        select(WeeklyReport).where(WeeklyReport.id.in_(report_ids))
-    )
-    reports = result.scalars().all()
-
-    # 删除关联的评分记录
-    scores_result = await db.execute(
-        select(ReportScore).where(ReportScore.report_id.in_(report_ids))
-    )
-    for score in scores_result.scalars().all():
-        await db.delete(score)
-
-    for report in reports:
-        await db.delete(report)
-
-    await db.commit()
-    return {"message": "批量删除成功", "deleted_count": len(reports)}
-
-
 @router.get("/{report_id}/download")
-async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
+async def download_report(
+    report_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """下载周报原始文件"""
     result = await db.execute(
         select(WeeklyReport).where(WeeklyReport.id == report_id)
@@ -488,11 +625,22 @@ async def download_report(report_id: str, db: AsyncSession = Depends(get_db)):
     if not report:
         raise HTTPException(status_code=404, detail="周报不存在")
 
-    if not report.file_path or not os.path.exists(report.file_path):
+    if not is_safe_upload_path(report.file_path):
         raise HTTPException(status_code=404, detail="文件不存在，可能已被清理")
 
+    await write_operation_log(
+        db,
+        user,
+        "download",
+        "report",
+        report_id,
+        request,
+        {"filename": report.original_filename},
+    )
+    await db.commit()
+
     return FileResponse(
-        report.file_path,
-        filename=report.original_filename or f"周报_{report.author_name}.xlsx",
+        os.path.abspath(report.file_path),
+        filename=safe_download_name(report.original_filename, f"周报_{report.author_name}.xlsx"),
         media_type="application/octet-stream",
     )

@@ -1,5 +1,13 @@
 <template>
-  <div class="write-report page-content">
+  <div class="write-report page-content" :class="{ 'public-page': isPublicMode, 'embedded-mode': embedded }">
+    <div v-if="isPublicMode && !embedded" class="public-nav">
+      <router-link to="/" class="brand">周报评分</router-link>
+      <div class="public-links">
+        <router-link to="/write">提交周报</router-link>
+        <router-link to="/leaderboard">排行榜</router-link>
+        <router-link to="/admin/login">管理员登录</router-link>
+      </div>
+    </div>
     <div class="page-header">
       <div>
         <h1>提交周报</h1>
@@ -71,12 +79,13 @@
 
       <div class="right-panel">
         <Card class="preview-card">
-          <template #title>📋 上传结果</template>
+          <template #title>上传结果</template>
           <template #content>
             <Transition name="result-fade" mode="out-in">
-              <div v-if="!uploadResult" key="empty" class="empty-state">
-                <i class="pi pi-inbox" style="font-size:64px;color:var(--text-muted)"></i>
-                <p>上传周报后，解析结果将在此显示</p>
+              <div v-if="!uploadResult" key="empty" class="app-empty-state compact-empty">
+                <i class="pi pi-inbox"></i>
+                <h3>等待上传</h3>
+                <p>上传周报后，解析结果和评分信息将在这里展示。</p>
               </div>
               <div v-else key="result" class="result-content">
               <div class="result-header">
@@ -112,7 +121,7 @@
 
               <div v-if="uploadResult.needs_confirmation" class="confirm-section">
                 <Divider />
-                <p class="confirm-title">⚠️ 未能自动识别周报时间，请手动确认：</p>
+                <p class="confirm-title">未能自动识别周报时间，请手动确认：</p>
                 <div class="confirm-fields">
                   <div class="confirm-field">
                     <label>周报开始日期</label>
@@ -141,6 +150,7 @@
 
 <script setup>
 import { ref, computed, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { reportAPI, personAPI, departmentAPI } from '../api'
 import { emitDataChanged, DataEventType } from '../utils/dataEvents'
 import Card from 'primevue/card'
@@ -151,7 +161,13 @@ import Tag from 'primevue/tag'
 import Divider from 'primevue/divider'
 import { useToast } from 'primevue/usetoast'
 
+const props = defineProps({
+  embedded: { type: Boolean, default: false },
+})
+
 const toast = useToast()
+const route = useRoute()
+const isPublicMode = computed(() => props.embedded || !route.path.startsWith('/admin'))
 
 const fileInput = ref(null)
 const selectedFile = ref(null)
@@ -179,7 +195,7 @@ const fileIcon = computed(() => {
 
 const resultSeverity = computed(() => {
   if (!uploadResult.value) return 'info'
-  if (uploadResult.value.total_score) return 'success'
+  if (uploadResult.value.total_score != null) return 'success'
   if (uploadResult.value.report_type === 'catch_up') return 'warn'
   return 'info'
 })
@@ -339,10 +355,66 @@ onMounted(() => {
 </script>
 
 <style scoped>
+.public-page {
+  min-height: 100vh;
+  padding: 24px;
+  background: var(--public-bg-gradient);
+}
+
+.public-nav {
+  max-width: 1120px;
+  margin: 0 auto var(--spacing-lg);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 12px 16px;
+  border-radius: var(--radius-lg);
+  background: rgba(255,255,255,0.86);
+  box-shadow: var(--shadow-sm);
+}
+
+.brand {
+  font-size: 18px;
+  font-weight: 800;
+  color: var(--text-primary);
+}
+
+.public-links {
+  display: flex;
+  gap: 18px;
+  font-weight: 700;
+}
+
+.public-page .page-header,
+.public-page .upload-layout {
+  max-width: 1120px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+.embedded-mode.public-page {
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+}
+
+.embedded-mode.public-page .page-header,
+.embedded-mode.public-page .upload-layout {
+  max-width: none;
+}
+
+.embedded-mode .page-header {
+  display: none;
+}
+
+.embedded-mode .upload-layout {
+  gap: var(--spacing-md);
+}
+
 /* ========== 布局 ========== */
 .upload-layout {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: minmax(360px, 0.92fr) minmax(420px, 1.08fr);
   gap: var(--spacing-lg);
   align-items: start;
 }
@@ -399,11 +471,11 @@ onMounted(() => {
 .upload-area {
   border: 2px dashed var(--border-color);
   border-radius: var(--radius-lg);
-  padding: var(--spacing-xl);
+  padding: var(--spacing-lg);
   text-align: center;
   cursor: pointer;
   transition: all var(--transition-normal);
-  min-height: 160px;
+  min-height: 140px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -435,8 +507,8 @@ onMounted(() => {
 }
 
 .upload-icon-wrap {
-  width: 80px;
-  height: 80px;
+  width: 64px;
+  height: 64px;
   border-radius: 50%;
   background: var(--primary-bg);
   display: flex;
@@ -453,7 +525,7 @@ onMounted(() => {
 }
 
 .upload-icon {
-  font-size: 40px;
+  font-size: 32px;
   color: var(--primary);
 }
 
@@ -541,6 +613,10 @@ onMounted(() => {
   max-height: calc(100vh - 120px);
 }
 
+.embedded-mode .preview-card :deep(.p-card-body) {
+  max-height: none;
+}
+
 .preview-card :deep(.p-card-content) {
   flex: 1;
   overflow-y: auto;
@@ -572,15 +648,35 @@ onMounted(() => {
 }
 
 /* ========== 空状态 ========== */
+.compact-empty {
+  min-height: 132px;
+  padding: var(--spacing-lg) var(--spacing-md);
+}
+
+.embedded-mode .compact-empty {
+  min-height: 118px;
+  padding: var(--spacing-md);
+}
+
 .empty-state {
   text-align: center;
-  padding: var(--spacing-2xl) 0;
+  padding: var(--spacing-xl) 0;
   color: var(--text-muted);
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  min-height: 200px;
+  min-height: 150px;
+}
+
+.compact-empty h3 {
+  margin: var(--spacing-xs) 0 0;
+  font-size: var(--text-base);
+}
+
+.compact-empty p {
+  max-width: 360px;
+  margin-top: var(--spacing-xs);
 }
 
 .empty-state p {
@@ -731,10 +827,25 @@ onMounted(() => {
 
 /* ========== 响应式断点 ========== */
 
-/* 平板端 (< 1024px) */
-@media (max-width: 1024px) {
+/* 平板端 (< 1200px) */
+@media (max-width: 1200px) {
   .upload-layout {
     grid-template-columns: 1fr;
+    gap: var(--spacing-md);
+  }
+
+  .left-panel {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--spacing-md);
+  }
+
+  .step-card[style] {
+    margin-top: 0 !important;
+  }
+
+  .right-panel {
+    width: 100%;
   }
   
   .preview-card {
@@ -748,13 +859,51 @@ onMounted(() => {
 
 /* 移动端 (< 640px) */
 @media (max-width: 640px) {
+  .write-report.public-page {
+    padding: 14px;
+  }
+
+  .embedded-mode.public-page {
+    padding: 0;
+  }
+
+  .public-nav {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--spacing-sm);
+  }
+
+  .public-links {
+    justify-content: space-between;
+    gap: var(--spacing-sm);
+    font-size: var(--text-xs);
+  }
+
   .upload-layout {
     gap: var(--spacing-md);
   }
+
+  .left-panel {
+    grid-template-columns: 1fr;
+  }
   
   .upload-area {
-    padding: var(--spacing-lg);
-    min-height: 120px;
+    padding: var(--spacing-md);
+    min-height: 112px;
+  }
+
+  .upload-icon-wrap {
+    width: 52px;
+    height: 52px;
+  }
+
+  .upload-icon {
+    font-size: 26px;
+  }
+
+  .upload-file-info {
+    align-items: flex-start;
+    gap: var(--spacing-sm);
   }
   
   .result-header {

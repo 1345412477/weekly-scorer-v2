@@ -9,8 +9,15 @@ import os
 import time
 
 from app.database import init_db
-from app.api import config, templates, reports, leaderboard, departments, persons
+from app.config import get_settings
+from app.api import auth, config, templates, reports, leaderboard, departments, persons
 from app.utils.logger import log_api_request, log_info
+
+settings = get_settings()
+
+
+def get_cors_origins():
+    return [origin.strip() for origin in settings.CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 
 
 @asynccontextmanager
@@ -25,7 +32,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="周报评分系统 v2",
-    version="2.0.0",
+    version=settings.APP_VERSION,
     lifespan=lifespan,
 )
 
@@ -64,13 +71,14 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=get_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # 注册路由
+app.include_router(auth.router)
 app.include_router(config.router)
 app.include_router(templates.router)
 app.include_router(reports.router)
@@ -78,8 +86,14 @@ app.include_router(leaderboard.router)
 app.include_router(departments.router)
 app.include_router(persons.router)
 
+
+@app.get("/health")
+async def health():
+    return {"status": "ok", "version": settings.APP_VERSION}
+
+
 # 静态文件 (前端构建产物)
-dist_path = os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "frontend", "dist")
+dist_path = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(__file__)), "..", "frontend", "dist"))
 if os.path.exists(dist_path):
     from fastapi.responses import FileResponse
 
@@ -87,25 +101,22 @@ if os.path.exists(dist_path):
 
     @app.get("/{full_path:path}")
     async def serve_spa(full_path: str):
-        file_path = os.path.join(dist_path, full_path)
-        if os.path.isfile(file_path):
-            return FileResponse(file_path)
+        requested_path = os.path.abspath(os.path.join(dist_path, full_path))
+        if requested_path.startswith(dist_path + os.sep) and os.path.isfile(requested_path):
+            return FileResponse(requested_path)
         return FileResponse(os.path.join(dist_path, "index.html"))
-
-
-@app.get("/health")
-async def health():
-    return {"status": "ok", "version": "2.0.0"}
 
 
 async def seed_default_data():
     """初始化默认数据"""
     from app.database import async_session
+    from app.core.auth import ensure_default_admin
     from app.models.models import ScoringConfig, ReportTemplate
     from sqlalchemy import select
     import uuid
 
     async with async_session() as db:
+        await ensure_default_admin(db)
         # 默认评分配置
         result = await db.execute(select(ScoringConfig).limit(1))
         if not result.scalar_one_or_none():

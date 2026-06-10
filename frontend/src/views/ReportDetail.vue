@@ -13,12 +13,8 @@
       </div>
       <div class="header-right">
         <Tag :value="statusLabel(report.status)" :severity="statusSeverity(report.status)" />
-        <span v-if="report.total_score" class="score-badge" style="font-size:18px;padding:6px 16px">
-          {{ report.total_score }}
-        </span>
-        <span v-if="report.grade" :class="['grade-tag', gradeClass(report.grade)]" style="width:36px;height:36px;font-size:16px">
-          {{ getGradeName(report.grade) }}
-        </span>
+        <ScoreBadge v-if="report.total_score != null" :score="report.total_score" size="lg" />
+        <GradeTag v-if="report.grade" :grade="report.grade" />
       </div>
     </div>
 
@@ -28,9 +24,9 @@
       <!-- 左：内容 -->
       <div class="content-panel">
         <Card class="detail-card">
-          <template #title>📝 周报内容</template>
+          <template #title>周报内容</template>
           <template #content>
-            <div class="report-content" v-html="renderContent(report.content)"></div>
+            <pre class="report-content">{{ report.content }}</pre>
           </template>
         </Card>
       </div>
@@ -79,7 +75,7 @@
 
         <!-- 时间线 -->
         <Card class="detail-card" style="margin-top:16px">
-          <template #title>⏱️ 时间线</template>
+          <template #title>时间线</template>
           <template #content>
             <div class="timeline">
               <div class="timeline-item">
@@ -128,6 +124,8 @@ import { formatBeijingTimeShort } from '../utils/timeUtil'
 import Card from 'primevue/card'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
+import ScoreBadge from '../components/ui/ScoreBadge.vue'
+import GradeTag from '../components/ui/GradeTag.vue'
 
 const route = useRoute()
 const loading = ref(true)
@@ -142,16 +140,6 @@ const weekNum = computed(() => {
   return 1 + Math.round(((d - w1) / 86400000 - 3 + (w1.getDay() + 6) % 7) / 7)
 })
 
-const gradeNames = { '优': '优', '良': '良', '一般': '一般', '差': '差' }
-
-function gradeClass(g) {
-  return { '优': 'grade-you', '良': 'grade-liang', '一般': 'grade-yiban', '差': 'grade-cha' }[g] || ''
-}
-
-function getGradeName(g) {
-  return gradeNames[g] || g
-}
-
 function statusLabel(s) {
   return { draft: '草稿', submitted: '已提交', scored: '已评分' }[s] || s
 }
@@ -165,15 +153,6 @@ function scoreLevel(ratio) {
   if (ratio >= 0.7) return 'good'
   if (ratio >= 0.5) return 'fair'
   return 'poor'
-}
-
-function renderContent(text) {
-  if (!text) return ''
-  return text
-    .replace(/^### (.+)$/gm, '<h4>$1</h4>')
-    .replace(/^## (.+)$/gm, '<h3>$1</h3>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/\n/g, '<br>')
 }
 
 async function loadReport() {
@@ -276,6 +255,9 @@ onMounted(loadReport)
   line-height: 1.8;
   word-break: break-word;
   overflow-wrap: break-word;
+  white-space: pre-wrap;
+  font-family: inherit;
+  margin: 0;
 }
 
 .report-content :deep(h3) {

@@ -1,12 +1,13 @@
 """周报模板 API"""
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 import uuid
 
 from app.database import get_db
-from app.models.models import ReportTemplate
+from app.models.models import ReportTemplate, AdminUser
 from app.schemas.schemas import TemplateCreate, TemplateUpdate, TemplateResponse
+from app.core.auth import require_admin, write_operation_log
 
 router = APIRouter(prefix="/api/v1/templates", tags=["模板管理"])
 
@@ -43,10 +44,7 @@ DEFAULT_FIELDS = [
 
 
 async def ensure_default_template(db: AsyncSession):
-    """确保默认模板存在"""
-    result = await db.execute(
-        select(ReportTemplate).where(ReportTemplate.is_default == True).limit(1)
-    )
+    result = await db.execute(select(ReportTemplate).where(ReportTemplate.is_default == True).limit(1))
     if not result.scalar_one_or_none():
         default = ReportTemplate(
             id=str(uuid.uuid4()),
@@ -61,7 +59,7 @@ async def ensure_default_template(db: AsyncSession):
 
 
 @router.get("")
-async def list_templates(db: AsyncSession = Depends(get_db)):
+async def list_templates(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
     """获取所有模板"""
     await ensure_default_template(db)
     result = await db.execute(select(ReportTemplate).order_by(ReportTemplate.created_at.desc()))
@@ -81,11 +79,9 @@ async def list_templates(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{template_id}")
-async def get_template(template_id: str, db: AsyncSession = Depends(get_db)):
+async def get_template(template_id: str, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
     """获取单个模板详情"""
-    result = await db.execute(
-        select(ReportTemplate).where(ReportTemplate.id == template_id)
-    )
+    result = await db.execute(select(ReportTemplate).where(ReportTemplate.id == template_id))
     template = result.scalar_one_or_none()
     if not template:
         raise HTTPException(status_code=404, detail="模板不存在")
@@ -101,12 +97,15 @@ async def get_template(template_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("")
-async def create_template(req: TemplateCreate, db: AsyncSession = Depends(get_db)):
+async def create_template(
+    req: TemplateCreate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """创建新模板"""
     if req.is_default:
-        result = await db.execute(
-            select(ReportTemplate).where(ReportTemplate.is_default == True)
-        )
+        result = await db.execute(select(ReportTemplate).where(ReportTemplate.is_default == True))
         old_default = result.scalar_one_or_none()
         if old_default:
             old_default.is_default = False
@@ -120,17 +119,22 @@ async def create_template(req: TemplateCreate, db: AsyncSession = Depends(get_db
         is_default=req.is_default,
     )
     db.add(template)
+    await write_operation_log(db, user, "create", "template", template.id, request, {"name": template.name})
     await db.commit()
     await db.refresh(template)
     return {"message": "模板创建成功", "id": template.id}
 
 
 @router.put("/{template_id}")
-async def update_template(template_id: str, req: TemplateUpdate, db: AsyncSession = Depends(get_db)):
+async def update_template(
+    template_id: str,
+    req: TemplateUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """更新模板"""
-    result = await db.execute(
-        select(ReportTemplate).where(ReportTemplate.id == template_id)
-    )
+    result = await db.execute(select(ReportTemplate).where(ReportTemplate.id == template_id))
     template = result.scalar_one_or_none()
     if not template:
         raise HTTPException(status_code=404, detail="模板不存在")
@@ -145,29 +149,32 @@ async def update_template(template_id: str, req: TemplateUpdate, db: AsyncSessio
         template.fields = [f.model_dump() for f in req.fields]
     if req.is_default is not None:
         if req.is_default:
-            result2 = await db.execute(
-                select(ReportTemplate).where(ReportTemplate.is_default == True, ReportTemplate.id != template_id)
-            )
+            result2 = await db.execute(select(ReportTemplate).where(ReportTemplate.is_default == True, ReportTemplate.id != template_id))
             old_default = result2.scalar_one_or_none()
             if old_default:
                 old_default.is_default = False
         template.is_default = req.is_default
 
+    await write_operation_log(db, user, "update", "template", template_id, request, {"name": template.name})
     await db.commit()
     return {"message": "模板更新成功"}
 
 
 @router.delete("/{template_id}")
-async def delete_template(template_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_template(
+    template_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """删除模板"""
-    result = await db.execute(
-        select(ReportTemplate).where(ReportTemplate.id == template_id)
-    )
+    result = await db.execute(select(ReportTemplate).where(ReportTemplate.id == template_id))
     template = result.scalar_one_or_none()
     if not template:
         raise HTTPException(status_code=404, detail="模板不存在")
     if template.is_default:
         raise HTTPException(status_code=400, detail="不能删除默认模板")
     await db.delete(template)
+    await write_operation_log(db, user, "delete", "template", template_id, request, {"name": template.name})
     await db.commit()
     return {"message": "模板已删除"}

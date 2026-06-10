@@ -10,11 +10,11 @@ class Settings(BaseSettings):
     MIMO_BASE_URL: str = "https://token-plan-cn.xiaomimimo.com/v1"
 
     # Ark（豆包）- 当前使用
-    ARK_API_KEY: str = "ark-59a63f24-995a-4532-bea0-1de221ef1594-59093"
+    ARK_API_KEY: str = ""
     ARK_BASE_URL: str = "https://ark.cn-beijing.volces.com/api/plan/v3"
 
     # DeepSeek（备用，需要时取消注释）
-    # DEEPSEEK_API_KEY: str = "sk-24e2c6c1a9fd40cf9fab4af17e541bff"
+    # DEEPSEEK_API_KEY: str = ""
     # DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
 
     SCORING_MODEL: str = "doubao-seed-2.0-pro"
@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     APP_VERSION: str = "2.1.0"
     DEBUG: bool = True
     TEMPLATE_DIR: str = "./templates"
+
+    AUTH_SECRET_KEY: str = ""
+    ADMIN_USERNAME: str = "admin"
+    ADMIN_PASSWORD: str = "admin123"
+    CORS_ALLOW_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173"
 
     class Config:
         env_file = ".env"

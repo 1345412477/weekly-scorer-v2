@@ -4,6 +4,11 @@ from typing import Optional, List, Any
 from datetime import date
 
 
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+
 # ── 部门 ──
 class DepartmentCreate(BaseModel):
     name: str

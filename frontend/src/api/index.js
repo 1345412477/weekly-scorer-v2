@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { clearAuth, getToken } from '../utils/auth'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -11,9 +12,6 @@ const api = axios.create({
 const uploadApi = axios.create({
   baseURL: '/api/v1',
   timeout: 120000,
-  headers: {
-    'Content-Type': 'application/json',
-  },
 })
 
 const cache = new Map()
@@ -23,8 +21,78 @@ function getCacheKey(url, params) {
   return `${url}?${JSON.stringify(params)}`
 }
 
+function attachAuth(config) {
+  const token = getToken()
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`
+  }
+  return config
+}
+
+function handleResponse(res) {
+  if (res.config._cacheHit) {
+    return res.config._cachedData
+  }
+
+  if (res.config.method === 'get' && res.config.cache === true) {
+    const key = getCacheKey(res.config.url, res.config.params)
+    cache.set(key, { timestamp: Date.now(), data: res })
+  }
+  return res
+}
+
+function handleError(err) {
+  if (axios.isCancel(err)) {
+    return Promise.resolve(null)
+  }
+
+  const status = err.response?.status
+  const detail = err.response?.data?.detail
+  const errors = err.response?.data?.errors
+
+  let msg = '请求失败，请稍后重试'
+  if (status === 401) {
+    clearAuth()
+    msg = detail || '登录已失效，请重新登录'
+    if (typeof window !== 'undefined' && window.location.pathname.startsWith('/admin')) {
+      window.location.href = '/admin/login'
+    }
+  } else if (status === 400) {
+    msg = errors ? errors.join('; ') : detail || '请求参数错误'
+  } else if (status === 404) {
+    msg = detail || '资源不存在'
+  } else if (status === 413) {
+    msg = detail || '文件过大，请压缩后重试'
+  } else if (status === 503) {
+    msg = detail || '服务暂时不可用'
+  } else if (detail) {
+    msg = detail
+  } else if (!err.response) {
+    if (err.code === 'ECONNREFUSED') {
+      msg = '无法连接到服务器，请检查后端服务是否运行'
+    } else if (err.code === 'ETIMEDOUT') {
+      msg = '请求超时，请稍后重试'
+    } else if (err.message?.includes('Network Error')) {
+      msg = '网络连接失败，请检查网络设置'
+    } else if (err.code === 'ERR_NETWORK') {
+      msg = '网络错误，请检查网络连接'
+    } else {
+      msg = `网络请求失败: ${err.message || '未知错误'}`
+    }
+  }
+
+  console.error('[API Error]', { status, msg, code: err.code, message: err.message })
+
+  if (typeof window !== 'undefined' && window.showToast) {
+    window.showToast(msg, 'error')
+  }
+
+  return Promise.reject({ ...err, userMessage: msg })
+}
+
 api.interceptors.request.use(
   config => {
+    attachAuth(config)
     if (config.method === 'get' && config.cache === true) {
       const key = getCacheKey(config.url, config.params)
       const cached = cache.get(key)
@@ -39,61 +107,13 @@ api.interceptors.request.use(
   error => Promise.reject(error)
 )
 
-api.interceptors.response.use(
-  res => {
-    if (res.config._cacheHit) {
-      return res.config._cachedData
-    }
-    
-    if (res.config.method === 'get' && res.config.cache === true) {
-      const key = getCacheKey(res.config.url, res.config.params)
-      cache.set(key, { timestamp: Date.now(), data: res })
-    }
-    return res
-  },
-  err => {
-    // 忽略取消的请求（不再使用取消机制处理缓存）
-    if (axios.isCancel(err)) {
-      return Promise.resolve(null)
-    }
-    
-    const status = err.response?.status
-    const detail = err.response?.data?.detail
-    const errors = err.response?.data?.errors
-    
-    let msg = '请求失败，请稍后重试'
-    if (status === 400) {
-      msg = errors ? errors.join('; ') : detail || '请求参数错误'
-    } else if (status === 404) {
-      msg = detail || '资源不存在'
-    } else if (status === 503) {
-      msg = detail || '服务暂时不可用'
-    } else if (detail) {
-      msg = detail
-    } else if (!err.response) {
-      // 网络错误或服务器无响应
-      if (err.code === 'ECONNREFUSED') {
-        msg = '无法连接到服务器，请检查后端服务是否运行'
-      } else if (err.code === 'ETIMEDOUT') {
-        msg = '请求超时，请稍后重试'
-      } else if (err.message?.includes('Network Error')) {
-        msg = '网络连接失败，请检查网络设置'
-      } else if (err.code === 'ERR_NETWORK') {
-        msg = '网络错误，请检查网络连接'
-      } else {
-        msg = `网络请求失败: ${err.message || '未知错误'}`
-      }
-    }
-    
-    console.error('[API Error]', { status, msg, code: err.code, message: err.message })
-    
-    if (typeof window !== 'undefined' && window.showToast) {
-      window.showToast(msg, 'error')
-    }
-    
-    return Promise.reject({ ...err, userMessage: msg })
-  }
+uploadApi.interceptors.request.use(
+  config => attachAuth(config),
+  error => Promise.reject(error)
 )
+
+api.interceptors.response.use(handleResponse, handleError)
+uploadApi.interceptors.response.use(handleResponse, handleError)
 
 export function clearCache() {
   cache.clear()
@@ -105,6 +125,11 @@ export function clearCacheByUrl(url) {
       cache.delete(key)
     }
   }
+}
+
+export const authAPI = {
+  login: (data) => api.post('/auth/login', data),
+  me: () => api.get('/auth/me'),
 }
 
 export const configAPI = {
@@ -134,21 +159,20 @@ export const reportAPI = {
   download: (id) => api.get(`/reports/${id}/download`, { responseType: 'blob' }),
   export: (ids) => api.post('/reports/export', ids, { responseType: 'blob' }),
   downloadTemplate: () => api.get('/reports/template/download', { responseType: 'blob' }),
-  upload: (formData) => uploadApi.post('/reports/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  }),
+  upload: (formData) => uploadApi.post('/reports/upload', formData),
 }
 
 export const leaderboardAPI = {
   get: (params) => api.get('/leaderboard', { params }),
   stats: () => api.get('/leaderboard/stats'),
+  dashboard: () => api.get('/leaderboard/dashboard'),
 }
 
 export const departmentAPI = {
   list: () => api.get('/departments'),
   get: (id) => api.get(`/departments/${id}`),
   create: (data) => api.post('/departments', data),
-  update: (id, data) => api.put(`/departments/${id}`, data),
+  update: (id, data) => api.put(`/departments/${id}`),
   delete: (id) => api.delete(`/departments/${id}`),
 }
 
@@ -156,7 +180,7 @@ export const personAPI = {
   list: (params) => api.get('/persons', { params }),
   get: (id) => api.get(`/persons/${id}`),
   create: (data) => api.post('/persons', data),
-  update: (id, data) => api.put(`/persons/${id}`, data),
+  update: (id, data) => api.put(`/persons/${id}`),
   delete: (id) => api.delete(`/persons/${id}`),
 }
 

@@ -1,15 +1,15 @@
 """评分配置 API"""
 import os
-from fastapi import APIRouter, Depends, HTTPException
-from fastapi.responses import FileResponse
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 import uuid
 
 from app.database import get_db, backup_database, BACKUP_DIR
-from app.models.models import ScoringConfig, Department, Person, WeeklyReport
+from app.models.models import ScoringConfig, Department, Person, WeeklyReport, AdminUser
 from app.schemas.schemas import ConfigResponse, ConfigUpdate, DimensionConfig, TestScoreRequest
-from app.services.ai_scorer import score_report, get_grade, test_connection, AIScoringError
+from app.services.ai_scorer import score_report, test_connection
+from app.core.auth import require_admin, write_operation_log
 
 router = APIRouter(prefix="/api/v1/config", tags=["配置管理"])
 
@@ -22,11 +22,9 @@ DEFAULT_DIMENSIONS = [
 
 
 @router.get("", response_model=ConfigResponse)
-async def get_config(db: AsyncSession = Depends(get_db)):
+async def get_config(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
     """获取当前评分配置"""
-    result = await db.execute(
-        select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1)
-    )
+    result = await db.execute(select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1))
     config = result.scalar_one_or_none()
 
     if not config:
@@ -35,13 +33,10 @@ async def get_config(db: AsyncSession = Depends(get_db)):
             grade_thresholds={"优": 45, "良": 38, "一般": 33, "差": 28},
         )
 
-    # 兼容旧数据：将 weight 转换为 full_score
     dims = config.dimensions or DEFAULT_DIMENSIONS
     converted_dims = []
     for d in dims:
         if "full_score" not in d and "weight" in d:
-            # 旧格式：weight 表示权重百分比，需要转换为满分
-            # 假设总分为 50 分，按权重计算
             converted_dims.append({
                 "name": d["name"],
                 "full_score": round(50 * d["weight"] / 100, 1),
@@ -63,11 +58,14 @@ async def get_config(db: AsyncSession = Depends(get_db)):
 
 
 @router.put("")
-async def update_config(req: ConfigUpdate, db: AsyncSession = Depends(get_db)):
+async def update_config(
+    req: ConfigUpdate,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """更新评分配置"""
-    result = await db.execute(
-        select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1)
-    )
+    result = await db.execute(select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1))
     config = result.scalar_one_or_none()
 
     if not config:
@@ -76,9 +74,7 @@ async def update_config(req: ConfigUpdate, db: AsyncSession = Depends(get_db)):
 
     if req.name is not None:
         config.name = req.name
-
     if req.dimensions is not None:
-        # 验证每个维度的满分必须大于0
         for d in req.dimensions:
             if d.full_score <= 0:
                 raise HTTPException(status_code=400, detail=f"维度 '{d.name}' 的满分必须大于0")
@@ -89,44 +85,38 @@ async def update_config(req: ConfigUpdate, db: AsyncSession = Depends(get_db)):
             if d.highest_score is not None and d.lowest_score is not None and d.lowest_score > d.highest_score:
                 raise HTTPException(status_code=400, detail=f"维度 '{d.name}' 的最低分不能超过最高分")
         config.dimensions = [d.model_dump() for d in req.dimensions]
-
     if req.grade_thresholds is not None:
         config.grade_thresholds = req.grade_thresholds
-
     if req.prompt_template is not None:
         config.prompt_template = req.prompt_template
-
     if req.min_content_length is not None:
         config.min_content_length = req.min_content_length
 
+    await write_operation_log(db, user, "update", "config", config.id, request, {"name": config.name})
     await db.commit()
     return {"message": "配置保存成功"}
 
 
 @router.post("/test")
-async def test_score(req: TestScoreRequest, db: AsyncSession = Depends(get_db)):
+async def test_score(
+    req: TestScoreRequest,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """测试评分 - 用当前配置对测试内容评分"""
-    # 优先使用请求中的维度，否则用全局配置
     if req.dimensions:
         dimensions = [d.model_dump() for d in req.dimensions]
     else:
-        result = await db.execute(
-            select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1)
-        )
+        result = await db.execute(select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1))
         config = result.scalar_one_or_none()
-        if not config or not config.dimensions:
-            dimensions = DEFAULT_DIMENSIONS
-        else:
-            dimensions = config.dimensions
-
-    prompt = req.prompt_template or ""
+        dimensions = config.dimensions if config and config.dimensions else DEFAULT_DIMENSIONS
 
     ai_result = await score_report(
         content=req.content,
         author_name="测试用户",
         department="测试部门",
         dimensions=dimensions,
-        prompt_template=prompt,
+        prompt_template=req.prompt_template or "",
     )
     return {
         "dimension_scores": ai_result["dimension_scores"],
@@ -139,13 +129,13 @@ async def test_score(req: TestScoreRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/ai-status")
-async def get_ai_status():
+async def get_ai_status(user: AdminUser = Depends(require_admin)):
     """获取 AI 模型连接状态"""
     return await test_connection()
 
 
 @router.get("/data-status")
-async def get_data_status(db: AsyncSession = Depends(get_db)):
+async def get_data_status(db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
     """获取数据状态概览"""
     dept_count = (await db.execute(select(func.count()).select_from(Department))).scalar() or 0
     person_count = (await db.execute(select(func.count()).select_from(Person).where(Person.is_active == True))).scalar() or 0
@@ -156,24 +146,21 @@ async def get_data_status(db: AsyncSession = Depends(get_db)):
         for f in sorted(os.listdir(BACKUP_DIR), reverse=True)[:5]:
             if f.endswith(".db"):
                 fpath = os.path.join(BACKUP_DIR, f)
-                backups.append({
-                    "filename": f,
-                    "size": os.path.getsize(fpath),
-                    "time": os.path.getmtime(fpath),
-                })
+                backups.append({"filename": f, "size": os.path.getsize(fpath), "time": os.path.getmtime(fpath)})
 
-    return {
-        "departments": dept_count,
-        "persons": person_count,
-        "reports": report_count,
-        "backups": backups,
-    }
+    return {"departments": dept_count, "persons": person_count, "reports": report_count, "backups": backups}
 
 
 @router.post("/backup")
-async def create_backup():
+async def create_backup(
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    user: AdminUser = Depends(require_admin),
+):
     """手动创建数据库备份"""
     path = backup_database()
     if path:
+        await write_operation_log(db, user, "backup", "database", "", request, {"path": os.path.basename(path)})
+        await db.commit()
         return {"message": "备份成功", "path": os.path.basename(path)}
     raise HTTPException(status_code=404, detail="数据库文件不存在")

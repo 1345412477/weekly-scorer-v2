@@ -116,7 +116,7 @@ class TestFileFormatValidation:
 class TestPersonDepartmentAutoMatch:
     """人员部门自动匹配测试"""
 
-    async def test_upload_with_person_auto_fill_department(self, client, seed_persons, seed_scoring_config):
+    async def test_upload_with_person_auto_fill_department(self, client, admin_headers, seed_persons, seed_scoring_config):
         """选择人员后自动填充部门信息"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -132,7 +132,7 @@ class TestPersonDepartmentAutoMatch:
             data = resp.json()
             assert data["report_id"]
 
-            detail_resp = await client.get(f"/api/v1/reports/{data['report_id']}")
+            detail_resp = await client.get(f"/api/v1/reports/{data['report_id']}", headers=admin_headers)
             detail = detail_resp.json()
             assert detail["author_name"] == "张三"
             assert detail["department"] == "技术部"
@@ -141,7 +141,7 @@ class TestPersonDepartmentAutoMatch:
         finally:
             os.unlink(f.name)
 
-    async def test_upload_with_person_no_department(self, client, seed_persons, seed_scoring_config):
+    async def test_upload_with_person_no_department(self, client, admin_headers, seed_persons, seed_scoring_config):
         """人员没有关联部门时，department 为空"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -155,14 +155,14 @@ class TestPersonDepartmentAutoMatch:
                 )
             assert resp.status_code == 200
 
-            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}")
+            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
             detail = detail_resp.json()
             assert detail["author_name"] == "赵六"
             assert detail["person_id"] == "person-4"
         finally:
             os.unlink(f.name)
 
-    async def test_upload_without_person_uses_form_data(self, client, seed_scoring_config):
+    async def test_upload_without_person_uses_form_data(self, client, admin_headers, seed_scoring_config):
         """不选择人员时，使用表单提交的 author_name 和 department"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -176,14 +176,14 @@ class TestPersonDepartmentAutoMatch:
                 )
             assert resp.status_code == 200
 
-            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}")
+            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
             detail = detail_resp.json()
             assert detail["author_name"] == "测试用户"
             assert detail["department"] == "测试部"
         finally:
             os.unlink(f.name)
 
-    async def test_upload_default_author_is_anonymous(self, client, seed_scoring_config):
+    async def test_upload_default_author_is_anonymous(self, client, admin_headers, seed_scoring_config):
         """不传任何人员信息时，默认为匿名"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -196,7 +196,7 @@ class TestPersonDepartmentAutoMatch:
                 )
             assert resp.status_code == 200
 
-            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}")
+            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
             assert detail_resp.json()["author_name"] == "匿名"
         finally:
             os.unlink(f.name)
@@ -376,7 +376,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_special_characters_in_filename(self, client, seed_scoring_config):
+    async def test_special_characters_in_filename(self, client, admin_headers, seed_scoring_config):
         """文件名包含特殊字符"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -388,7 +388,7 @@ class TestEdgeCases:
                     files={"file": ("周报（2026）-张三@技术部.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                 )
             assert resp.status_code == 200
-            detail = await client.get(f"/api/v1/reports/{resp.json()['report_id']}")
+            detail = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
             assert detail.json()["original_filename"] == "周报（2026）-张三@技术部.xlsx"
         finally:
             os.unlink(f.name)
@@ -445,7 +445,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_upload_report_persists_in_database(self, client, seed_scoring_config):
+    async def test_upload_report_persists_in_database(self, client, admin_headers, seed_scoring_config):
         """上传的周报正确持久化到数据库"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -460,7 +460,7 @@ class TestEdgeCases:
             assert resp.status_code == 200
             report_id = resp.json()["report_id"]
 
-            detail_resp = await client.get(f"/api/v1/reports/{report_id}")
+            detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             assert detail_resp.status_code == 200
             detail = detail_resp.json()
             assert detail["id"] == report_id
@@ -470,14 +470,14 @@ class TestEdgeCases:
             assert detail["content"]
             assert detail["submit_time"]
 
-            list_resp = await client.get("/api/v1/reports")
+            list_resp = await client.get("/api/v1/reports", headers=admin_headers)
             assert list_resp.status_code == 200
             items = list_resp.json()["items"]
             assert any(r["id"] == report_id for r in items)
         finally:
             os.unlink(f.name)
 
-    async def test_upload_file_saved_to_disk(self, client, seed_scoring_config):
+    async def test_upload_file_saved_to_disk(self, client, admin_headers, seed_scoring_config):
         """上传的文件正确保存到磁盘"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -491,7 +491,7 @@ class TestEdgeCases:
             assert resp.status_code == 200
             report_id = resp.json()["report_id"]
 
-            detail_resp = await client.get(f"/api/v1/reports/{report_id}")
+            detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             saved_path = os.path.join(
                 os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
                 "uploads", f"{report_id}.xlsx"
@@ -503,7 +503,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_original_filename_preserved(self, client, seed_scoring_config):
+    async def test_original_filename_preserved(self, client, admin_headers, seed_scoring_config):
         """原始文件名被正确保存"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -517,7 +517,7 @@ class TestEdgeCases:
                 )
             assert resp.status_code == 200
 
-            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}")
+            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
             assert detail_resp.json()["original_filename"] == original_name
         finally:
             os.unlink(f.name)
@@ -546,7 +546,7 @@ class TestAIScoringIntegration:
         finally:
             os.unlink(f.name)
 
-    async def test_scoring_dimensions_in_detail(self, client, seed_scoring_config):
+    async def test_scoring_dimensions_in_detail(self, client, admin_headers, seed_scoring_config):
         """评分详情包含各维度分数"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -559,7 +559,7 @@ class TestAIScoringIntegration:
                 )
             report_id = resp.json()["report_id"]
 
-            detail_resp = await client.get(f"/api/v1/reports/{report_id}")
+            detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             detail = detail_resp.json()
             assert detail["total_score"] is not None
             assert detail["dimension_scores"]
@@ -571,7 +571,7 @@ class TestAIScoringIntegration:
         finally:
             os.unlink(f.name)
 
-    async def test_report_status_after_upload(self, client, seed_scoring_config):
+    async def test_report_status_after_upload(self, client, admin_headers, seed_scoring_config):
         """上传并评分后状态为 scored"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -584,7 +584,7 @@ class TestAIScoringIntegration:
                 )
             report_id = resp.json()["report_id"]
 
-            detail_resp = await client.get(f"/api/v1/reports/{report_id}")
+            detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             assert detail_resp.json()["status"] == "scored"
         finally:
             os.unlink(f.name)
@@ -594,7 +594,7 @@ class TestAIScoringIntegration:
 class TestListAndDetail:
     """列表和详情测试"""
 
-    async def test_list_reports_after_upload(self, client, seed_scoring_config):
+    async def test_list_reports_after_upload(self, client, admin_headers, seed_scoring_config):
         """上传后能在列表中看到"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -606,7 +606,7 @@ class TestListAndDetail:
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                 )
 
-            list_resp = await client.get("/api/v1/reports")
+            list_resp = await client.get("/api/v1/reports", headers=admin_headers)
             assert list_resp.status_code == 200
             data = list_resp.json()
             assert data["total"] >= 1
@@ -615,7 +615,7 @@ class TestListAndDetail:
         finally:
             os.unlink(f.name)
 
-    async def test_report_detail_has_all_fields(self, client, seed_scoring_config):
+    async def test_report_detail_has_all_fields(self, client, admin_headers, seed_scoring_config):
         """详情包含所有必要字段"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -629,7 +629,7 @@ class TestListAndDetail:
                 )
             report_id = resp.json()["report_id"]
 
-            detail_resp = await client.get(f"/api/v1/reports/{report_id}")
+            detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             detail = detail_resp.json()
 
             required_fields = [
@@ -643,7 +643,49 @@ class TestListAndDetail:
         finally:
             os.unlink(f.name)
 
-    async def test_nonexistent_report_returns_404(self, client):
+    async def test_nonexistent_report_returns_404(self, client, admin_headers):
         """查询不存在的周报返回 404"""
-        resp = await client.get("/api/v1/reports/nonexistent-id")
+        resp = await client.get("/api/v1/reports/nonexistent-id", headers=admin_headers)
         assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestRBACPermissions:
+    """RBAC 权限测试"""
+
+    async def test_unauthenticated_reports_list_returns_401(self, client):
+        """未登录访问周报列表返回 401"""
+        resp = await client.get("/api/v1/reports")
+        assert resp.status_code == 401
+
+    async def test_unauthenticated_config_returns_401(self, client):
+        """未登录访问配置返回 401"""
+        resp = await client.get("/api/v1/config")
+        assert resp.status_code == 401
+
+    async def test_admin_can_access_reports_list(self, client, admin_headers):
+        """管理员登录后可访问周报列表"""
+        resp = await client.get("/api/v1/reports", headers=admin_headers)
+        assert resp.status_code == 200
+
+    async def test_unauthenticated_leaderboard_succeeds(self, client):
+        """未登录访问排行榜成功"""
+        resp = await client.get("/api/v1/leaderboard")
+        assert resp.status_code == 200
+
+    async def test_unauthenticated_create_and_submit_draft_succeeds(self, client, seed_scoring_config):
+        """未登录创建草稿并提交成功"""
+        create_resp = await client.post(
+            "/api/v1/reports",
+            json={
+                "author_name": "匿名用户",
+                "department": "测试部",
+                "content": "本周完成需求开发、问题修复和联调验证，下周继续推进测试与上线准备。",
+            },
+        )
+        assert create_resp.status_code == 200
+        report_id = create_resp.json()["id"]
+
+        submit_resp = await client.post(f"/api/v1/reports/{report_id}/submit")
+        assert submit_resp.status_code == 200
+        assert submit_resp.json()["report_id"] == report_id

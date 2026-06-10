@@ -1,7 +1,6 @@
 """AI 评分引擎 - 支持小米 MiMo / 豆包 / DeepSeek"""
 import json
 import logging
-import random
 from typing import Optional
 from openai import AsyncOpenAI
 from app.config import get_settings
@@ -53,12 +52,7 @@ def get_client() -> AsyncOpenAI:
                 timeout=timeout,
             )
         else:
-            logger.warning("[AI] 未配置任何 API Key，将使用占位符")
-            _client = AsyncOpenAI(
-                api_key="placeholder",
-                base_url=getattr(settings, "ARK_BASE_URL", "https://ark.cn-beijing.volces.com/api/v3"),
-                timeout=timeout,
-            )
+            raise AIScoringError("未配置任何 AI API Key，请在 .env 中配置 MIMO_API_KEY / ARK_API_KEY / DEEPSEEK_API_KEY")
     return _client
 
 
@@ -186,16 +180,17 @@ def normalize_result(result: dict, dimensions: list) -> dict:
                 found = ds
                 break
         max_score = d["full_score"]
-        raw_score = float(found.get("score", 0)) if found else 0
+        raw_score = float(found.get("score", max_score * 0.7)) if found else max_score * 0.7
         
         ai_max = float(found.get("max", max_score)) if found else max_score
         if ai_max != max_score:
             raw_score = raw_score * max_score / ai_max
+        raw_score = max(0, min(raw_score, max_score))
         
         normalized.append(
             {
                 "name": d["name"],
-                "score": round(min(raw_score, max_score), 1),
+                "score": round(raw_score, 1),
                 "max": max_score,
                 "comment": found.get("comment", "") if found else "",
             }
@@ -240,9 +235,12 @@ def calculate_total_score(dim_scores: list) -> float:
 
 
 def get_grade(total_score: float, thresholds: dict) -> str:
-    for grade, threshold in sorted(thresholds.items(), key=lambda x: -x[1]):
+    sorted_thresholds = sorted(thresholds.items(), key=lambda x: -x[1])
+    for grade, threshold in sorted_thresholds:
         if total_score >= threshold:
             return grade
+    if sorted_thresholds and all(str(grade).isascii() for grade, _ in sorted_thresholds):
+        return "D"
     return "差"
 
 

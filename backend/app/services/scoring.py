@@ -16,6 +16,18 @@ async def get_active_config(db: AsyncSession) -> ScoringConfig | None:
     return result.scalar_one_or_none()
 
 
+def normalize_dimensions(dimensions: list[dict]) -> list[dict]:
+    normalized = []
+    for d in dimensions:
+        item = dict(d)
+        if "full_score" not in item and "weight" in item:
+            item["full_score"] = round(50 * float(item["weight"]) / 100, 1)
+        if "evaluation_content" not in item:
+            item["evaluation_content"] = item.get("description", "")
+        normalized.append(item)
+    return normalized
+
+
 async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
     """对指定周报执行评分"""
     start_time = time.time()
@@ -34,7 +46,7 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
         if not config:
             raise ValueError("未配置评分规则，请先在管理页面配置")
 
-        dimensions = config.dimensions or []
+        dimensions = normalize_dimensions(config.dimensions or [])
         if not dimensions:
             raise ValueError("评分维度为空")
 

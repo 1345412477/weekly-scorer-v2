@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from app.database import Base, get_db
 from app.main import app
 from app.models.models import Department, Person, ScoringConfig
+from app.core.auth import ensure_default_admin
 
 TEST_DB_URL = "sqlite+aiosqlite:///./test_weekly_scorer.db"
 test_engine = create_async_engine(TEST_DB_URL, echo=False)
@@ -48,6 +49,17 @@ async def client():
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
+
+
+@pytest_asyncio.fixture
+async def admin_headers(client, db):
+    await ensure_default_admin(db)
+    resp = await client.post(
+        "/api/v1/auth/login",
+        json={"username": "admin", "password": "admin123"},
+    )
+    assert resp.status_code == 200
+    return {"Authorization": f"Bearer {resp.json()['access_token']}"}
 
 
 @pytest_asyncio.fixture

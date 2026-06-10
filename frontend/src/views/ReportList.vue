@@ -1,60 +1,44 @@
 <template>
   <div class="report-list page-content">
-    <div class="page-header">
-      <div>
-        <h1>周报列表</h1>
-        <p class="page-subtitle">查看所有已提交的周报及评分结果</p>
-      </div>
-    </div>
-
-    <!-- 批量操作工具栏 -->
-    <div class="batch-toolbar">
+    <ToolbarActions class="batch-toolbar">
       <div class="batch-info">
         <span>已选择 <strong>{{ selectedReports?.length || 0 }}</strong> 条数据</span>
       </div>
-      <div class="batch-actions">
-        <Button label="导出周报" icon="pi pi-download" @click="exportReports"
-          :loading="exportLoading" :disabled="!selectedReports || selectedReports.length === 0" />
-        <Button label="批量删除" icon="pi pi-trash" severity="danger"
-          @click="confirmBatchDelete" :disabled="!selectedReports || selectedReports.length === 0" />
+      <Button label="导出周报" icon="pi pi-download" @click="exportReports"
+        :loading="exportLoading" :disabled="!selectedReports || selectedReports.length === 0" />
+      <Button label="批量删除" icon="pi pi-trash" severity="danger"
+        @click="confirmBatchDelete" :disabled="!selectedReports || selectedReports.length === 0" />
+    </ToolbarActions>
+
+    <FilterBar>
+      <div class="app-filter-item">
+        <label>提交人</label>
+        <InputText v-model="filters.author_name" placeholder="输入提交人姓名" class="filter-input" />
       </div>
-    </div>
+      <div class="app-filter-item">
+        <label>部门</label>
+        <InputText v-model="filters.department" placeholder="输入部门名称" class="filter-input" />
+      </div>
+      <div class="app-filter-item">
+        <label>是否补周报</label>
+        <Dropdown v-model="filters.is_catch_up" :options="catchUpOptions" optionLabel="label" optionValue="value"
+          placeholder="全部" class="filter-dropdown" />
+      </div>
+      <div class="app-filter-item">
+        <label>排序字段</label>
+        <Dropdown v-model="filters.sort_by" :options="sortOptions" optionLabel="label" optionValue="value"
+          placeholder="默认排序" class="filter-dropdown" />
+      </div>
+      <div class="app-filter-item">
+        <label>排序方向</label>
+        <Dropdown v-model="filters.sort_order" :options="orderOptions" optionLabel="label" optionValue="value"
+          class="filter-dropdown" />
+      </div>
+      <Button label="筛选" icon="pi pi-search" @click="applyFilters" class="filter-button" />
+      <Button label="重置" icon="pi pi-refresh" @click="resetFilters" severity="secondary" class="filter-button" />
+    </FilterBar>
 
-    <!-- 筛选区域 -->
-    <Card class="filter-card">
-      <template #content>
-        <div class="filter-row">
-          <div class="filter-item">
-            <label>提交人</label>
-            <InputText v-model="filters.author_name" placeholder="输入提交人姓名" class="filter-input" />
-          </div>
-          <div class="filter-item">
-            <label>部门</label>
-            <InputText v-model="filters.department" placeholder="输入部门名称" class="filter-input" />
-          </div>
-          <div class="filter-item">
-            <label>是否补周报</label>
-            <Dropdown v-model="filters.is_catch_up" :options="catchUpOptions" optionLabel="label" optionValue="value"
-              placeholder="全部" class="filter-dropdown" />
-          </div>
-          <div class="filter-item">
-            <label>排序字段</label>
-            <Dropdown v-model="filters.sort_by" :options="sortOptions" optionLabel="label" optionValue="value"
-              placeholder="默认排序" class="filter-dropdown" />
-          </div>
-          <div class="filter-item">
-            <label>排序方向</label>
-            <Dropdown v-model="filters.sort_order" :options="orderOptions" optionLabel="label" optionValue="value"
-              class="filter-dropdown" />
-          </div>
-          <Button label="筛选" icon="pi pi-search" @click="applyFilters" class="filter-button" />
-          <Button label="重置" icon="pi pi-refresh" @click="resetFilters" severity="secondary" class="filter-button" />
-        </div>
-      </template>
-    </Card>
-
-    <!-- 表格区域 -->
-    <div class="list-container">
+    <ResponsiveTableShell>
       <DataTable :key="tableRefreshKey" :value="reports" :loading="loading || deleting" :paginator="true" :rows="pageSize"
           :totalRecords="total" @page="onPage" :first="(page - 1) * pageSize" :lazy="true"
           paginatorPosition="bottom"
@@ -93,7 +77,7 @@
           <!-- 评分 -->
           <Column header="评分" style="min-width:80px">
             <template #body="{ data }">
-              <span v-if="data.total_score" class="score-badge">{{ data.total_score }}</span>
+              <ScoreBadge v-if="data.total_score != null" :score="data.total_score" size="sm" />
               <span v-else class="text-muted">-</span>
             </template>
           </Column>
@@ -101,7 +85,7 @@
           <!-- 等级 -->
           <Column header="等级" style="min-width:60px">
             <template #body="{ data }">
-              <span v-if="data.grade" :class="['grade-tag', gradeClass(data.grade)]">{{ getGradeName(data.grade) }}</span>
+              <GradeTag v-if="data.grade" :grade="data.grade" />
               <span v-else class="text-muted">-</span>
             </template>
           </Column>
@@ -125,7 +109,7 @@
           <Column header="操作" style="min-width:180px">
             <template #body="{ data }">
               <div class="action-buttons">
-                <router-link :to="`/reports/${data.id}`">
+                <router-link :to="`/admin/reports/${data.id}`">
                   <Button label="查看" icon="pi pi-eye" text size="small" v-tooltip="'查看详情'" />
                 </router-link>
                 <Button label="下载" icon="pi pi-download" text size="small"
@@ -137,9 +121,8 @@
             </template>
           </Column>
         </DataTable>
-      </div>
+      </ResponsiveTableShell>
 
-    <!-- 单个删除确认对话框 -->
     <Dialog v-model:visible="deleteDialog.visible" header="确认删除" :style="{ width: '450px' }" modal>
       <div class="confirmation-content">
         <i class="pi pi-exclamation-triangle mr-3" style="font-size: 2rem" />
@@ -187,11 +170,13 @@ import { useDataRefresh, getReportEvents } from '../composables/useDataRefresh'
 import { useDataOperation } from '../composables/useDataOperation'
 import { DataEventType } from '../utils/dataEvents'
 import { formatBeijingTime } from '../utils/timeUtil'
-import Card from 'primevue/card'
+import ScoreBadge from '../components/ui/ScoreBadge.vue'
+import GradeTag from '../components/ui/GradeTag.vue'
+import FilterBar from '../components/ui/FilterBar.vue'
+import ToolbarActions from '../components/ui/ToolbarActions.vue'
+import ResponsiveTableShell from '../components/ui/ResponsiveTableShell.vue'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import ColumnGroup from 'primevue/columngroup'
-import Row from 'primevue/row'
 import Button from 'primevue/button'
 import Tag from 'primevue/tag'
 import InputText from 'primevue/inputtext'
@@ -247,16 +232,6 @@ const deleteDialog = ref({
 const batchDeleteDialog = ref({
   visible: false
 })
-
-const gradeNames = { '优': '优', '良': '良', '一般': '一般', '差': '差' }
-
-function gradeClass(g) {
-  return { '优': 'grade-you', '良': 'grade-liang', '一般': 'grade-yiban', '差': 'grade-cha' }[g] || ''
-}
-
-function getGradeName(g) {
-  return gradeNames[g] || g
-}
 
 async function loadReports() {
   const params = {
@@ -480,16 +455,17 @@ const { loading } = useDataRefresh({
 }
 
 .filter-row {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  align-items: end;
   gap: var(--spacing-md);
-  flex-wrap: wrap;
 }
 
 .filter-item {
   display: flex;
-  align-items: center;
-  gap: var(--spacing-sm);
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
 }
 
 .filter-item label {
@@ -499,15 +475,15 @@ const { loading } = useDataRefresh({
 }
 
 .filter-input {
-  width: 150px;
+  width: 100%;
 }
 
 .filter-dropdown {
-  width: 120px;
+  width: 100%;
 }
 
 .filter-button {
-  margin-left: var(--spacing-sm);
+  width: 100%;
 }
 
 .export-btn {
@@ -631,11 +607,11 @@ const { loading } = useDataRefresh({
   }
 
   .filter-input {
-    width: 120px;
+    width: 100%;
   }
 
   .filter-dropdown {
-    width: 100px;
+    width: 100%;
   }
 
   .list-card :deep(.p-datatable) {
@@ -646,28 +622,39 @@ const { loading } = useDataRefresh({
 @media (max-width: 640px) {
   .batch-toolbar {
     flex-direction: column;
-    gap: var(--spacing-md);
+    align-items: stretch;
+    gap: var(--spacing-sm);
+    padding: var(--spacing-sm);
+  }
+
+  .batch-actions {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .filter-row {
+    grid-template-columns: 1fr;
+    gap: var(--spacing-sm);
   }
 
   .filter-item {
-    flex-direction: column;
-    align-items: flex-start;
     width: 100%;
   }
 
   .filter-input,
-  .filter-dropdown {
-    width: 100%;
-  }
-
+  .filter-dropdown,
   .filter-button {
     width: 100%;
-    margin-left: 0;
   }
 
   .list-container :deep(.p-paginator) {
     flex-wrap: wrap;
     gap: var(--spacing-xs);
+  }
+
+  .list-container .empty-state {
+    min-height: 180px;
+    padding: var(--spacing-lg);
   }
 
   .action-buttons {
