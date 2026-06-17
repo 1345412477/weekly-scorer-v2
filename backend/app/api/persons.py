@@ -1,11 +1,11 @@
 """人员管理 API"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 import uuid
 
 from app.database import get_db
-from app.models.models import Person, AdminUser
+from app.models.models import Person, WeeklyReport, AdminUser
 from app.schemas.schemas import PersonCreate, PersonUpdate, PersonResponse
 from app.core.auth import require_admin, write_operation_log
 
@@ -67,7 +67,7 @@ async def create_person(
     person = Person(
         id=str(uuid.uuid4()),
         name=req.name,
-        department_id=req.department_id,
+        department_id=req.department_id or None,
         department_name=req.department_name or "",
         position=req.position or "",
         email=req.email or "",
@@ -93,12 +93,14 @@ async def update_person(
     if not person:
         raise HTTPException(status_code=404, detail="人员不存在")
 
+    # 记录修改前姓名，用于后续 author_name 变更的刷新
+    old_name = person.name
     if req.name is not None:
         person.name = req.name
     if req.department_id is not None:
-        person.department_id = req.department_id
+        person.department_id = req.department_id or None
     if req.department_name is not None:
-        person.department_name = req.department_name
+        person.department_name = req.department_name or None
     if req.position is not None:
         person.position = req.position
     if req.email is not None:
@@ -106,9 +108,49 @@ async def update_person(
     if req.is_active is not None:
         person.is_active = req.is_active
 
+    # 同步刷新：该人员在 weekly_reports 中的冗余字段
+    # - 分支 1：按 person_id 强关联刷新（report.person_id = person.id）
+    # - 分支 2：按 author_name = 当前姓名刷新（尚未回填 person_id 的历史记录也会被覆盖，顺便回填 person_id）
+    # - 分支 3：按 author_name = 旧姓名刷新（改名时，把旧姓名下的 orphan 记录也改过来）
+    # 注意：weekly_reports 中的 person_id 可能为 NULL / 空字符串，必须同时走 author_name 匹配才能覆盖所有记录
+    new_department = person.department_name or ""
+    new_department_id = person.department_id
+    await db.execute(
+        update(WeeklyReport)
+        .where(WeeklyReport.person_id == person_id)
+        .values(
+            author_name=person.name,
+            department=new_department,
+            department_id=new_department_id,
+        )
+    )
+    # 分支 2：按 author_name 匹配（person_id 可能为 NULL 或空字符串，也一起回填）
+    await db.execute(
+        update(WeeklyReport)
+        .where(WeeklyReport.author_name == person.name)
+        .values(
+            person_id=person_id,
+            department=new_department,
+            department_id=new_department_id,
+        )
+    )
+    # 分支 3：改名后，把旧姓名下仍未关联 person_id 的记录也迁移过来
+    if old_name and old_name != person.name:
+        await db.execute(
+            update(WeeklyReport)
+            .where(WeeklyReport.author_name == old_name)
+            .where(WeeklyReport.person_id.is_(None) | (WeeklyReport.person_id == ""))
+            .values(
+                author_name=person.name,
+                person_id=person_id,
+                department=new_department,
+                department_id=new_department_id,
+            )
+        )
+
     await write_operation_log(db, user, "update", "person", person_id, request, {"name": person.name})
     await db.commit()
-    return {"message": "人员更新成功"}
+    return {"message": "人员更新成功", "synced_reports": True}
 
 
 @router.delete("/{person_id}")

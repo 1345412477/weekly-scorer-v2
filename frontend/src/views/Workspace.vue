@@ -3,7 +3,6 @@
     <PageHeader
       v-if="!isAdminMode"
       variant="public"
-      eyebrow="周报评分系统"
       title="轻松提交周报，实时查看评分"
       subtitle="选择提交人、上传周报文件、查看 AI 评分与团队排行榜，整个流程在一个页面完成。"
     >
@@ -100,12 +99,6 @@ const workflow = [
 .workspace-page :deep(.app-page-header-public h1) {
   font-size: clamp(22px, 2.25vw, 32px);
   letter-spacing: -0.04em;
-}
-
-.workspace-page :deep(.app-page-header-public .app-page-eyebrow) {
-  margin-bottom: 6px;
-  padding: 4px 10px;
-  background: rgba(79, 124, 255, 0.09);
 }
 
 .workspace-page :deep(.app-page-header-public .app-page-subtitle) {

@@ -244,16 +244,171 @@ def get_grade(total_score: float, thresholds: dict) -> str:
     return "差"
 
 
-async def test_connection() -> dict:
+async def score_attendance(
+    summary_text: str,
+    author_name: str,
+    department: str,
+    prompt_template: str = "",
+) -> dict:
+    """考勤评分：将本周打卡摘要（日期+上下班+地点+状态）按 attendance_prompt 打分。
+
+    返回：{"score": float, "comment": str, "raw": ...}
+    """
+    system_prompt = prompt_template or (
+        "你是一位专业的考勤评审专家。请根据员工本周的考勤打卡数据，在 0-100 分范围内给出客观评分。"
+        "评分标准由提示词中规定（若未提供，则按：全勤基础分97，工作日>=9h正常，"
+        "异常状态需管理员确认，加分项按18-19点加2分、19-20点加1分等由提示词定义）。"
+        "请严格按照提示词中的评分标准打分。"
+    )
+
+    user_prompt = (
+        f"## 员工信息\n- 姓名：{author_name}\n- 部门：{department or '未设置'}\n\n"
+        f"## 本周考勤数据\n{summary_text}\n\n"
+        f"## 输出格式（严格 JSON）\n"
+        f'{{"score": 数字0-100, "comment": "简短评价"}}'
+    )
+
     try:
         c = get_client()
-        logger.info(f"[AI] test_connection: model={settings.SCORING_MODEL}, base_url={c.base_url}")
+        response = await c.chat.completions.create(
+            model=settings.SCORING_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=settings.SCORING_TEMPERATURE,
+        )
+        raw = response.choices[0].message.content
+        result = _extract_json(raw)
+        score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
+        return {
+            "score": round(max(0.0, min(score, 100.0)), 1),
+            "comment": result.get("comment", ""),
+            "raw": raw,
+        }
+    except Exception as e:
+        raise AIScoringError(f"考勤评分失败: {str(e)}") from e
+
+
+async def score_chat(
+    summary_text: str,
+    author_name: str,
+    department: str,
+    prompt_template: str = "",
+) -> dict:
+    """沟通评分：聊天记录摘要 + 一周小结 OCR 摘要，统一按 chat_prompt 打分。
+
+    返回：{"score": float, "comment": str, "raw": ...}
+    """
+    system_prompt = prompt_template or (
+        "你是一位专业的团队协作评估专家。请根据员工本周的工作沟通记录和一周小结，"
+        "在 0-100 分范围内对其沟通质量和响应效率给出客观评分。"
+        "评分标准由提示词规定，关注工作会话次数、响应速度、沟通质量等维度。"
+    )
+
+    user_prompt = (
+        f"## 员工信息\n- 姓名：{author_name}\n- 部门：{department or '未设置'}\n\n"
+        f"## 本周沟通数据（聊天记录 + 一周小结）\n{summary_text}\n\n"
+        f"## 输出格式（严格 JSON）\n"
+        f'{{"score": 数字0-100, "comment": "简短评价"}}'
+    )
+
+    try:
+        c = get_client()
+        response = await c.chat.completions.create(
+            model=settings.SCORING_MODEL,
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt},
+            ],
+            temperature=settings.SCORING_TEMPERATURE,
+        )
+        raw = response.choices[0].message.content
+        result = _extract_json(raw)
+        score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
+        return {
+            "score": round(max(0.0, min(score, 100.0)), 1),
+            "comment": result.get("comment", ""),
+            "raw": raw,
+        }
+    except Exception as e:
+        raise AIScoringError(f"沟通评分失败: {str(e)}") from e
+
+
+AI_CONNECTION_CACHE_TTL_SECONDS = 30 * 60  # 30 分钟，避免频繁检测产生 token 消耗
+
+
+async def test_connection(db=None, force_refresh: bool = False) -> dict:
+    """测试 AI 模型连接。
+
+    - 默认启用缓存：30 分钟内相同 provider/model 直接返回上次结果，不消耗 token
+    - force_refresh=True 时强制重新检测
+    - 失败不缓存，下一次会立即重试
+    """
+    # --- 缓存读取 ---
+    if not force_refresh and db is not None:
+        try:
+            from sqlalchemy import select
+            from app.models.models import ScoringConfig
+            from app.utils.time_utils import bj_now as _bj_now
+            result = await db.execute(
+                select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1)
+            )
+            cfg = result.scalar_one_or_none()
+            if (
+                cfg
+                and getattr(cfg, "ai_connection_status", None) is not None
+                and getattr(cfg, "ai_connection_checked_at", None) is not None
+                and getattr(cfg, "ai_connection_provider", None) == settings.AI_PROVIDER
+                and getattr(cfg, "ai_connection_model", None) == settings.SCORING_MODEL
+            ):
+                elapsed = (_bj_now() - cfg.ai_connection_checked_at).total_seconds()
+                if 0 <= elapsed < AI_CONNECTION_CACHE_TTL_SECONDS:
+                    cached = {
+                        "success": bool(cfg.ai_connection_status),
+                        "provider": cfg.ai_connection_provider,
+                        "model": cfg.ai_connection_model,
+                        "checked_at": cfg.ai_connection_checked_at,
+                        "cached": True,
+                        "ttl_remaining": int(AI_CONNECTION_CACHE_TTL_SECONDS - elapsed),
+                    }
+                    logger.info(f"[AI] test_connection 命中缓存（{int(elapsed)}s 前检测）")
+                    return cached
+        except Exception as cache_err:
+            logger.debug(f"[AI] 读取 AI 连接缓存失败（忽略，将走真测）：{cache_err}")
+
+    # --- 真实检测 ---
+    try:
+        c = get_client()
+        logger.info(f"[AI] test_connection 真实检测: model={settings.SCORING_MODEL}, base_url={c.base_url}")
         response = await c.chat.completions.create(
             model=settings.SCORING_MODEL,
             messages=[{"role": "user", "content": "回复OK"}],
             max_tokens=10,
         )
         logger.info(f"[AI] test_connection 成功: response={response.choices[0].message.content}")
+
+        # 写入缓存（仅写入成功结果；失败下一次自动继续检测）
+        if db is not None:
+            try:
+                from sqlalchemy import select as _select
+                from app.models.models import ScoringConfig as _ScoringConfig
+                from app.utils.time_utils import bj_now as _bj_now
+                result = await db.execute(
+                    _select(_ScoringConfig).where(_ScoringConfig.is_active == True).limit(1)
+                )
+                cfg = result.scalar_one_or_none()
+                if not cfg:
+                    cfg = _ScoringConfig(id=str(__import__("uuid").uuid4()), is_active=True)
+                    db.add(cfg)
+                cfg.ai_connection_status = True
+                cfg.ai_connection_provider = settings.AI_PROVIDER
+                cfg.ai_connection_model = settings.SCORING_MODEL
+                cfg.ai_connection_checked_at = _bj_now()
+                await db.commit()
+            except Exception as save_err:
+                logger.warning(f"[AI] 保存 AI 连接缓存失败（忽略）：{save_err}")
+
         return {
             "success": True,
             "provider": settings.AI_PROVIDER,
@@ -265,8 +420,8 @@ async def test_connection() -> dict:
             logger.error(f"[AI] HTTP status: {e.response.status_code if hasattr(e.response, 'status_code') else 'N/A'}")
             try:
                 logger.error(f"[AI] Response body: {e.response.text if hasattr(e.response, 'text') else 'N/A'}")
-            except:
-                pass
+            except Exception as log_err:
+                logger.debug(f"[AI] 读取响应体时出错(可忽略): {log_err}")
         return {
             "success": False,
             "provider": settings.AI_PROVIDER,

@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # DEEPSEEK_BASE_URL: str = "https://api.deepseek.com"
 
     SCORING_MODEL: str = "doubao-seed-2.0-pro"
+    # 视觉模型：用于解析一周小结图片。留空则回退到 SCORING_MODEL（仅支持视觉模型时才能解析图片）
+    # 可配置如 "doubao-pro-vision-250615" / "gpt-4o-mini" / 或 Ark/OpenAI 兼容的视觉模型 endpoint
+    VISION_MODEL: str = ""
     SCORING_TEMPERATURE: float = 0.3
     AI_PROVIDER: str = "ark"
     
@@ -30,7 +33,7 @@ class Settings(BaseSettings):
     DEBUG: bool = True
     TEMPLATE_DIR: str = "./templates"
 
-    AUTH_SECRET_KEY: str = ""
+    AUTH_SECRET_KEY: str = "weekly-scorer-v2-default-secret-please-override-in-dot-env"
     ADMIN_USERNAME: str = "admin"
     ADMIN_PASSWORD: str = "admin123"
     CORS_ALLOW_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173"

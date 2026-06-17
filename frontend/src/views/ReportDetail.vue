@@ -35,7 +35,7 @@
       <div class="score-panel">
         <!-- 维度评分 -->
         <Card class="detail-card">
-          <template #title>📊 维度评分</template>
+          <template #title><i class="pi pi-chart-bar" style="color:#4f6bff;margin-right:6px"></i>维度评分</template>
           <template #content>
             <div v-if="report.dimension_scores?.length" class="dim-scores">
               <div v-for="(dim, idx) in report.dimension_scores" :key="idx" class="dim-row">
@@ -58,13 +58,13 @@
 
         <!-- AI 评语 -->
         <Card class="detail-card" style="margin-top:16px">
-          <template #title>🤖 AI 评语</template>
+          <template #title><i class="pi pi-sparkles" style="color:#8b5cf6;margin-right:6px"></i>AI 评语</template>
           <template #content>
             <div v-if="report.ai_comment" class="ai-comment">
               <p>{{ report.ai_comment }}</p>
             </div>
             <div v-if="report.ai_suggestion" class="ai-suggestion">
-              <h4>💡 改进建议</h4>
+              <h4><i class="pi pi-lightbulb" style="color:#f59e0b;margin-right:6px"></i>改进建议</h4>
               <p>{{ report.ai_suggestion }}</p>
             </div>
             <div v-if="!report.ai_comment && !report.ai_suggestion" class="empty-hint">
@@ -467,6 +467,10 @@ onMounted(loadReport)
   font-size: var(--text-lg);
   padding: 4px 14px;
   line-height: 1;
+}
+
+.score-badge-zero {
+  background: linear-gradient(135deg, #ef4444, #c0392b) !important;
 }
 
 .grade-tag {

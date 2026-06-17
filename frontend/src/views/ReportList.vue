@@ -1,15 +1,5 @@
 <template>
   <div class="report-list page-content">
-    <ToolbarActions class="batch-toolbar">
-      <div class="batch-info">
-        <span>已选择 <strong>{{ selectedReports?.length || 0 }}</strong> 条数据</span>
-      </div>
-      <Button label="导出周报" icon="pi pi-download" @click="exportReports"
-        :loading="exportLoading" :disabled="!selectedReports || selectedReports.length === 0" />
-      <Button label="批量删除" icon="pi pi-trash" severity="danger"
-        @click="confirmBatchDelete" :disabled="!selectedReports || selectedReports.length === 0" />
-    </ToolbarActions>
-
     <FilterBar>
       <div class="app-filter-item">
         <label>提交人</label>
@@ -20,645 +10,682 @@
         <InputText v-model="filters.department" placeholder="输入部门名称" class="filter-input" />
       </div>
       <div class="app-filter-item">
-        <label>是否补周报</label>
-        <Dropdown v-model="filters.is_catch_up" :options="catchUpOptions" optionLabel="label" optionValue="value"
-          placeholder="全部" class="filter-dropdown" />
+        <label>周起始日期</label>
+        <Calendar v-model="filters.week_start" dateFormat="yy-mm-dd" placeholder="选择周一" :showIcon="true" class="filter-input" />
       </div>
-      <div class="app-filter-item">
-        <label>排序字段</label>
-        <Dropdown v-model="filters.sort_by" :options="sortOptions" optionLabel="label" optionValue="value"
-          placeholder="默认排序" class="filter-dropdown" />
+      <div class="app-filter-item filter-action-group">
+        <label>&nbsp;</label>
+        <div class="filter-action-buttons">
+          <Button label="筛选" icon="pi pi-search" @click="loadData" class="filter-action-btn" />
+          <Button label="重置" icon="pi pi-refresh" @click="resetFilters" severity="secondary" class="filter-action-btn" />
+        </div>
       </div>
-      <div class="app-filter-item">
-        <label>排序方向</label>
-        <Dropdown v-model="filters.sort_order" :options="orderOptions" optionLabel="label" optionValue="value"
-          class="filter-dropdown" />
-      </div>
-      <Button label="筛选" icon="pi pi-search" @click="applyFilters" class="filter-button" />
-      <Button label="重置" icon="pi pi-refresh" @click="resetFilters" severity="secondary" class="filter-button" />
     </FilterBar>
 
+    <!-- 评分状态指示器 -->
+    <div v-if="scoringStatus.visible" class="scoring-status-bar"
+         :class="scoringStatus.running ? 'status-running' : (scoringStatus.lastResult === 'error' ? 'status-error' : 'status-done')">
+      <template v-if="scoringStatus.running">
+        <i class="pi pi-spin pi-spinner" style="font-size:16px;margin-right:8px"></i>
+        <span>正在定时聚合评分… {{ scoringStatus.processed }}/{{ scoringStatus.total }}
+          <template v-if="scoringStatus.currentPerson">（当前：{{ scoringStatus.currentPerson }}）</template>
+          <template v-if="scoringStatus.errors"> | ⚠ {{ scoringStatus.errors }} 人失败</template>
+        </span>
+      </template>
+      <template v-else>
+        <i class="pi" :class="scoringStatus.lastResult === 'error' ? 'pi-exclamation-triangle' : 'pi-check-circle'" style="font-size:16px;margin-right:8px"></i>
+        <span>{{ scoringStatus.lastMessage || '评分已完成' }}</span>
+        <span v-if="scoringStatus.lastRunAt" class="status-time">{{ formatBeijingTimeShort(scoringStatus.lastRunAt) }}</span>
+        <Button icon="pi pi-replay" severity="secondary" text rounded size="small" :loading="triggerLoading" @click="onTriggerScoring" style="margin-left:8px" v-tooltip.top="'手动触发评分'" />
+        <Button icon="pi pi-times" severity="secondary" text rounded size="small" @click="scoringStatus.visible = false" style="margin-left:4px" />
+      </template>
+    </div>
+
+    <!-- 批量操作栏 -->
+    <div v-if="aggregates.length" class="batch-bar">
+      <div class="batch-bar-left">
+        <span class="batch-count">已选 <strong>{{ selectedRows.length }}</strong> 条</span>
+      </div>
+      <div class="batch-bar-right">
+        <Button label="批量导出周报" icon="pi pi-download" severity="success"
+                :disabled="!selectedRows.length"
+                @click="onBatchExport" outlined size="small" />
+        <Button label="批量删除" icon="pi pi-trash" severity="danger"
+                :disabled="!selectedRows.length"
+                @click="onBatchDelete" outlined size="small" />
+      </div>
+    </div>
+
     <ResponsiveTableShell>
-      <DataTable :key="tableRefreshKey" :value="reports" :loading="loading || deleting" :paginator="true" :rows="pageSize"
+      <DataTable :key="tableRefreshKey" :value="aggregates" :loading="loading" :paginator="true" :rows="pageSize"
           :totalRecords="total" @page="onPage" :first="(page - 1) * pageSize" :lazy="true"
           paginatorPosition="bottom"
           class="dark-table" dataKey="id"
-          responsiveLayout="scroll"
-          v-model:selection="selectedReports"
-          selectionMode="multiple"
-          @update:selection="onSelectionChange">
-          <template #empty>
-            <div class="empty-state">
-              <i class="pi pi-inbox empty-icon"></i>
-              <div class="empty-text">暂无周报数据</div>
+          selectionMode="multiple" v-model:selection="selectedRows"
+          responsiveLayout="scroll">
+        <template #empty>
+          <div class="empty-state">
+            <i class="pi pi-inbox empty-icon"></i>
+            <div class="empty-text">暂无周评数据，请先上传周报、考勤或聊天记录</div>
+          </div>
+        </template>
+
+        <!-- 复选框列（PrimeVue 原生） -->
+        <Column selectionMode="multiple" headerStyle="width: 56px" style="width: 56px"></Column>
+
+        <!-- 周次 -->
+        <Column header="周次" style="min-width:110px">
+          <template #body="{ data }">
+            <Tag :value="formatWeek(data.week_start, data.week_end)" severity="info" />
+          </template>
+        </Column>
+
+        <!-- 提交人 -->
+        <Column field="author_name" header="提交人" style="min-width:100px" />
+
+        <!-- 部门 -->
+        <Column field="department" header="部门" style="min-width:120px">
+          <template #body="{ data }">
+            <span>{{ data.department || '-' }}</span>
+          </template>
+        </Column>
+
+        <!-- 考勤分 -->
+        <Column header="考勤分" style="min-width:100px">
+          <template #body="{ data }">
+            <span
+              v-if="data.attendance_score != null"
+              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.attendance_score) === 0 }]"
+              @dblclick="openEdit(data, 'attendance_score')"
+              :title="'双击修改考勤分'">
+              {{ Math.round(Number(data.attendance_score)) }}
+            </span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </Column>
+
+        <!-- 周报分 -->
+        <Column header="周报分" style="min-width:100px">
+          <template #body="{ data }">
+            <span
+              v-if="data.report_score != null"
+              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.report_score) === 0 }]"
+              @dblclick="openEdit(data, 'report_score')"
+              :title="'双击修改周报分'">
+              {{ Math.round(Number(data.report_score)) }}
+            </span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </Column>
+
+        <!-- 沟通分 -->
+        <Column header="沟通分" style="min-width:100px">
+          <template #body="{ data }">
+            <span
+              v-if="data.chat_score != null"
+              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.chat_score) === 0 }]"
+              @dblclick="openEdit(data, 'chat_score')"
+              :title="'双击修改沟通分'">
+              {{ Math.round(Number(data.chat_score)) }}
+            </span>
+            <span v-else class="text-muted">-</span>
+          </template>
+        </Column>
+
+        <!-- 总分 -->
+        <Column header="总分" style="min-width:110px">
+          <template #body="{ data }">
+            <ScoreBadge v-if="data.composite_score != null" :score="Number(data.composite_score)" size="sm" />
+            <span v-else class="text-muted">-</span>
+          </template>
+        </Column>
+
+        <!-- 更新时间 -->
+        <Column header="更新时间" style="min-width:160px">
+          <template #body="{ data }">
+            <span class="text-muted small">{{ formatBeijingTimeShort(data.modified_at || data.updated_at) }}</span>
+          </template>
+        </Column>
+
+        <!-- 操作 -->
+        <Column header="操作" style="min-width:320px" :frozen="false">
+          <template #body="{ data }">
+            <div class="row-actions">
+              <Button label="查看周报" icon="pi pi-eye"
+                      size="small" text severity="info" @click="viewReport(data)" />
+              <Button label="下载周报" icon="pi pi-download"
+                      size="small" text severity="success" @click="onDownloadReport(data)" />
+              <Button label="删除" icon="pi pi-trash"
+                      size="small" text severity="danger" @click="onDelete(data)" />
+              <Button v-if="data.manual_override && Object.keys(data.manual_override).length" label="恢复 AI" icon="pi pi-reply"
+                      size="small" text severity="secondary" @click="restoreAI(data)" />
             </div>
           </template>
+        </Column>
+      </DataTable>
+    </ResponsiveTableShell>
 
-          <!-- 选择列 -->
-          <Column selectionMode="multiple" headerStyle="width: 3rem" />
-
-          <!-- 周次 -->
-          <Column header="周次" style="min-width:80px">
-            <template #body="{ data }">
-              <Tag :value="`第${data.week_num || '-'}周`" severity="info" />
-            </template>
-          </Column>
-
-          <!-- 提交人 -->
-          <Column field="author_name" header="提交人" style="min-width:100px" />
-
-          <!-- 部门 -->
-          <Column field="department" header="部门" style="min-width:120px">
-            <template #body="{ data }">
-              <span>{{ data.department || '-' }}</span>
-            </template>
-          </Column>
-
-          <!-- 评分 -->
-          <Column header="评分" style="min-width:80px">
-            <template #body="{ data }">
-              <ScoreBadge v-if="data.total_score != null" :score="data.total_score" size="sm" />
-              <span v-else class="text-muted">-</span>
-            </template>
-          </Column>
-
-          <!-- 等级 -->
-          <Column header="等级" style="min-width:60px">
-            <template #body="{ data }">
-              <GradeTag v-if="data.grade" :grade="data.grade" />
-              <span v-else class="text-muted">-</span>
-            </template>
-          </Column>
-
-          <!-- 是否补周报 -->
-          <Column header="是否补周报" style="min-width:100px">
-            <template #body="{ data }">
-              <Tag :value="data.report_type === 'catch_up' ? '是' : '否'"
-                :severity="data.report_type === 'catch_up' ? 'warn' : 'success'" />
-            </template>
-          </Column>
-
-          <!-- 提交时间 -->
-          <Column header="提交时间" style="min-width:160px">
-            <template #body="{ data }">
-              <span class="text-muted">{{ formatBeijingTime(data.submit_time || data.created_at) }}</span>
-            </template>
-          </Column>
-
-          <!-- 操作 -->
-          <Column header="操作" style="min-width:180px">
-            <template #body="{ data }">
-              <div class="action-buttons">
-                <router-link :to="`/admin/reports/${data.id}`">
-                  <Button label="查看" icon="pi pi-eye" text size="small" v-tooltip="'查看详情'" />
-                </router-link>
-                <Button label="下载" icon="pi pi-download" text size="small"
-                  @click="downloadReport(data)" v-tooltip="'下载周报文件'"
-                  :disabled="!data.original_filename" />
-                <Button label="删除" icon="pi pi-trash" text size="small" severity="danger"
-                  @click="confirmDelete(data)" v-tooltip="'删除周报'" />
-              </div>
-            </template>
-          </Column>
-        </DataTable>
-      </ResponsiveTableShell>
-
-    <Dialog v-model:visible="deleteDialog.visible" header="确认删除" :style="{ width: '450px' }" modal>
-      <div class="confirmation-content">
-        <i class="pi pi-exclamation-triangle mr-3" style="font-size: 2rem" />
-        <span>确定要删除周报吗？</span>
-        <div class="delete-info">
-          <div><strong>提交人：</strong>{{ deleteDialog.report?.author_name }}</div>
-          <div><strong>周次：</strong>第{{ deleteDialog.report?.week_num }}周</div>
-          <div><strong>提交时间：</strong>{{ formatBeijingTime(deleteDialog.report?.submit_time) }}</div>
+    <!-- 修改分数弹窗 -->
+    <Dialog v-model:visible="editDialog.show" header="修改分数" :style="{ width: '420px' }" :closable="true">
+      <div class="edit-body">
+        <div class="edit-info">
+          <div><strong>{{ editDialog.author_name }}</strong> · {{ editDialog.department || '-' }}</div>
+          <div class="text-muted small">{{ editDialog.week_range }}</div>
+          <div class="edit-field-name">修改字段：<strong>{{ fieldLabelMap[editDialog.field] }}</strong></div>
         </div>
-        <div class="warning-text">删除后将无法恢复，请谨慎操作！</div>
+
+        <div class="input-row">
+          <label>新的分数（0 ~ 100）</label>
+          <InputNumber v-model="editDialog.newValue" :min="0" :max="100" :step="0.5" :maxFractionDigits="1"
+                       placeholder="输入新分数" style="width:100%" />
+        </div>
+
+        <div class="edit-preview">
+          <div>当前三项分数：</div>
+          <div class="score-preview">
+            <span>考勤 {{ editDialog.attendance_score ?? '-' }}</span>
+            <span>周报 {{ editDialog.report_score ?? '-' }}</span>
+            <span>沟通 {{ editDialog.chat_score ?? '-' }}</span>
+          </div>
+          <div class="composite-preview">保存后总分：<strong>{{ computedComposite }}</strong></div>
+        </div>
       </div>
       <template #footer>
-        <Button label="取消" icon="pi pi-times" @click="deleteDialog.visible = false" text />
-        <Button label="确认删除" icon="pi pi-check" @click="executeDelete" severity="danger" autofocus />
+        <Button label="取消" icon="pi pi-times" severity="secondary" @click="editDialog.show = false" />
+        <Button label="保存" icon="pi pi-check" :disabled="editDialog.newValue == null"
+                :loading="editDialog.saving" @click="saveEdit" />
       </template>
     </Dialog>
 
-    <!-- 批量删除确认对话框 -->
-    <Dialog v-model:visible="batchDeleteDialog.visible" header="批量删除确认" :style="{ width: '450px' }" modal>
-      <div class="confirmation-content">
-        <i class="pi pi-exclamation-triangle mr-3" style="font-size: 2rem" />
-        <span>确定要删除选中的 <strong>{{ selectedReports.length }}</strong> 份周报吗？</span>
-        <div class="warning-text">此操作不可恢复！删除后将无法恢复这些周报数据。</div>
+    <!-- 确认弹窗（替代 PrimeVue ConfirmService，更稳定） -->
+    <Dialog v-model:visible="confirmDialog.show" :header="confirmDialog.title" :style="{ width: '400px' }" :closable="true">
+      <div class="confirm-body">
+        <div class="confirm-icon">
+          <i class="pi pi-exclamation-triangle" style="font-size:32px;color:#e74c3c"></i>
+        </div>
+        <div class="confirm-message">{{ confirmDialog.message }}</div>
       </div>
       <template #footer>
-        <Button label="取消" icon="pi pi-times" @click="batchDeleteDialog.visible = false" text />
-        <Button label="确认删除" icon="pi pi-check" @click="executeBatchDelete" severity="danger" autofocus />
+        <Button label="取消" icon="pi pi-times" severity="secondary" @click="confirmDialog.show = false" />
+        <Button label="确认" icon="pi pi-check" severity="danger" :loading="confirmDialog.saving" @click="onConfirmAccept" />
       </template>
     </Dialog>
-
-    <!-- 导出加载遮罩 -->
-    <div v-if="exportLoading" class="export-overlay">
-      <div class="export-loading">
-        <i class="pi pi-spin pi-spinner" style="font-size: 2rem" />
-        <span>正在导出数据...</span>
-      </div>
-    </div>
   </div>
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
-import { reportAPI } from '../api'
-import { useDataRefresh, getReportEvents } from '../composables/useDataRefresh'
-import { useDataOperation } from '../composables/useDataOperation'
-import { DataEventType } from '../utils/dataEvents'
-import { formatBeijingTime } from '../utils/timeUtil'
-import ScoreBadge from '../components/ui/ScoreBadge.vue'
-import GradeTag from '../components/ui/GradeTag.vue'
-import FilterBar from '../components/ui/FilterBar.vue'
-import ToolbarActions from '../components/ui/ToolbarActions.vue'
-import ResponsiveTableShell from '../components/ui/ResponsiveTableShell.vue'
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue'
+
+const scoringStatus = reactive({
+  visible: false,
+  running: false,
+  total: 0,
+  processed: 0,
+  errors: 0,
+  currentPerson: '',
+  lastRunAt: null,
+  lastResult: null,
+  lastMessage: '',
+})
+
+let scoringPollTimer = null
+const triggerLoading = ref(false)
+
+async function fetchScoringStatus() {
+  try {
+    const { data } = await aggregateAPI.scoringStatus()
+    const wasRunning = scoringStatus.running
+    Object.assign(scoringStatus, data)
+
+    // 若从未执行过且当前不在运行 → 不显示
+    if (!scoringStatus.running && !scoringStatus.lastRunAt) {
+      scoringStatus.visible = false
+      return
+    }
+
+    // 刚结束一轮评分 → 显示结果并刷新列表
+    if (wasRunning && !scoringStatus.running) {
+      scoringStatus.visible = true
+      loadData()
+    }
+
+    // 正在运行 → 持续显示 + 继续轮询
+    if (scoringStatus.running) {
+      scoringStatus.visible = true
+    }
+
+    // 非运行态但有历史记录 → 显示最近一次结果
+    if (!scoringStatus.running && scoringStatus.lastRunAt) {
+      scoringStatus.visible = true
+    }
+  } catch {
+    // 接口挂了不弹错误，静默跳过
+  }
+}
+
+function startScoringPoll() {
+  fetchScoringStatus()
+  scoringPollTimer = setInterval(fetchScoringStatus, 5000)
+}
+
+async function onTriggerScoring() {
+  triggerLoading.value = true
+  try {
+    await aggregateAPI.triggerScoring()
+    scoringStatus.visible = true
+    scoringStatus.running = true
+  } catch (e) {
+    const msg = e.response?.data?.detail || '触发失败'
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
+  } finally {
+    triggerLoading.value = false
+  }
+}
+import { useRouter } from 'vue-router'
+import Button from 'primevue/button'
+import InputText from 'primevue/inputtext'
+import InputNumber from 'primevue/inputnumber'
+import Calendar from 'primevue/calendar'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
-import Button from 'primevue/button'
 import Tag from 'primevue/tag'
-import InputText from 'primevue/inputtext'
-import Dropdown from 'primevue/dropdown'
 import Dialog from 'primevue/dialog'
 import { useToast } from 'primevue/usetoast'
 
-const toast = useToast()
-const { operationInProgress: deleting, execute } = useDataOperation()
+import ResponsiveTableShell from '../components/ui/ResponsiveTableShell.vue'
+import FilterBar from '../components/ui/FilterBar.vue'
+import ScoreBadge from '../components/ui/ScoreBadge.vue'
+import { formatBeijingTimeShort, getBeijingDateFilename } from '../utils/timeUtil.js'
+import { aggregateAPI } from '../api'
 
-const exportLoading = ref(false)
-const tableRefreshKey = ref(0)
-const reports = ref([])
+const toast = useToast()
+const router = useRouter()
+
+const loading = ref(false)
+const aggregates = ref([])
 const total = ref(0)
 const page = ref(1)
 const pageSize = ref(10)
-const selectedReports = ref([])
+const tableRefreshKey = ref(0)
+const selectedRows = ref([])
 
-// 筛选条件
-const filters = ref({
+const filters = reactive({
   author_name: '',
   department: '',
-  is_catch_up: null,
-  sort_by: null,
-  sort_order: 'desc'
+  week_start: null,
 })
 
-// 筛选选项
-const catchUpOptions = [
-  { label: '全部', value: null },
-  { label: '是', value: 'yes' },
-  { label: '否', value: 'no' }
-]
-
-const sortOptions = [
-  { label: '默认排序', value: null },
-  { label: '周次', value: 'week' },
-  { label: '提交时间', value: 'submit_time' }
-]
-
-const orderOptions = [
-  { label: '降序', value: 'desc' },
-  { label: '升序', value: 'asc' }
-]
-
-// 删除确认对话框
-const deleteDialog = ref({
-  visible: false,
-  report: null
+const editDialog = reactive({
+  show: false,
+  saving: false,
+  id: null,
+  author_name: '',
+  department: '',
+  week_range: '',
+  field: '',
+  newValue: null,
+  attendance_score: null,
+  report_score: null,
+  chat_score: null,
 })
 
-// 批量删除确认对话框
-const batchDeleteDialog = ref({
-  visible: false
+const confirmDialog = reactive({
+  show: false,
+  title: '确认操作',
+  message: '',
+  saving: false,
+  onAccept: null, // 保存回调：点击确认后执行
 })
 
-async function loadReports() {
-  const params = {
-    page: page.value,
-    size: pageSize.value
-  }
+const fieldLabelMap = {
+  attendance_score: '考勤分',
+  report_score: '周报分',
+  chat_score: '沟通分',
+}
 
-  if (filters.value.author_name) {
-    params.author_name = filters.value.author_name
-  }
-  if (filters.value.department) {
-    params.department = filters.value.department
-  }
-  if (filters.value.is_catch_up) {
-    params.is_catch_up = filters.value.is_catch_up
-  }
-  if (filters.value.sort_by) {
-    params.sort_by = filters.value.sort_by
-    params.sort_order = filters.value.sort_order
-  }
+const computedComposite = computed(() => {
+  const a = editDialog.field === 'attendance_score' ? editDialog.newValue : editDialog.attendance_score
+  const r = editDialog.field === 'report_score' ? editDialog.newValue : editDialog.report_score
+  const c = editDialog.field === 'chat_score' ? editDialog.newValue : editDialog.chat_score
+  let sum = 0
+  if (a != null) sum += Number(a)
+  if (r != null) sum += Number(r)
+  if (c != null) sum += Number(c)
+  return Math.round(sum)
+})
 
-  const res = await reportAPI.list(params)
-  reports.value = res.data.items || []
-  total.value = res.data.total || 0
-  
-  // 重置选择状态并强制刷新表格
-  selectedReports.value = []
-  tableRefreshKey.value++
+function formatWeek(ws, we) {
+  if (!ws) return '-'
+  return `${String(ws).slice(5, 10)} ~ ${String(we || '').slice(5, 10) || '-'} `
+}
+
+async function loadData() {
+  loading.value = true
+  try {
+    const params = {
+      page: page.value,
+      size: pageSize.value,
+    }
+    if (filters.author_name) params.author_name = filters.author_name
+    if (filters.department) params.department = filters.department
+    if (filters.week_start) {
+      params.week_start = isDate(filters.week_start) ? toISODate(filters.week_start) : String(filters.week_start).slice(0, 10)
+    }
+    const res = await aggregateAPI.list(params)
+    aggregates.value = res.data.items || []
+    total.value = Number(res.data.total || 0)
+  } catch (e) {
+    toast.add({ severity: 'error', summary: '加载失败', life: 3000 })
+  } finally {
+    loading.value = false
+    selectedRows.value = []
+  }
+}
+
+function toISODate(d) {
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+function isDate(v) { return v instanceof Date && !isNaN(v.valueOf()) }
+
+function resetFilters() {
+  filters.author_name = ''
+  filters.department = ''
+  filters.week_start = null
+  page.value = 1
+  loadData()
 }
 
 function onPage(e) {
   page.value = e.page + 1
-  loadReports()
+  loadData()
 }
 
-function applyFilters() {
-  page.value = 1
-  loadReports()
+function openEdit(data, field) {
+  editDialog.show = true
+  editDialog.saving = false
+  editDialog.id = data.id
+  editDialog.author_name = data.author_name
+  editDialog.department = data.department || ''
+  editDialog.week_range = `${data.week_start || '-'} ~ ${data.week_end || '-'}`
+  editDialog.field = field
+  editDialog.attendance_score = data.attendance_score
+  editDialog.report_score = data.report_score
+  editDialog.chat_score = data.chat_score
+  editDialog.newValue = Number(data[field]) ?? 0
 }
 
-function resetFilters() {
-  filters.value = {
-    author_name: '',
-    department: '',
-    is_catch_up: null,
-    sort_by: null,
-    sort_order: 'desc'
-  }
-  page.value = 1
-  loadReports()
-}
-
-function onSelectionChange(e) {
-  selectedReports.value = e
-}
-
-async function downloadReport(report) {
+async function saveEdit() {
+  if (editDialog.newValue == null) return
+  editDialog.saving = true
   try {
-    const res = await reportAPI.download(report.id)
-    const url = window.URL.createObjectURL(new Blob([res.data]))
-    const link = document.createElement('a')
-    link.href = url
-    link.setAttribute('download', report.original_filename || `周报_${report.id}.xlsx`)
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.URL.revokeObjectURL(url)
+    const payload = { [editDialog.field]: Number(editDialog.newValue) }
+    await aggregateAPI.update(editDialog.id, payload)
+    toast.add({ severity: 'success', summary: '分数更新成功', life: 2500 })
+    editDialog.show = false
+    loadData()
+  } catch (e) {
+    const msg = e.response?.data?.detail || '更新失败，请重试'
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
+  } finally {
+    editDialog.saving = false
+  }
+}
+
+async function restoreAI(data) {
+  try {
+    await aggregateAPI.restoreAI(data.id)
+    toast.add({ severity: 'success', summary: '已恢复 AI 原始评分', life: 2500 })
+    loadData()
+  } catch (e) {
+    toast.add({ severity: 'error', summary: '恢复失败，请重试', life: 3000 })
+  }
+}
+
+function viewReport(data) {
+  if (data.report_id) {
+    router.push(`/admin/reports/${data.report_id}`)
+    return
+  }
+  // 若无 report_id，通过 author_name + week_start 调用后端获取（后端已有对应接口）
+  // 先尝试通过下载报告接口的间接方式——实际路由跳转到 ReportDetail 需要 report_id
+  // 这里直接给用户提示
+  toast.add({ severity: 'warn', summary: '该周评暂未关联周报', life: 2500 })
+}
+
+function downloadBlob(blob, filename) {
+  const url = window.URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  window.URL.revokeObjectURL(url)
+}
+
+async function onDownloadReport(data) {
+  try {
+    const res = await aggregateAPI.downloadReport(data.id)
+    downloadBlob(res.data, `${data.author_name}_${data.week_start}_周报.xlsx`)
     toast.add({ severity: 'success', summary: '下载成功', life: 2000 })
   } catch (e) {
-    console.error('[ReportList] 下载失败:', e)
-    toast.add({ severity: 'error', summary: '下载失败', detail: e.userMessage || '请稍后重试', life: 3000 })
+    const msg = e.response?.data?.detail || '下载失败'
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
   }
 }
 
-async function exportReports() {
-  if (!selectedReports.value || selectedReports.value.length === 0) {
-    toast.add({ severity: 'warn', summary: '请先选择要导出的周报', life: 2000 })
-    return
+function onDelete(data) {
+  confirmDialog.title = '删除确认'
+  confirmDialog.message = `确认删除「${data.author_name} · ${formatWeek(data.week_start, data.week_end)}」的周评记录吗？`
+  confirmDialog.show = true
+  confirmDialog.onAccept = async () => {
+    try {
+      await aggregateAPI.delete(data.id)
+      toast.add({ severity: 'success', summary: '已删除', life: 2000 })
+      loadData()
+    } catch (e) {
+      const msg = e.response?.data?.detail || '删除失败'
+      toast.add({ severity: 'error', summary: msg, life: 3000 })
+    }
   }
+}
 
-  exportLoading.value = true
+function onBatchDelete() {
+  if (!selectedRows.value.length) return
+  const ids = selectedRows.value.map(r => r.id)
+  confirmDialog.title = '批量删除确认'
+  confirmDialog.message = `确认删除所选 ${ids.length} 条周评记录吗？`
+  confirmDialog.show = true
+  confirmDialog.onAccept = async () => {
+    try {
+      await aggregateAPI.batchDelete(ids)
+      toast.add({ severity: 'success', summary: `已删除 ${ids.length} 条记录`, life: 2500 })
+      loadData()
+    } catch (e) {
+      const msg = e.response?.data?.detail || '批量删除失败'
+      toast.add({ severity: 'error', summary: msg, life: 3000 })
+    }
+  }
+}
+
+async function onConfirmAccept() {
+  const cb = confirmDialog.onAccept
+  confirmDialog.saving = true
   try {
-    const reportIds = selectedReports.value.map(r => r.id)
-    const res = await reportAPI.export(reportIds)
-    
-    const url = window.URL.createObjectURL(new Blob([res.data]))
-    const link = document.createElement('a')
-    link.href = url
-    
-    let filename = null
-    const disposition = res.headers['content-disposition']
-    if (disposition) {
-      const match = disposition.match(/filename\*=UTF-8''(.+)/)
-      if (match) {
-        filename = decodeURIComponent(match[1])
-      } else {
-        const fallback = disposition.split('filename=')[1]
-        if (fallback) filename = fallback.replace(/"/g, '')
-      }
+    if (typeof cb === 'function') {
+      await Promise.resolve(cb())
     }
-    if (!filename) filename = `周报_${new Date().getTime()}.zip`
-    link.setAttribute('download', filename)
-    
-    document.body.appendChild(link)
-    link.click()
-    link.remove()
-    window.URL.revokeObjectURL(url)
-    
-    toast.add({ severity: 'success', summary: '导出成功', life: 2000 })
-  } catch (e) {
-    console.error('[ReportList] 导出失败:', e)
-    toast.add({ severity: 'error', summary: '导出失败', detail: e.userMessage || '请稍后重试', life: 3000 })
   } finally {
-    exportLoading.value = false
+    confirmDialog.show = false
+    confirmDialog.saving = false
+    confirmDialog.onAccept = null
   }
 }
 
-function confirmDelete(report) {
-  deleteDialog.value.report = report
-  deleteDialog.value.visible = true
-}
-
-async function executeDelete() {
-  const reportId = deleteDialog.value.report?.id
-  if (!reportId) return
-
-  deleteDialog.value.visible = false
-
-  const { success } = await execute(
-    () => reportAPI.delete(reportId),
-    {
-      name: '删除周报',
-      eventTypes: [DataEventType.REPORTS_CHANGED, DataEventType.LEADERBOARD_CHANGED],
-      successMsg: '删除成功',
-      errorMsg: '删除失败',
-    }
-  )
-
-  if (success) {
-    await loadReports()
+async function onBatchExport() {
+  if (!selectedRows.value.length) return
+  const ids = selectedRows.value.map(r => r.id)
+  try {
+    const res = await aggregateAPI.export({ ids })
+    downloadBlob(res.data, `周报打包_${ids.length}份_${getBeijingDateFilename()}.zip`)
+    toast.add({ severity: 'success', summary: `已打包 ${ids.length} 份周报`, life: 2500 })
+  } catch (e) {
+    const msg = e.response?.data?.detail || '导出失败'
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
   }
 }
 
-function confirmBatchDelete() {
-  batchDeleteDialog.value.visible = true
-}
+onMounted(() => {
+  loadData()
+  startScoringPoll()
+})
 
-async function executeBatchDelete() {
-  const reportIds = selectedReports.value.map(r => r.id)
-  if (reportIds.length === 0) {
-    batchDeleteDialog.value.visible = false
-    return
+onUnmounted(() => {
+  if (scoringPollTimer) {
+    clearInterval(scoringPollTimer)
+    scoringPollTimer = null
   }
-
-  batchDeleteDialog.value.visible = false
-
-  const { success } = await execute(
-    () => reportAPI.batchDelete(reportIds),
-    {
-      name: '批量删除',
-      eventTypes: [DataEventType.REPORTS_CHANGED, DataEventType.LEADERBOARD_CHANGED],
-      successMsg: '批量删除成功',
-      errorMsg: '批量删除失败',
-    }
-  )
-
-  if (success) {
-    selectedReports.value = []
-    await loadReports()
-  }
-}
-
-// 使用自动刷新 composable（autoLoad 默认 true，会在挂载时自动加载）
-const { loading } = useDataRefresh({
-  loadFn: loadReports,
-  watchEvents: getReportEvents(),
-  debounceMs: 300,
 })
 </script>
 
 <style scoped>
-/* ========== 批量操作工具栏 ========== */
-.batch-toolbar {
+.report-list { display: flex; flex-direction: column; gap: 18px; }
+
+.page-header h1 {
+  font-size: 26px;
+  color: #1e2335;
+  margin: 0 0 6px;
+}
+.page-desc {
+  color: #5a6481;
+  font-size: 14px;
+  margin: 0;
+}
+
+.score-cell.editable {
+  display: inline-block;
+  padding: 4px 10px;
+  border-radius: 8px;
+  background: rgba(79, 107, 255, 0.08);
+  color: #4f6bff;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background 0.15s;
+  font-variant-numeric: tabular-nums;
+}
+.score-cell.editable:hover {
+  background: rgba(79, 107, 255, 0.16);
+}
+.score-cell.score-cell-zero {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+.score-cell.score-cell-zero:hover {
+  background: rgba(239, 68, 68, 0.2);
+}
+.text-muted { color: #97a0bd; }
+.text-muted.small { font-size: 12px; }
+
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+/* 评分状态指示器 */
+.scoring-status-bar {
+  display: flex;
+  align-items: center;
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 14px;
+  font-weight: 500;
+}
+.scoring-status-bar.status-running {
+  background: #e8f0ff;
+  color: #1a56db;
+  border: 1px solid #b3d4ff;
+}
+.scoring-status-bar.status-done {
+  background: #ecfdf5;
+  color: #065f46;
+  border: 1px solid #a7f3d0;
+}
+.scoring-status-bar.status-error {
+  background: #fef2f2;
+  color: #991b1b;
+  border: 1px solid #fecaca;
+}
+.scoring-status-bar .status-time {
+  margin-left: 12px;
+  font-size: 12px;
+  opacity: 0.7;
+}
+
+/* 筛选/重置按钮组 */
+.filter-action-buttons {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.filter-action-group {
+  align-self: stretch;
+}
+
+.filter-action-btn {
+  padding: 0 18px !important;
+  height: 38px;
+}
+
+.batch-bar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--spacing-md);
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  margin-bottom: var(--spacing-lg);
-  border: 1px solid var(--border-light);
+  padding: 10px 16px;
+  background: #f8faff;
+  border: 1px solid #e1e7ff;
+  border-radius: 10px;
 }
+.batch-bar-left { display: flex; align-items: center; gap: 12px; }
+.batch-bar-right { display: flex; gap: 8px; }
+.batch-count { font-size: 13px; color: #5a6481; }
+.batch-count strong { color: #1e2335; font-size: 14px; }
 
-.batch-info {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-}
+.edit-body, .confirm-body { display: flex; flex-direction: column; gap: 14px; }
 
-.batch-info strong {
-  color: var(--primary);
-  font-weight: 600;
-}
-
-.batch-actions {
-  display: flex;
+.confirm-body {
+  flex-direction: row;
   align-items: center;
-  gap: var(--spacing-sm);
+  gap: 16px;
+  padding: 8px 4px;
 }
+.confirm-icon { flex-shrink: 0; }
+.confirm-message { font-size: 14px; color: #3a4059; line-height: 1.6; }
 
-/* ========== 筛选卡片 ========== */
-.filter-card {
-  margin-bottom: var(--spacing-lg);
+.edit-info {
+  padding: 12px 14px;
+  background: #f8faff;
+  border-radius: 10px;
+  line-height: 1.7;
+  font-size: 14px;
+  color: #1e2335;
 }
+.edit-field-name { margin-top: 6px; color: #4f6bff; }
 
-.filter-card :deep(.p-card-body) {
-  padding: var(--spacing-md);
+.input-row { display: flex; flex-direction: column; gap: 6px; }
+.input-row label { font-size: 13px; color: #5a6481; font-weight: 500; }
+
+.edit-preview {
+  padding: 12px 14px;
+  background: rgba(22, 168, 117, 0.06);
+  border-radius: 10px;
+  font-size: 13px;
+  color: #3a4059;
+  line-height: 1.8;
 }
+.score-preview { display: flex; gap: 16px; margin: 4px 0; font-variant-numeric: tabular-nums; }
+.composite-preview { margin-top: 6px; color: #16a875; font-size: 14px; }
 
-.filter-card :deep(.p-card-content) {
-  padding: 0;
-}
-
-.filter-row {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  align-items: end;
-  gap: var(--spacing-md);
-}
-
-.filter-item {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-  min-width: 0;
-}
-
-.filter-item label {
-  font-size: var(--text-sm);
-  color: var(--text-secondary);
-  white-space: nowrap;
-}
-
-.filter-input {
-  width: 100%;
-}
-
-.filter-dropdown {
-  width: 100%;
-}
-
-.filter-button {
-  width: 100%;
-}
-
-.export-btn {
-  background: var(--success);
-  border-color: var(--success);
-}
-
-.export-btn:hover {
-  background: var(--success-hover);
-  border-color: var(--success-hover);
-}
-
-/* ========== 列表容器 ========== */
-.list-container {
-  background: var(--bg-card);
-  border-radius: var(--radius-md);
-  overflow: hidden;
-}
-
-.list-container :deep(.p-datatable) {
-  min-width: 1000px;
-}
-
-.list-container :deep(.p-datatable-emptymessage) {
-  background: var(--bg-card) !important;
-}
-
-.list-container .empty-state {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  min-height: 300px;
-  padding: var(--spacing-3xl);
-  color: var(--text-muted);
-}
-
-.list-card .empty-state .empty-icon {
-  font-size: 4rem;
-  opacity: 0.4;
-  margin-bottom: var(--spacing-lg);
-}
-
-.list-card .empty-state .empty-text {
-  font-size: var(--text-lg);
-  color: var(--text-secondary);
-}
-
-.text-muted {
-  color: var(--text-muted);
-  font-size: var(--text-sm);
-}
-
-/* ========== 操作按钮 ========== */
-.action-buttons {
-  display: flex;
-  gap: var(--spacing-xs);
-}
-
-/* ========== 删除确认对话框 ========== */
-.confirmation-content {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  padding: var(--spacing-lg);
-  text-align: center;
-}
-
-.confirmation-content i {
-  color: var(--color-warning);
-  margin-bottom: var(--spacing-md);
-}
-
-.delete-info {
-  margin-top: var(--spacing-md);
-  padding: var(--spacing-md);
-  background: var(--bg-secondary);
-  border-radius: var(--radius-md);
-  text-align: left;
-}
-
-.delete-info div {
-  margin-bottom: var(--spacing-xs);
-}
-
-.warning-text {
-  margin-top: var(--spacing-md);
-  color: var(--color-danger);
-  font-size: var(--text-sm);
-}
-
-/* ========== 导出加载遮罩 ========== */
-.export-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background: rgba(0, 0, 0, 0.5);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-}
-
-.export-loading {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: var(--spacing-md);
-  padding: var(--spacing-xl);
-  background: var(--bg-card);
-  border-radius: var(--radius-lg);
-  color: var(--text-primary);
-}
-
-/* ========== 响应式断点 ========== */
-@media (max-width: 1024px) {
-  .filter-row {
-    flex-wrap: wrap;
-  }
-
-  .filter-input {
-    width: 100%;
-  }
-
-  .filter-dropdown {
-    width: 100%;
-  }
-
-  .list-card :deep(.p-datatable) {
-    min-width: 900px;
-  }
-}
-
-@media (max-width: 640px) {
-  .batch-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: var(--spacing-sm);
-    padding: var(--spacing-sm);
-  }
-
-  .batch-actions {
-    width: 100%;
-    flex-direction: column;
-  }
-
-  .filter-row {
-    grid-template-columns: 1fr;
-    gap: var(--spacing-sm);
-  }
-
-  .filter-item {
-    width: 100%;
-  }
-
-  .filter-input,
-  .filter-dropdown,
-  .filter-button {
-    width: 100%;
-  }
-
-  .list-container :deep(.p-paginator) {
-    flex-wrap: wrap;
-    gap: var(--spacing-xs);
-  }
-
-  .list-container .empty-state {
-    min-height: 180px;
-    padding: var(--spacing-lg);
-  }
-
-  .action-buttons {
-    flex-direction: column;
-  }
-}
+.report-detail-body { display: flex; flex-direction: column; gap: 8px; font-size: 14px; color: #3a4059; }
+.info-line { display: flex; gap: 16px; flex-wrap: wrap; }
 </style>

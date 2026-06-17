@@ -27,19 +27,20 @@
             <span class="footer-role">系统管理</span>
           </div>
         </div>
-        <Button label="退出" icon="pi pi-sign-out" text size="small" class="logout-btn" @click="logout" />
+        <div class="footer-actions">
+          <router-link to="/" class="footer-btn">
+            <i class="pi pi-home"></i>
+            <span>首页</span>
+          </router-link>
+          <Button label="退出登录" icon="pi pi-sign-out" text size="small" class="footer-btn logout-btn" @click="logout" />
+        </div>
       </div>
     </aside>
 
     <section class="layout-body">
       <header class="topbar">
         <div>
-          <span class="topbar-eyebrow">{{ currentMeta }}</span>
           <h1>{{ currentTitle }}</h1>
-        </div>
-        <div class="topbar-actions">
-          <router-link to="/" class="public-entry">公共工作台</router-link>
-          <Button icon="pi pi-sign-out" label="退出登录" outlined size="small" @click="logout" />
         </div>
       </header>
 
@@ -62,12 +63,12 @@ const adminUser = getAdminUser()
 
 const navItems = [
   { path: '/admin/dashboard', label: '仪表盘', icon: 'pi pi-chart-pie' },
-  { path: '/admin/reports', label: '周报列表', icon: 'pi pi-list' },
+  { path: '/admin/wechat', label: '企业微信数据上传', icon: 'pi pi-upload' },
+  { path: '/admin/reports', label: '周评列表', icon: 'pi pi-list' },
   { path: '/admin/config', label: '系统设置', icon: 'pi pi-cog' },
 ]
 
 const currentTitle = computed(() => route.meta.title || '管理后台')
-const currentMeta = computed(() => '管理后台')
 
 function isActive(path) {
   return route.path === path || route.path.startsWith(path + '/')
@@ -192,30 +193,33 @@ function logout() {
 }
 
 .sidebar-footer {
-  margin: 14px;
-  padding: 14px;
+  margin: 16px;
+  padding: 16px;
   border: 1px solid var(--border-light);
   border-radius: var(--radius-xl);
-  background: rgba(255, 255, 255, 0.72);
+  background: rgba(255, 255, 255, 0.8);
 }
 
 .footer-info {
   display: flex;
   align-items: center;
-  gap: 10px;
-  margin-bottom: 10px;
+  gap: 12px;
+  padding-bottom: 14px;
+  margin-bottom: 12px;
+  border-bottom: 1px solid var(--border-light);
 }
 
 .footer-avatar {
-  width: 34px;
-  height: 34px;
+  width: 40px;
+  height: 40px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border-radius: var(--radius-full);
-  background: var(--primary-bg);
-  color: var(--primary-dark);
+  background: linear-gradient(135deg, var(--primary), var(--accent));
+  color: #fff;
   font-weight: var(--font-bold);
+  font-size: 14px;
 }
 
 .footer-name {
@@ -224,9 +228,41 @@ function logout() {
   font-weight: var(--font-bold);
 }
 
-.logout-btn {
+.footer-actions {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.footer-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  justify-content: center;
+  padding: 10px 12px;
+  border-radius: var(--radius-md);
+  font-size: var(--text-sm);
+  color: var(--text-secondary);
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  text-decoration: none;
+  font-weight: var(--font-medium);
+  transition: background var(--transition-fast), color var(--transition-fast);
+}
+
+.footer-btn i {
+  font-size: 14px;
+}
+
+.footer-btn:hover {
+  background: rgba(79, 124, 255, 0.08);
+  color: var(--primary-dark);
+}
+
+.footer-btn.logout-btn:hover {
+  background: rgba(239, 68, 68, 0.08);
+  color: #ef4444;
 }
 
 .layout-body {
@@ -250,36 +286,11 @@ function logout() {
   backdrop-filter: blur(18px);
 }
 
-.topbar-eyebrow {
-  color: var(--text-muted);
-  font-size: var(--text-xs);
-  font-weight: var(--font-bold);
-}
-
 .topbar h1 {
   color: var(--text-primary);
   font-size: var(--text-2xl);
   line-height: 1.1;
   letter-spacing: -0.05em;
-}
-
-.topbar-actions {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-}
-
-.public-entry {
-  display: inline-flex;
-  align-items: center;
-  min-height: 34px;
-  padding: 0 12px;
-  border-radius: var(--radius-full);
-  background: white;
-  color: var(--text-secondary);
-  border: 1px solid var(--border-light);
-  font-size: var(--text-sm);
-  font-weight: var(--font-semibold);
 }
 
 .main-content {
@@ -328,15 +339,6 @@ function logout() {
     align-items: flex-start;
     flex-direction: column;
     min-height: auto;
-  }
-
-  .topbar-actions {
-    width: 100%;
-    overflow-x: auto;
-  }
-
-  .public-entry {
-    flex: 0 0 auto;
   }
 }
 </style>

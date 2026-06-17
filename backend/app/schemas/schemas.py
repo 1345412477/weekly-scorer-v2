@@ -1,26 +1,30 @@
 """Pydantic Schemas"""
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 from typing import Optional, List, Any
 from datetime import date
 
 
 class LoginRequest(BaseModel):
+    model_config = {"extra": "allow"}
     username: str
     password: str
 
 
 # ── 部门 ──
 class DepartmentCreate(BaseModel):
-    name: str
+    model_config = {"extra": "allow"}
+    name: str = Field(..., min_length=1, max_length=50)
     description: Optional[str] = ""
 
 
 class DepartmentUpdate(BaseModel):
-    name: Optional[str] = None
+    model_config = {"extra": "allow"}
+    name: Optional[str] = Field(None, min_length=1, max_length=50)
     description: Optional[str] = None
 
 
 class DepartmentResponse(BaseModel):
+    model_config = {"extra": "allow"}
     id: str
     name: str
     description: str
@@ -29,23 +33,51 @@ class DepartmentResponse(BaseModel):
 
 # ── 人员 ──
 class PersonCreate(BaseModel):
-    name: str
+    model_config = {"extra": "allow"}
+    name: str = Field(..., min_length=1, max_length=50)
     department_id: Optional[str] = None
     department_name: Optional[str] = ""
     position: Optional[str] = ""
     email: Optional[str] = ""
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def name_not_empty(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("姓名不能为空")
+        return v.strip() if isinstance(v, str) else v
+
 
 class PersonUpdate(BaseModel):
-    name: Optional[str] = None
+    model_config = {"extra": "allow"}
+    name: Optional[str] = Field(None, min_length=1, max_length=50)
     department_id: Optional[str] = None
     department_name: Optional[str] = None
     position: Optional[str] = None
     email: Optional[str] = None
     is_active: Optional[bool] = None
 
+    @field_validator("name", mode="before")
+    @classmethod
+    def name_not_empty(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            raise ValueError("姓名不能为空")
+        return v.strip() if isinstance(v, str) else v
+
+    @field_validator("department_id", "department_name", "position", "email", mode="before")
+    @classmethod
+    def empty_str_to_none(cls, v):
+        if v is None:
+            return None
+        if isinstance(v, str) and not v.strip():
+            return None
+        return v
+
 
 class PersonResponse(BaseModel):
+    model_config = {"extra": "allow"}
     id: str
     name: str
     department_id: Optional[str] = None
@@ -58,11 +90,49 @@ class PersonResponse(BaseModel):
 
 # ── 评分维度 ──
 class DimensionConfig(BaseModel):
+    model_config = {"extra": "allow"}
     name: str = Field(..., min_length=1, max_length=50, description="维度名称")
     full_score: float = Field(..., gt=0, le=100, description="满分")
     highest_score: Optional[float] = Field(None, ge=0, description="最高分")
     lowest_score: Optional[float] = Field(None, ge=0, description="最低分")
     evaluation_content: str = Field("", max_length=500, description="考核内容")
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def name_must_present(cls, v):
+        if v is None or (isinstance(v, str) and not v.strip()):
+            raise ValueError("维度名称不能为空")
+        return v.strip()
+
+    @field_validator("full_score", mode="before")
+    @classmethod
+    def score_must_be_valid(cls, v):
+        if v is None or v == "":
+            raise ValueError("满分不能为空")
+        try:
+            fv = float(v)
+            if fv <= 0 or fv > 100:
+                raise ValueError("满分必须在 0 到 100 之间")
+            return fv
+        except (TypeError, ValueError) as e:
+            if isinstance(e, ValueError) and "满分" in str(e):
+                raise
+            raise ValueError(f"满分必须是有效数字: {v}")
+
+    @field_validator("highest_score", "lowest_score", mode="before")
+    @classmethod
+    def optional_score_valid(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            fv = float(v)
+            if fv < 0:
+                raise ValueError("分数不能为负数")
+            return fv
+        except (TypeError, ValueError) as e:
+            if isinstance(e, ValueError) and "不能为负" in str(e):
+                raise
+            raise ValueError(f"必须是数字: {v}")
 
     @property
     def weight(self) -> float:
@@ -72,6 +142,7 @@ class DimensionConfig(BaseModel):
 
 # ── 配置 ──
 class ConfigResponse(BaseModel):
+    model_config = {"extra": "allow"}
     id: Optional[str] = None
     name: str = "默认配置"
     dimensions: List[DimensionConfig] = []
@@ -86,11 +157,27 @@ class ConfigResponse(BaseModel):
 
 
 class ConfigUpdate(BaseModel):
+    model_config = {"extra": "allow"}
     name: Optional[str] = None
     dimensions: Optional[List[DimensionConfig]] = None
     grade_thresholds: Optional[dict] = None
     prompt_template: Optional[str] = None
     min_content_length: Optional[int] = None
+
+    @field_validator("prompt_template", mode="before")
+    @classmethod
+    def prompt_empty_str_ok(cls, v):
+        return v if v is not None else ""
+
+    @field_validator("min_content_length", mode="before")
+    @classmethod
+    def min_length_valid(cls, v):
+        if v is None or v == "":
+            return None
+        try:
+            return int(v)
+        except (TypeError, ValueError):
+            raise ValueError("min_content_length 必须是整数")
 
     @property
     def total_full_score(self) -> float:
@@ -101,6 +188,7 @@ class ConfigUpdate(BaseModel):
 
 
 class TestScoreRequest(BaseModel):
+    model_config = {"extra": "allow"}
     content: str
     dimensions: Optional[List[DimensionConfig]] = None
     prompt_template: Optional[str] = None
@@ -108,6 +196,7 @@ class TestScoreRequest(BaseModel):
 
 # ── 模板 ──
 class TemplateField(BaseModel):
+    model_config = {"extra": "allow"}
     key: str
     label: str
     type: str = "text"  # text / textarea / number
@@ -116,6 +205,7 @@ class TemplateField(BaseModel):
 
 
 class TemplateCreate(BaseModel):
+    model_config = {"extra": "allow"}
     name: str
     description: Optional[str] = ""
     content: str
@@ -124,6 +214,7 @@ class TemplateCreate(BaseModel):
 
 
 class TemplateUpdate(BaseModel):
+    model_config = {"extra": "allow"}
     name: Optional[str] = None
     description: Optional[str] = None
     content: Optional[str] = None
@@ -132,6 +223,7 @@ class TemplateUpdate(BaseModel):
 
 
 class TemplateResponse(BaseModel):
+    model_config = {"extra": "allow"}
     id: str
     name: str
     description: str
@@ -143,6 +235,7 @@ class TemplateResponse(BaseModel):
 
 # ── 周报 ──
 class ReportCreate(BaseModel):
+    model_config = {"extra": "allow"}
     author_name: str = "匿名"
     department: Optional[str] = ""
     person_id: Optional[str] = None
@@ -154,6 +247,7 @@ class ReportCreate(BaseModel):
 
 
 class ReportResponse(BaseModel):
+    model_config = {"extra": "allow"}
     id: str
     author_name: str
     department: str
@@ -171,6 +265,7 @@ class ReportResponse(BaseModel):
 
 
 class ScoreDetail(BaseModel):
+    model_config = {"extra": "allow"}
     name: str
     score: float
     max: float
@@ -185,6 +280,7 @@ class ReportDetailResponse(ReportResponse):
 
 
 class ReportListResponse(BaseModel):
+    model_config = {"extra": "allow"}
     items: List[ReportResponse]
     total: int
     page: int
@@ -193,6 +289,7 @@ class ReportListResponse(BaseModel):
 
 # ── 排行榜 ──
 class LeaderboardItem(BaseModel):
+    model_config = {"extra": "allow"}
     rank: int
     author_name: str
     department: str
@@ -203,6 +300,7 @@ class LeaderboardItem(BaseModel):
 
 
 class LeaderboardResponse(BaseModel):
+    model_config = {"extra": "allow"}
     rankings: List[LeaderboardItem]
     period: str
     total_reports: int

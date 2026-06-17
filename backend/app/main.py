@@ -3,6 +3,7 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.exceptions import RequestValidationError
+from fastapi import HTTPException as FastAPIHTTPException
 from contextlib import asynccontextmanager
 from starlette.responses import JSONResponse
 import os
@@ -11,7 +12,8 @@ import time
 from app.database import init_db
 from app.config import get_settings
 from app.api import auth, config, templates, reports, leaderboard, departments, persons
-from app.utils.logger import log_api_request, log_info
+from app.api import weeklysummary, attendance, chat, weekly_aggregates
+from app.utils.logger import log_api_request, log_info, log_error
 
 settings = get_settings()
 
@@ -25,8 +27,19 @@ async def lifespan(app: FastAPI):
     log_info("启动周报评分系统 v2...")
     await init_db()
     await seed_default_data()
+    # 启动后台定时聚合评分调度器
+    try:
+        from app.core.task_queue import init_scheduler, shutdown_scheduler
+        await init_scheduler()
+        log_info("定时聚合评分调度器已就绪")
+    except Exception as e:
+        log_info(f"调度器初始化失败（不影响核心功能）: {e}")
     log_info("系统初始化完成")
     yield
+    try:
+        await shutdown_scheduler()
+    except Exception:
+        pass
     log_info("系统关闭")
 
 
@@ -59,14 +72,47 @@ async def log_requests(request: Request, call_next):
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    """验证异常处理"""
+    """验证异常处理 - 保留 Pydantic 原生 errors，前端可解析字段级别错误"""
+    try:
+        body_bytes = await request.body()
+        body_text = body_bytes.decode("utf-8", errors="replace") if body_bytes else "(empty)"
+    except Exception:
+        body_text = "(unreadable)"
     errors = []
     for error in exc.errors():
-        field = ".".join(str(loc) for loc in error["loc"])
-        errors.append(f"{field}: {error['msg']}")
+        errors.append({"loc": list(error["loc"]), "msg": error["msg"], "type": error.get("type", "")})
+    # 打印到后端日志，便于在现场精准定位哪一个字段缺失
+    print(f"[VALIDATION_ERROR] {request.method} {request.url.path} | body={body_text} | errors={errors}")
     return JSONResponse(
         status_code=400,
-        content={"detail": "请求参数验证失败", "errors": errors}
+        content={"detail": errors}
+    )
+
+
+@app.exception_handler(FastAPIHTTPException)
+async def http_exception_handler(request: Request, exc: FastAPIHTTPException):
+    """显式 HTTPException（如 401/403/404）统一为 JSON 响应，避免 FastAPI 默认 HTML"""
+    detail = exc.detail if isinstance(exc.detail, (str, list, dict)) else str(exc.detail)
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": detail},
+        headers=getattr(exc, "headers", None),
+    )
+
+
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """兜底异常处理器：任何未捕获异常返回 JSON 500，而不是 FastAPI 默认 HTML 页面"""
+    detail = str(exc)
+    if len(detail) > 300:
+        detail = detail[:300] + "..."
+    log_error(f"[UNHANDLED] {request.method} {request.url.path} -> {type(exc).__name__}: {detail}")
+    return JSONResponse(
+        status_code=500,
+        content={
+            "detail": f"服务器内部错误：{detail}",
+            "type": type(exc).__name__,
+        },
     )
 
 app.add_middleware(
@@ -85,6 +131,18 @@ app.include_router(reports.router)
 app.include_router(leaderboard.router)
 app.include_router(departments.router)
 app.include_router(persons.router)
+app.include_router(weeklysummary.router)
+app.include_router(attendance.router)
+app.include_router(chat.router)
+app.include_router(weekly_aggregates.router)
+
+# 员工端首页联合上传接口（周报 + 一周小结，统一使用周报识别姓名）
+from app.api.upload_unified import router as upload_unified_router
+app.include_router(upload_unified_router)
+
+# 管理端统一评分入口（所有上传均在此处集中评分）
+from app.api.scoring_run import router as scoring_run_router
+app.include_router(scoring_run_router)
 
 
 @app.get("/health")

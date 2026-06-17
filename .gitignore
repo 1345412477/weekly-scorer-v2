@@ -29,3 +29,17 @@ frontend/dist/
 backup_before_cleanup/
 周报模板.xlsx
 weekly_scorer.db
+test/
+
+# 项目临时脚本/调试文件
+_tmp_*.py
+test_cancel_flow.py
+backend/_*.py
+backend/arch_audit.py
+backend/check_db.py
+backend/debug_pw.py
+backend/test_login.py
+backend/test_login2.py
+
+# Vite 临时文件
+frontend/vite.config.js.timestamp-*

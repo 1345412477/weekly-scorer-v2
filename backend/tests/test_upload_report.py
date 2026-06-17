@@ -45,7 +45,7 @@ class TestFileFormatValidation:
             os.unlink(f.name)
 
     async def test_upload_docx_success(self, client, seed_scoring_config):
-        """上传 .docx 文件成功"""
+        """上传 .docx 文件被拒绝（按规范仅允许 .xlsx）"""
         with tempfile.NamedTemporaryFile(suffix=".docx", delete=False) as f:
             make_docx_file(f.name)
             f.name_created = f.name
@@ -56,9 +56,8 @@ class TestFileFormatValidation:
                     "/api/v1/reports/upload",
                     files={"file": ("test_report.docx", fh, "application/vnd.openxmlformats-officedocument.wordprocessingml.document")},
                 )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["report_id"]
+            assert resp.status_code == 400
+            assert "不支持的文件格式" in resp.json()["detail"]
         finally:
             os.unlink(f.name)
 

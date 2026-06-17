@@ -37,7 +37,7 @@
                 <label>部门</label>
                 <div class="dept-display">
                   <InputText :modelValue="selectedPerson?.department_name || selectedDepartment?.name || ''" placeholder="选择提交人后自动填充" readonly class="w-full" />
-                  <span v-if="selectedPerson?.department_name" class="auto-fill-hint">✓ 自动匹配</span>
+                  <span v-if="selectedPerson?.department_name" class="auto-fill-hint"><i class="pi pi-check-circle"></i>自动匹配</span>
                 </div>
               </div>
             </div>
@@ -61,7 +61,7 @@
                   <i class="pi pi-cloud-upload upload-icon" />
                 </div>
                 <p class="upload-text">点击或拖拽周报文件到此处</p>
-                <span class="upload-hint">支持 .xlsx、.xls、.docx、.pdf 格式</span>
+                <span class="upload-hint">仅支持 .xlsx 格式，文件名格式：姓名-YYYY年MM月第N周周报YYYYMMDD.xlsx</span>
               </div>
               <div v-else class="upload-file-info">
                 <i :class="fileIcon" style="font-size:36px;color:#22C55E"></i>
@@ -160,6 +160,7 @@ import InputText from 'primevue/inputtext'
 import Tag from 'primevue/tag'
 import Divider from 'primevue/divider'
 import { useToast } from 'primevue/usetoast'
+import { getBeijingDateFilename } from '../utils/timeUtil.js'
 
 const props = defineProps({
   embedded: { type: Boolean, default: false },
@@ -182,7 +183,7 @@ const selectedDepartment = ref(null)
 const confirmWeekStart = ref('')
 const confirmWeekEnd = ref('')
 
-const acceptFormats = '.xlsx,.xls,.docx,.pdf'
+const acceptFormats = '.xlsx'
 
 const fileIcon = computed(() => {
   if (!selectedFile.value) return 'pi pi-file'
@@ -232,7 +233,7 @@ async function downloadTemplate() {
     const url = window.URL.createObjectURL(new Blob([res.data]))
     const a = document.createElement('a')
     a.href = url
-    a.download = `周报模板_${new Date().toISOString().slice(0, 10)}.xlsx`
+    a.download = `周报模板_${getBeijingDateFilename()}.xlsx`
     document.body.appendChild(a)
     a.click()
     window.URL.revokeObjectURL(url)
@@ -262,11 +263,11 @@ function onDrop(e) {
   const file = e.dataTransfer.files[0]
   if (file) {
     const ext = file.name.toLowerCase()
-    if (ext.endsWith('.xlsx') || ext.endsWith('.xls') || ext.endsWith('.docx') || ext.endsWith('.pdf')) {
+    if (ext.endsWith('.xlsx')) {
       selectedFile.value = file
       uploadResult.value = null
     } else {
-      toast.add({ severity: 'warn', summary: '请上传 Excel / Word / PDF 文件', life: 2000 })
+      toast.add({ severity: 'warn', summary: '仅支持 .xlsx 格式文件', life: 2500 })
     }
   }
 }
@@ -594,6 +595,9 @@ onMounted(() => {
   transform: translateY(-50%);
   color: var(--success);
   font-size: var(--text-xs);
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .upload-btn {

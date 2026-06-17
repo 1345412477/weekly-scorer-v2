@@ -3,7 +3,7 @@ from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, and_, or_
+from sqlalchemy import select, func, desc
 
 from app.database import get_db
 from app.models.models import WeeklyReport, ReportScore, Person
@@ -34,6 +34,62 @@ def get_current_month():
     return first, last
 
 
+def _first_submission_cte(period, department_filter=None):
+    """
+    生成一个 CTE：在指定周期内，每位员工每周最新一次提交且有评分的 weekly_report.id
+    策略：按 author_name + week_start + week_end 分组，优先选有 ReportScore 关联的报告，
+          同组内按 created_at 倒序，取最新一条，避免旧/无评分报告被选中
+    """
+    current_monday, current_sunday = get_current_week()
+
+    inner = (
+        select(
+            WeeklyReport.id,
+            WeeklyReport.author_name,
+            WeeklyReport.department,
+            WeeklyReport.week_start,
+            WeeklyReport.week_end,
+            WeeklyReport.created_at,
+            func.row_number()
+            .over(
+                partition_by=[WeeklyReport.author_name, WeeklyReport.week_start, WeeklyReport.week_end],
+                # 1. 优先有 ReportScore 的报告 (NotNull < Null)
+                # 2. 同组内按 created_at 倒序，取最新一份
+                order_by=[ReportScore.id.is_(None).asc(), WeeklyReport.created_at.desc()],
+            )
+            .label("rn"),
+        )
+        .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
+        .where(WeeklyReport.status.in_(["scored", "submitted"]))
+    )
+
+    if period == "week":
+        inner = inner.where(WeeklyReport.week_start >= current_monday).where(
+            WeeklyReport.week_end <= current_sunday
+        )
+    elif period == "month":
+        first, last = get_current_month()
+        inner = inner.where(WeeklyReport.week_start >= first).where(WeeklyReport.week_end <= last)
+
+    if department_filter:
+        inner = inner.where(WeeklyReport.department == department_filter)
+
+    inner_cte = inner.cte("inner_candidates")
+
+    first_cte = (
+        select(
+            inner_cte.c.id,
+            inner_cte.c.author_name,
+            inner_cte.c.department,
+            inner_cte.c.week_start,
+            inner_cte.c.week_end,
+        )
+        .where(inner_cte.c.rn == 1)
+        .cte("first_submissions")
+    )
+    return first_cte
+
+
 @router.get("")
 async def get_leaderboard(
     period: str = Query("week", pattern="^(week|month|all)$"),
@@ -41,39 +97,28 @@ async def get_leaderboard(
     sort_by: str = Query("total_score", pattern="^(total_score|avg_score|report_count)$"),
     db: AsyncSession = Depends(get_db),
 ):
-    """获取排行榜数据"""
+    """获取排行榜数据：每位员工每周只算首次提交的分数"""
+    dep_filter = department if department and department != "all" else None
+    first_cte = _first_submission_cte(period, dep_filter)
+
     total_score = func.coalesce(func.sum(ReportScore.total_score), 0).label("total_score")
     avg_score = func.coalesce(func.avg(ReportScore.total_score), 0).label("avg_score")
-    report_count = func.count(WeeklyReport.id).label("report_count")
+    report_count = func.count(first_cte.c.id).label("report_count")
     latest_grade = func.max(ReportScore.grade).label("latest_grade")
 
     query = (
         select(
-            WeeklyReport.author_name,
-            WeeklyReport.department,
+            first_cte.c.author_name,
+            first_cte.c.department,
             total_score,
             avg_score,
             report_count,
             latest_grade,
         )
-        .select_from(WeeklyReport)
-        .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
-        .where(WeeklyReport.status.in_(["scored", "submitted"]))
+        .select_from(first_cte)
+        .join(ReportScore, ReportScore.report_id == first_cte.c.id, isouter=True)
+        .group_by(first_cte.c.author_name, first_cte.c.department)
     )
-
-    current_monday, current_sunday = get_current_week()
-    prev_monday, prev_sunday = get_previous_week(current_monday, current_sunday)
-
-    if period == "week":
-        query = query.where(WeeklyReport.week_start >= current_monday).where(WeeklyReport.week_end <= current_sunday)
-    elif period == "month":
-        first, last = get_current_month()
-        query = query.where(WeeklyReport.week_start >= first).where(WeeklyReport.week_end <= last)
-
-    if department and department != "all":
-        query = query.where(WeeklyReport.department == department)
-
-    query = query.group_by(WeeklyReport.author_name, WeeklyReport.department)
 
     sort_column = {
         "total_score": total_score,
@@ -85,22 +130,42 @@ async def get_leaderboard(
     result = await db.execute(query)
     rows = result.fetchall()
 
-    # 计算本周趋势（与上周分数差值）
-    # 1. 收集本周用户列表
-    # 2. 单独查询上周分数
+    # 计算本周趋势（与上周「首条提交」分数对比）
+    current_monday, current_sunday = get_current_week()
+    prev_monday, prev_sunday = get_previous_week(current_monday, current_sunday)
+
     prev_scores = {}
     if period == "week":
-        prev_query = (
+        # 上周周期内每位员工的有效报告（优先取有 ReportScore 的那条）
+        prev_inner = (
             select(
+                WeeklyReport.id,
                 WeeklyReport.author_name,
-                func.coalesce(func.avg(ReportScore.total_score), 0).label("prev_avg"),
+                func.row_number()
+                .over(
+                    partition_by=[WeeklyReport.author_name, WeeklyReport.week_start, WeeklyReport.week_end],
+                    order_by=[ReportScore.id.is_(None).asc(), WeeklyReport.created_at.desc()],
+                )
+                .label("rn"),
             )
-            .select_from(WeeklyReport)
             .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
             .where(WeeklyReport.status.in_(["scored", "submitted"]))
             .where(WeeklyReport.week_start >= prev_monday)
             .where(WeeklyReport.week_end <= prev_sunday)
-            .group_by(WeeklyReport.author_name)
+        )
+        if dep_filter:
+            prev_inner = prev_inner.where(WeeklyReport.department == dep_filter)
+        prev_inner_cte = prev_inner.cte("prev_inner")
+
+        prev_query = (
+            select(
+                prev_inner_cte.c.author_name,
+                func.coalesce(func.avg(ReportScore.total_score), 0).label("prev_avg"),
+            )
+            .select_from(prev_inner_cte)
+            .join(ReportScore, ReportScore.report_id == prev_inner_cte.c.id, isouter=True)
+            .where(prev_inner_cte.c.rn == 1)
+            .group_by(prev_inner_cte.c.author_name)
         )
         prev_result = await db.execute(prev_query)
         for row in prev_result.fetchall():
@@ -123,18 +188,8 @@ async def get_leaderboard(
             "trend": trend,
         })
 
-    count_query = (
-        select(func.count()).select_from(WeeklyReport)
-        .where(WeeklyReport.status.in_(["scored", "submitted"]))
-    )
-    if period == "week":
-        count_query = count_query.where(WeeklyReport.week_start >= current_monday).where(WeeklyReport.week_end <= current_sunday)
-    elif period == "month":
-        first, last = get_current_month()
-        count_query = count_query.where(WeeklyReport.week_start >= first).where(WeeklyReport.week_end <= last)
-    if department and department != "all":
-        count_query = count_query.where(WeeklyReport.department == department)
-
+    # 总报告数（仍然按「首条」口径统计，避免重复提交影响）
+    count_query = select(func.count()).select_from(first_cte)
     count_r = await db.execute(count_query)
     total_reports = count_r.scalar() or 0
 
@@ -230,20 +285,36 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
                 "position": p.position or "",
             })
 
-    # 3. 本周已评分记录
-    scored_q = (
+    # 3. 本周已评分记录（每人取最新一份报告，优先有 ReportScore 关联的）
+    cur_inner = (
         select(
+            WeeklyReport.id,
             WeeklyReport.author_name,
             WeeklyReport.department,
+            func.row_number()
+            .over(
+                partition_by=[WeeklyReport.author_name, WeeklyReport.week_start, WeeklyReport.week_end],
+                order_by=[ReportScore.id.is_(None).asc(), WeeklyReport.created_at.desc()],
+            )
+            .label("rn"),
+        )
+        .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
+        .where(WeeklyReport.status.in_(["scored", "submitted"]))
+        .where(WeeklyReport.week_start >= current_monday)
+        .where(WeeklyReport.week_end <= current_sunday)
+    ).cte("cur_inner")
+
+    scored_q = (
+        select(
+            cur_inner.c.author_name,
+            cur_inner.c.department,
             ReportScore.total_score,
             ReportScore.grade,
             ReportScore.ai_comment,
         )
-        .select_from(WeeklyReport)
-        .join(ReportScore, ReportScore.report_id == WeeklyReport.id)
-        .where(WeeklyReport.status == "scored")
-        .where(WeeklyReport.week_start >= current_monday)
-        .where(WeeklyReport.week_end <= current_sunday)
+        .select_from(cur_inner)
+        .join(ReportScore, ReportScore.report_id == cur_inner.c.id)
+        .where(cur_inner.c.rn == 1)
     )
     scored_r = await db.execute(scored_q)
     scored_rows = scored_r.fetchall()
@@ -264,43 +335,51 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     else:
         low_scorers = []
 
-    # 4. 进步较大人员（本周 vs 上周分数差 > 0）
-    # 获取上周平均分
-    prev_avg_q = (
-        select(
-            WeeklyReport.author_name,
-            func.coalesce(func.avg(ReportScore.total_score), 0).label("prev_avg"),
+    # 4. 进步较大人员（本周 vs 上周分数差 > 0，均取每人最新有评分的报告）
+    # 统一工具函数：在给定 [mon, sun] 内，取每人每周最新且有评分的报告的 avg_score
+    def _score_map(monday, sunday):
+        inner = (
+            select(
+                WeeklyReport.id,
+                WeeklyReport.author_name,
+                func.row_number()
+                .over(
+                    partition_by=[WeeklyReport.author_name, WeeklyReport.week_start, WeeklyReport.week_end],
+                    order_by=[ReportScore.id.is_(None).asc(), WeeklyReport.created_at.desc()],
+                )
+                .label("rn"),
+            )
+            .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
+            .where(WeeklyReport.status.in_(["scored", "submitted"]))
+            .where(WeeklyReport.week_start >= monday)
+            .where(WeeklyReport.week_end <= sunday)
+        ).cte("prev_inner")
+
+        q = (
+            select(
+                inner.c.author_name,
+                func.coalesce(func.avg(ReportScore.total_score), 0).label("avg_score"),
+            )
+            .select_from(inner)
+            .join(ReportScore, ReportScore.report_id == inner.c.id, isouter=True)
+            .where(inner.c.rn == 1)
+            .group_by(inner.c.author_name)
         )
-        .select_from(WeeklyReport)
-        .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
-        .where(WeeklyReport.status.in_(["scored", "submitted"]))
-        .where(WeeklyReport.week_start >= prev_monday)
-        .where(WeeklyReport.week_end <= prev_sunday)
-        .group_by(WeeklyReport.author_name)
-    )
+        return q
+
+    prev_avg_q = _score_map(prev_monday, prev_sunday)
     prev_avg_r = await db.execute(prev_avg_q)
     prev_avg_map = {}
     for row in prev_avg_r.fetchall():
-        prev_avg_map[row.author_name] = float(row.prev_avg or 0)
+        prev_avg_map[row.author_name] = float(row.avg_score or 0)
 
-    # 获取本周平均分
-    cur_avg_q = (
-        select(
-            WeeklyReport.author_name,
-            func.coalesce(func.avg(ReportScore.total_score), 0).label("cur_avg"),
-        )
-        .select_from(WeeklyReport)
-        .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
-        .where(WeeklyReport.status.in_(["scored", "submitted"]))
-        .where(WeeklyReport.week_start >= current_monday)
-        .where(WeeklyReport.week_end <= current_sunday)
-        .group_by(WeeklyReport.author_name)
-    )
+    # 获取本周（每人首次提交）分数
+    cur_avg_q = _score_map(current_monday, current_sunday)
     cur_avg_r = await db.execute(cur_avg_q)
     improvements = []
     for row in cur_avg_r.fetchall():
         name = row.author_name
-        cur_avg = float(row.cur_avg or 0)
+        cur_avg = float(row.avg_score or 0)
         prev_avg = prev_avg_map.get(name, 0)
         if cur_avg > 0 and prev_avg > 0:
             diff = round(cur_avg - prev_avg, 1)

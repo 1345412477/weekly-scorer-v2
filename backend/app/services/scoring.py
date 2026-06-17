@@ -6,6 +6,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.models import WeeklyReport, ReportScore, ScoringConfig
 from app.services.ai_scorer import score_report, get_grade, AIScoringError
 from app.utils.logger import log_scoring, log_error
+from app.utils.time_utils import bj_now
 
 
 async def get_active_config(db: AsyncSession) -> ScoringConfig | None:
@@ -78,7 +79,7 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
 
         # 更新周报状态
         report.status = "scored"
-        report.score_time = datetime.now(timezone(timedelta(hours=8)))
+        report.score_time = bj_now()
 
         await db.commit()
 

@@ -42,9 +42,9 @@
               <Column header="排名" style="min-width:70px">
                 <template #body="{ data, index }">
                   <div class="rank-cell">
-                    <span v-if="index === 0" class="rank-medal">🥇</span>
-                    <span v-else-if="index === 1" class="rank-medal">🥈</span>
-                    <span v-else-if="index === 2" class="rank-medal">🥉</span>
+                    <span v-if="index === 0" class="rank-medal rank-medal-1"><i class="pi pi-trophy"></i></span>
+                    <span v-else-if="index === 1" class="rank-medal rank-medal-2"><i class="pi pi-star"></i></span>
+                    <span v-else-if="index === 2" class="rank-medal rank-medal-3"><i class="pi pi-bolt"></i></span>
                     <span v-else class="rank-number">#{{ index + 1 }}</span>
                   </div>
                 </template>
@@ -65,12 +65,14 @@
               </Column>
               <Column field="total_score" header="总分" sortable style="min-width:80px">
                 <template #body="{ data }">
-                  <span class="score-badge">{{ data.total_score }}</span>
+                  <ScoreBadge v-if="data.total_score != null" :score="Number(data.total_score)" size="sm" />
+                  <span v-else class="text-muted">-</span>
                 </template>
               </Column>
               <Column field="avg_score" header="平均分" sortable style="min-width:80px">
                 <template #body="{ data }">
-                  <span>{{ data.avg_score?.toFixed(1) || '-' }}</span>
+                  <span v-if="data.avg_score != null">{{ Math.round(Number(data.avg_score)) }}</span>
+                  <span v-else class="text-muted">-</span>
                 </template>
               </Column>
               <Column field="report_count" header="周报数" sortable style="min-width:70px">
@@ -94,21 +96,21 @@
       <div class="side-panel">
         <!-- 前三名 -->
         <Card class="side-card">
-          <template #title>🏅 本期前三</template>
+          <template #title><i class="pi pi-trophy" style="color:#d97706;margin-right:6px"></i>本期前三</template>
           <template #content>
             <div class="top3-list" v-if="rankings.length >= 3">
               <div class="top3-item gold">
-                <span class="top3-rank">🥇</span>
+                <span class="top3-rank top3-rank-1"><i class="pi pi-trophy"></i></span>
                 <span class="top3-name">{{ rankings[0]?.author_name }}</span>
                 <span class="top3-score">{{ rankings[0]?.total_score }}</span>
               </div>
               <div class="top3-item silver">
-                <span class="top3-rank">🥈</span>
+                <span class="top3-rank top3-rank-2"><i class="pi pi-star"></i></span>
                 <span class="top3-name">{{ rankings[1]?.author_name }}</span>
                 <span class="top3-score">{{ rankings[1]?.total_score }}</span>
               </div>
               <div class="top3-item bronze">
-                <span class="top3-rank">🥉</span>
+                <span class="top3-rank top3-rank-3"><i class="pi pi-bolt"></i></span>
                 <span class="top3-name">{{ rankings[2]?.author_name }}</span>
                 <span class="top3-score">{{ rankings[2]?.total_score }}</span>
               </div>
@@ -127,7 +129,7 @@
         </Card>
 
         <Card class="side-card chart-card" :class="{ 'empty-chart-card': !rankings.length }" style="margin-top:16px">
-          <template #title>🎯 维度雷达图</template>
+          <template #title><i class="pi pi-chart-line" style="color:#4f6bff;margin-right:6px"></i>维度雷达图</template>
           <template #content>
             <div v-if="rankings.length" ref="radarChartRef" class="chart-container"></div>
             <div v-else class="chart-empty-hint">暂无维度分析数据</div>
@@ -150,6 +152,7 @@ import SelectButton from 'primevue/selectbutton'
 import Dropdown from 'primevue/dropdown'
 import Avatar from 'primevue/avatar'
 import Tag from 'primevue/tag'
+import ScoreBadge from '../components/ui/ScoreBadge.vue'
 import * as echarts from 'echarts'
 import { useEChart } from '../composables/useEChart'
 
@@ -479,7 +482,15 @@ function renderRadarChart() {
 }
 
 .rank-cell { display: flex; align-items: center; }
-.rank-medal { font-size: 20px; }
+.rank-medal {
+  font-size: 18px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.rank-medal-1 { color: #d97706; }
+.rank-medal-2 { color: #64748b; }
+.rank-medal-3 { color: #b45309; }
 .rank-number { color: var(--text-secondary); font-weight: var(--font-semibold); font-size: var(--text-base); }
 
 .user-cell {
@@ -558,7 +569,16 @@ function renderRadarChart() {
   border: 1px solid rgba(180,83,9,0.12);
 }
 
-.top3-rank { font-size: 18px; margin-right: 10px; }
+.top3-rank {
+  font-size: 18px;
+  margin-right: 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.top3-rank-1 { color: #d97706; }
+.top3-rank-2 { color: #64748b; }
+.top3-rank-3 { color: #b45309; }
 .top3-name { flex: 1; color: var(--text-primary); font-weight: var(--font-medium); font-size: var(--text-sm); }
 .top3-score { color: var(--primary); font-weight: var(--font-bold); }
 

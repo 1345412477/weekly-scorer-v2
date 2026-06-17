@@ -1,11 +1,11 @@
 """部门管理 API"""
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
+from sqlalchemy import select, update
 import uuid
 
 from app.database import get_db
-from app.models.models import Department, AdminUser
+from app.models.models import Department, Person, WeeklyReport, AdminUser
 from app.schemas.schemas import DepartmentCreate, DepartmentUpdate, DepartmentResponse
 from app.core.auth import require_admin, write_operation_log
 
@@ -77,6 +77,7 @@ async def update_department(
     if not dept:
         raise HTTPException(status_code=404, detail="部门不存在")
 
+    old_name = dept.name
     if req.name is not None:
         name_check = await db.execute(select(Department).where(Department.name == req.name, Department.id != dept_id))
         if name_check.scalar_one_or_none():
@@ -86,9 +87,31 @@ async def update_department(
     if req.description is not None:
         dept.description = req.description
 
+    # 同步刷新：部门名变更后，刷回 persons.department_name 与 weekly_reports.department
+    # - 分支 1：按 department_id 强关联刷新 persons 与 reports
+    # - 分支 2：按 department = 旧部门名刷新 reports（历史记录可能 department_id 为空）
+    if dept.name != old_name:
+        await db.execute(
+            update(Person)
+            .where(Person.department_id == dept_id)
+            .values(department_name=dept.name)
+        )
+        await db.execute(
+            update(WeeklyReport)
+            .where(WeeklyReport.department_id == dept_id)
+            .values(department=dept.name)
+        )
+        # 兜底：历史记录可能只有 department 文本字段（department_id 为 NULL 或空串）
+        await db.execute(
+            update(WeeklyReport)
+            .where(WeeklyReport.department == old_name)
+            .where(WeeklyReport.department_id.is_(None) | (WeeklyReport.department_id == ""))
+            .values(department=dept.name, department_id=dept_id)
+        )
+
     await write_operation_log(db, user, "update", "department", dept_id, request, {"name": dept.name})
     await db.commit()
-    return {"message": "部门更新成功"}
+    return {"message": "部门更新成功", "synced_persons_and_reports": dept.name != old_name}
 
 
 @router.delete("/{dept_id}")

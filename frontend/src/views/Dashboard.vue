@@ -1,43 +1,59 @@
 <template>
   <div class="dashboard page-content">
     <!-- 顶部概览 -->
-    <div class="overview-row">
-      <div class="overview-item">
+    <div class="overview-row fade-in-up" style="--delay: 0ms">
+      <div
+        class="overview-item fade-in-up"
+        :style="{ '--delay': (80 * 0) + 'ms' }"
+      >
         <span class="overview-label">本周应提交</span>
-        <span class="overview-value">{{ totalPersons }}</span>
+        <span class="overview-value">{{ animatedTotalPersons }}</span>
       </div>
-      <div class="overview-item">
+      <div
+        class="overview-item fade-in-up"
+        :style="{ '--delay': (80 * 1) + 'ms' }"
+      >
         <span class="overview-label">已提交</span>
-        <span class="overview-value highlight-green">{{ submittedCount }}</span>
+        <span class="overview-value highlight-green">{{ animatedSubmitted }}</span>
       </div>
-      <div class="overview-item">
+      <div
+        class="overview-item fade-in-up"
+        :style="{ '--delay': (80 * 2) + 'ms' }"
+      >
         <span class="overview-label">未提交</span>
-        <span class="overview-value highlight-red">{{ notSubmitted.length }}</span>
+        <span class="overview-value highlight-red">{{ animatedNotSubmitted }}</span>
       </div>
-      <div class="overview-item">
+      <div
+        class="overview-item fade-in-up"
+        :style="{ '--delay': (80 * 3) + 'ms' }"
+      >
         <span class="overview-label">进步人员</span>
-        <span class="overview-value highlight-blue">{{ topImprovers.length }}</span>
+        <span class="overview-value highlight-blue">{{ animatedImprovers }}</span>
       </div>
     </div>
 
     <!-- 三大区域 -->
     <div class="panels-grid">
       <!-- 未提交 -->
-      <section class="panel">
+      <section class="panel fade-in-up" :style="{ '--delay': '120ms' }">
         <header class="panel-header">
           <div>
-            <span class="panel-eyebrow panel-eyebrow-red">待处理</span>
             <h3>本周未提交人员</h3>
           </div>
           <span class="panel-count">{{ notSubmitted.length }} 人</span>
         </header>
         <div class="panel-body">
-          <div v-if="notSubmitted.length === 0" class="empty-state">
+          <div v-if="notSubmitted.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
             <i class="pi pi-check-circle empty-icon success"></i>
-            <span>全员已提交，非常棒 🎉</span>
+            <span>全员已提交，非常棒！</span>
           </div>
           <div v-else class="list-items">
-            <div v-for="(item, idx) in notSubmitted" :key="item.name" class="list-item">
+            <div
+              v-for="(item, idx) in notSubmitted"
+              :key="item.name"
+              class="list-item fade-in-up"
+              :style="{ '--delay': (120 + idx * 50) + 'ms' }"
+            >
               <span class="item-index">{{ idx + 1 }}</span>
               <div class="item-main">
                 <span class="item-name">{{ item.name }}</span>
@@ -50,28 +66,32 @@
       </section>
 
       <!-- 评级较低 -->
-      <section class="panel">
+      <section class="panel fade-in-up" :style="{ '--delay': '200ms' }">
         <header class="panel-header">
           <div>
-            <span class="panel-eyebrow panel-eyebrow-amber">需关注</span>
             <h3>评级较低人员</h3>
           </div>
           <span class="panel-count">{{ lowScorers.length }} 人</span>
         </header>
         <div class="panel-body">
-          <div v-if="lowScorers.length === 0" class="empty-state">
+          <div v-if="lowScorers.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
             <i class="pi pi-thumbs-up empty-icon success"></i>
             <span>暂无低分人员</span>
           </div>
           <div v-else class="list-items">
-            <div v-for="(item, idx) in lowScorers" :key="item.name" class="list-item">
+            <div
+              v-for="(item, idx) in lowScorers"
+              :key="item.name"
+              class="list-item fade-in-up"
+              :style="{ '--delay': (200 + idx * 50) + 'ms' }"
+            >
               <span class="item-index">{{ idx + 1 }}</span>
               <div class="item-main">
                 <span class="item-name">{{ item.name }}</span>
                 <span class="item-meta">{{ item.department || '—' }}</span>
               </div>
               <div class="item-score-box">
-                <span class="item-score">{{ item.total_score }}</span>
+                <span class="item-score">{{ Math.round(Number(item.total_score)) }}</span>
                 <span v-if="item.grade" :class="['grade-chip', gradeClass(item.grade)]">{{ item.grade }}</span>
               </div>
             </div>
@@ -80,21 +100,25 @@
       </section>
 
       <!-- 进步较大 -->
-      <section class="panel panel-accent">
+      <section class="panel fade-in-up" :style="{ '--delay': '280ms' }">
         <header class="panel-header">
           <div>
-            <span class="panel-eyebrow panel-eyebrow-green">亮点</span>
             <h3>进步较大人员</h3>
           </div>
           <span class="panel-count">{{ topImprovers.length }} 人</span>
         </header>
         <div class="panel-body">
-          <div v-if="topImprovers.length === 0" class="empty-state">
+          <div v-if="topImprovers.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
             <i class="pi pi-chart-line empty-icon muted"></i>
             <span>本周暂无对比数据</span>
           </div>
           <div v-else class="list-items">
-            <div v-for="(item, idx) in topImprovers" :key="item.name" class="list-item">
+            <div
+              v-for="(item, idx) in topImprovers"
+              :key="item.name"
+              class="list-item fade-in-up"
+              :style="{ '--delay': (280 + idx * 50) + 'ms' }"
+            >
               <span class="item-index">{{ idx + 1 }}</span>
               <div class="item-main">
                 <span class="item-name">{{ item.name }}</span>
@@ -114,38 +138,50 @@
 
     <!-- 统计卡片 / 趋势 -->
     <div class="charts-row">
-      <section class="panel chart-panel">
+      <section class="panel chart-panel fade-in-up" :style="{ '--delay': '320ms' }">
         <header class="panel-header">
           <div>
-            <span class="panel-eyebrow">数据</span>
             <h3>整体评分概况</h3>
+          </div>
+          <div class="panel-actions">
+            <button
+              class="danger-link-btn"
+              @click="confirmClearAll"
+              :disabled="loading.value"
+              v-if="hasAnyData"
+            >
+              <i class="pi pi-trash"></i> 清空所有数据
+            </button>
           </div>
         </header>
         <div class="stats-block">
-          <div class="stat-box">
+          <div class="stat-box fade-in-up" :style="{ '--delay': '380ms' }">
             <span class="stat-label">总报告数</span>
-            <span class="stat-value">{{ stats.total_reports }}</span>
+            <span class="stat-value">{{ animatedTotalReports }}</span>
           </div>
-          <div class="stat-box">
+          <div class="stat-box fade-in-up" :style="{ '--delay': '440ms' }">
             <span class="stat-label">已评分</span>
-            <span class="stat-value">{{ stats.scored_reports }}</span>
+            <span class="stat-value">{{ animatedScoredReports }}</span>
           </div>
-          <div class="stat-box">
+          <div class="stat-box fade-in-up" :style="{ '--delay': '500ms' }">
             <span class="stat-label">平均分</span>
-            <span class="stat-value primary">{{ stats.avg_score }}</span>
+            <span class="stat-value primary">{{ animatedAvgScore }}</span>
           </div>
         </div>
-        <div v-if="weeklyTrend.length" class="mini-chart-block">
+        <div v-if="weeklyTrend.length" class="mini-chart-block fade-in-up" style="--delay: 560ms">
           <h4>近 12 周平均分趋势</h4>
           <div ref="trendChartRef" class="mini-chart"></div>
         </div>
-        <div v-if="gradeDist && Object.keys(gradeDist).length" class="grade-block">
+        <div v-if="gradeDist && Object.keys(gradeDist).length" class="grade-block fade-in-up" style="--delay: 620ms">
           <h4>等级分布</h4>
           <div class="grade-bars">
-            <div v-for="(val, key) in gradeDist" :key="key" class="grade-bar-row">
+            <div v-for="(val, key, index) in gradeDist" :key="key" class="grade-bar-row">
               <span :class="['grade-chip grade-chip-' + gradeIdx(key)]">{{ key }}</span>
               <div class="grade-bar-bg">
-                <div class="grade-bar-fill" :style="{ width: gradeBarWidth(val) + '%' }"></div>
+                <div
+                  class="grade-bar-fill"
+                  :style="{ width: (gradeBarVisible ? gradeBarWidth(val) : 0) + '%', transitionDelay: (700 + index * 80) + 'ms' }"
+                ></div>
               </div>
               <span class="grade-count">{{ val }}</span>
             </div>
@@ -158,8 +194,13 @@
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
-import { leaderboardAPI } from '../api'
+import { leaderboardAPI, reportAPI } from '../api'
 import { useDataRefresh, getDashboardEvents } from '../composables/useDataRefresh'
+
+// 弹出确认对话框
+const emitConfirm = (msg, onOk) => {
+  if (window.confirm(msg)) onOk()
+}
 
 const notSubmitted = ref([])
 const lowScorers = ref([])
@@ -171,6 +212,41 @@ const weeklyTrend = ref([])
 const gradeDist = ref({})
 const trendChartRef = ref(null)
 const trendChartInstance = ref(null)
+const gradeBarVisible = ref(false)
+
+// 计数动画
+const animatedTotalPersons = ref(0)
+const animatedSubmitted = ref(0)
+const animatedNotSubmitted = ref(0)
+const animatedImprovers = ref(0)
+const animatedTotalReports = ref(0)
+const animatedScoredReports = ref(0)
+const animatedAvgScore = ref(0)
+
+function easeOutCubic(t) {
+  return 1 - Math.pow(1 - t, 3)
+}
+
+function animateNumber(target, from = 0, to = 0, duration = 900) {
+  const start = performance.now()
+  const diff = to - from
+  function tick(now) {
+    const p = Math.min(1, (now - start) / duration)
+    target.value = Math.round(from + diff * easeOutCubic(p))
+    if (p < 1) requestAnimationFrame(tick)
+  }
+  requestAnimationFrame(tick)
+}
+
+function runAllCountAnims() {
+  animateNumber(animatedTotalPersons, 0, totalPersons.value || 0)
+  animateNumber(animatedSubmitted, 0, submittedCount.value || 0)
+  animateNumber(animatedNotSubmitted, 0, notSubmitted.value.length || 0)
+  animateNumber(animatedImprovers, 0, topImprovers.value.length || 0)
+  animateNumber(animatedTotalReports, 0, stats.value.total_reports || 0)
+  animateNumber(animatedScoredReports, 0, stats.value.scored_reports || 0)
+  animateNumber(animatedAvgScore, 0, Math.round(Number(stats.value.avg_score)) || 0, 1100)
+}
 
 const maxGrade = computed(() => {
   const values = Object.values(gradeDist.value || {})
@@ -190,8 +266,39 @@ function gradeClass(g) {
   return { '优': 'grade-you', '良': 'grade-liang', '一般': 'grade-yiban', '差': 'grade-cha' }[g] || ''
 }
 
+const hasAnyData = computed(() => {
+  const s = stats.value || {}
+  return (s.total_reports || 0) > 0 ||
+    (s.scored_reports || 0) > 0 ||
+    (weeklyTrend.value || []).length > 0 ||
+    Object.keys(gradeDist.value || {}).length > 0
+})
+
+async function confirmClearAll() {
+  const s = stats.value || {}
+  const msg = `确认清空所有评分数据？\n\n将删除：\n· ${s.total_reports || 0} 条周报\n· ${s.scored_reports || 0} 条评分记录\n· 所有周聚合分数\n· 所有趋势图表数据\n\n此操作不可恢复！`
+  if (!window.confirm(msg)) return
+
+  try {
+    const res = await reportAPI.clearAll()
+    const d = res.data
+    console.log('[Dashboard] 清空完成:', d)
+    window.alert(
+      `✅ 清空完成！\n\n` +
+      `删除了 ${d.deleted_reports} 条周报、${d.deleted_scores} 条评分记录\n` +
+      `删除了 ${d.deleted_aggregates} 条聚合分数、${d.deleted_files} 个文件`
+    )
+    loadData()
+  } catch (e) {
+    console.error('[Dashboard] 清空失败:', e)
+    const errDetail = e?.response?.data?.detail || e?.message || '未知错误'
+    window.alert('❌ 清空失败：' + errDetail)
+  }
+}
+
 async function loadData() {
   try {
+    gradeBarVisible.value = false
     const [overviewRes, statsRes] = await Promise.all([
       leaderboardAPI.dashboard(),
       leaderboardAPI.stats(),
@@ -215,6 +322,12 @@ async function loadData() {
 
     await nextTick()
     renderTrendChart()
+    // 触发数字与条目的动画
+    runAllCountAnims()
+    // 让等级条稍后从 0 展开
+    setTimeout(() => {
+      gradeBarVisible.value = true
+    }, 180)
   } catch (e) {
     console.error('[Dashboard] 加载失败:', e)
   }
@@ -240,6 +353,8 @@ function renderTrendChart() {
       backgroundColor: 'transparent',
       grid: { top: 20, right: 20, bottom: 30, left: 40 },
       tooltip: { trigger: 'axis' },
+      animationDuration: 1000,
+      animationEasing: 'cubicOut',
       xAxis: {
         type: 'category',
         data: data.map(d => d.week_start?.slice(5) || ''),
@@ -290,6 +405,26 @@ if (typeof window !== 'undefined') {
   gap: 20px;
 }
 
+/* 统一的入场动效：从下方轻微上浮并渐显 */
+.fade-in-up {
+  opacity: 0;
+  transform: translateY(14px);
+  animation: fadeInUp 560ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: var(--delay, 0ms);
+  will-change: transform, opacity;
+}
+
+@keyframes fadeInUp {
+  0% {
+    opacity: 0;
+    transform: translateY(14px);
+  }
+  100% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 /* 顶部概览 */
 .overview-row {
   display: grid;
@@ -305,6 +440,13 @@ if (typeof window !== 'undefined') {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.overview-item:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -12px rgba(47, 68, 160, 0.18);
+  border-color: #dde5ff;
 }
 
 .overview-label {
@@ -317,6 +459,7 @@ if (typeof window !== 'undefined') {
   font-weight: 800;
   color: #1e2335;
   letter-spacing: -0.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .highlight-green { color: #16a875; }
@@ -335,6 +478,13 @@ if (typeof window !== 'undefined') {
   border: 1px solid #eef1f9;
   border-radius: 18px;
   overflow: hidden;
+  transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.panel:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 12px 28px -14px rgba(47, 68, 160, 0.18);
+  border-color: #dde5ff;
 }
 
 .panel-accent {
@@ -350,20 +500,36 @@ if (typeof window !== 'undefined') {
   gap: 10px;
 }
 
-.panel-eyebrow {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: #f0f3fb;
-  color: #4f6bff;
-  font-size: 12px;
-  font-weight: 600;
-  margin-bottom: 8px;
+.panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.panel-eyebrow-red { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
-.panel-eyebrow-amber { background: rgba(217, 119, 6, 0.12); color: #d97706; }
-.panel-eyebrow-green { background: rgba(22, 168, 117, 0.12); color: #16a875; }
+.danger-link-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #ef4444;
+  background: rgba(239, 68, 68, 0.08);
+  border: none;
+  padding: 7px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 600;
+  transition: all 0.15s ease;
+}
+
+.danger-link-btn:hover:not(:disabled) {
+  background: rgba(239, 68, 68, 0.18);
+  color: #dc2626;
+}
+
+.danger-link-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
 
 .panel-header h3 {
   margin: 0;
@@ -412,10 +578,13 @@ if (typeof window !== 'undefined') {
   padding: 12px 14px;
   border-radius: 12px;
   background: #f8faff;
-  transition: background 0.15s ease;
+  transition: background 0.18s ease, transform 0.18s ease;
 }
 
-.list-item:hover { background: #eef2ff; }
+.list-item:hover {
+  background: #eef2ff;
+  transform: translateX(2px);
+}
 
 .item-index {
   width: 22px;
@@ -475,6 +644,7 @@ if (typeof window !== 'undefined') {
   font-size: 16px;
   font-weight: 700;
   color: #4f6bff;
+  font-variant-numeric: tabular-nums;
 }
 
 .grade-chip {
@@ -519,10 +689,21 @@ if (typeof window !== 'undefined') {
   flex-direction: column;
   gap: 6px;
   align-items: flex-start;
+  transition: background 0.2s ease, transform 0.2s ease;
+}
+
+.stat-box:hover {
+  background: #eef2ff;
+  transform: translateY(-1px);
 }
 
 .stat-label { font-size: 12px; color: #5a6481; }
-.stat-value { font-size: 22px; font-weight: 700; color: #1e2335; }
+.stat-value {
+  font-size: 22px;
+  font-weight: 700;
+  color: #1e2335;
+  font-variant-numeric: tabular-nums;
+}
 .stat-value.primary { color: #4f6bff; }
 
 .mini-chart-block {
@@ -571,7 +752,8 @@ if (typeof window !== 'undefined') {
   height: 100%;
   background: linear-gradient(90deg, #4f6bff, #7c8fff);
   border-radius: 4px;
-  transition: width 0.4s ease;
+  width: 0;
+  transition: width 800ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .grade-count {
@@ -579,6 +761,7 @@ if (typeof window !== 'undefined') {
   color: #5a6481;
   min-width: 30px;
   text-align: right;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 响应式 */

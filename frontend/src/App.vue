@@ -1,6 +1,7 @@
 <template>
   <div class="app-container">
     <Toast ref="toastRef" position="top-right" />
+    <ConfirmDialog group="default" />
     <MainLayout v-if="useAdminLayout">
       <router-view v-slot="{ Component, route: viewRoute }">
         <transition name="fade" mode="out-in">

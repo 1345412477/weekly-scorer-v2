@@ -21,6 +21,10 @@
         </template>
         <template #content>
           <form class="login-form" @submit.prevent="login">
+            <div v-if="errorMessage" class="login-error" role="alert">
+              <i class="pi pi-exclamation-triangle"></i>
+              <span>{{ errorMessage }}</span>
+            </div>
             <div class="field">
               <label>用户名</label>
               <InputText v-model="form.username" autocomplete="username" autofocus />
@@ -53,16 +57,28 @@ const router = useRouter()
 const toast = useToast()
 const loading = ref(false)
 const form = reactive({ username: 'admin', password: '' })
+const errorMessage = ref('')
 
 async function login() {
+  errorMessage.value = ''
+  if (!form.username?.trim()) {
+    errorMessage.value = '请输入用户名'
+    return
+  }
+  if (!form.password) {
+    errorMessage.value = '请输入密码'
+    return
+  }
   loading.value = true
   try {
-    const res = await authAPI.login(form)
+    const res = await authAPI.login({ username: form.username.trim(), password: form.password })
     setAuth(res.data.access_token, res.data.user)
-    toast.add({ severity: 'success', summary: '登录成功', life: 2000 })
-    router.push(router.currentRoute.value.query.redirect || '/admin/dashboard')
+    toast.add({ severity: 'success', summary: '登录成功，欢迎进入后台', life: 1800 })
+    setTimeout(() => {
+      router.push(router.currentRoute.value.query.redirect || '/admin/dashboard')
+    }, 320)
   } catch (e) {
-    toast.add({ severity: 'error', summary: e.userMessage || '登录失败', life: 2500 })
+    errorMessage.value = e.userMessage || e.response?.data?.detail || '登录失败，请稍后重试'
   } finally {
     loading.value = false
   }
@@ -170,6 +186,26 @@ async function login() {
 
 .login-btn {
   margin-top: 8px;
+}
+
+.login-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 14px;
+  margin-bottom: 16px;
+  border-radius: var(--radius-md);
+  background: #fff1f0;
+  color: #cf1322;
+  border: 1px solid #ffa39e;
+  font-size: var(--text-sm);
+  line-height: 1.5;
+}
+
+.login-error i {
+  color: #cf1322;
+  font-size: 16px;
+  flex-shrink: 0;
 }
 
 @media (max-width: 860px) {

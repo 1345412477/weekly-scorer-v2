@@ -1,187 +1,226 @@
 <template>
   <div class="config-page page-content">
     <!-- AI 模型状态 -->
-    <section class="status-card">
-      <div class="status-info">
-        <div class="status-icon"><i class="pi pi-bolt"></i></div>
-        <div class="status-text">
-          <span class="status-eyebrow">AI 引擎状态</span>
-          <span class="status-provider">{{ providerName }}</span>
-          <span class="status-model">{{ aiStatus.model || '模型加载中...' }}</span>
+    <section class="panel-card status-card">
+      <header class="panel-header">
+        <div class="header-left">
+          <div class="status-icon"><i class="pi pi-bolt"></i></div>
+          <div class="status-text">
+            <span class="status-provider">{{ providerName }}</span>
+            <span class="status-model"><i class="pi pi-box"></i> {{ aiStatus.model || '模型加载中...' }}</span>
+            <span class="status-check-time" v-if="aiStatus.checkedAt">上次检测：{{ formatBeijingTimeShort(aiStatus.checkedAt) }}<span v-if="aiStatus.cached"> · 缓存</span></span>
+          </div>
         </div>
-      </div>
-      <div class="status-right">
-        <Tag v-if="aiStatus.success === true" value="已连接" severity="success" class="status-tag" />
-        <Tag v-else-if="aiStatus.success === false" value="连接失败" severity="danger" class="status-tag" />
-        <Tag v-else value="检测中..." severity="warn" class="status-tag" />
-        <Button label="刷新" icon="pi pi-refresh" text size="small" @click="checkAiStatus" />
+        <div class="header-right">
+          <div class="status-indicator">
+            <span :class="['indicator-dot', { ok: aiStatus.success === true, fail: aiStatus.success === false }]"></span>
+            <span class="indicator-text">
+              {{ aiStatus.success === true ? '已连接' : aiStatus.success === false ? '连接失败' : '检测中...' }}
+            </span>
+          </div>
+          <Button icon="pi pi-refresh" text severity="secondary" size="small" @click="checkAiStatus(true)" class="refresh-btn" v-tooltip.bottom="'重新检测模型（会产生少量 token 消耗）'" />
+        </div>
+      </header>
+    </section>
+
+    <!-- 评分维度 + 等级阈值 -->
+    <section class="panel-card collapsible" :class="{ collapsed: !expanded.dimensions }">
+      <header class="panel-header clickable" @click="toggle('dimensions')">
+        <div class="header-left">
+          <h3>评分维度与等级阈值</h3>
+        </div>
+        <div class="header-right">
+          <Button label="添加维度" icon="pi pi-plus" text size="small" @click.stop="addDim" />
+          <i :class="['chevron', 'pi', expanded.dimensions ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
+        </div>
+      </header>
+      <div class="panel-body" v-show="expanded.dimensions">
+        <div class="sub-grid">
+          <!-- 左：评分维度表 -->
+          <div>
+            <div class="table-wrap">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th style="width: 22%">维度名称</th>
+                    <th style="width: 12%">最高分</th>
+                    <th style="width: 12%">最低分</th>
+                    <th style="width: 12%">满分</th>
+                    <th>考核内容</th>
+                    <th style="width: 48px"></th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(dim, idx) in dimensions" :key="idx">
+                    <td data-label="维度名称">
+                      <InputText v-model="dim.name" placeholder="请输入" class="cell-input" />
+                    </td>
+                    <td data-label="最高分">
+                      <InputNumber v-model="dim.highest_score" :min="0" :max="dim.full_score || 100" size="small" :showButtons="false" class="cell-input" />
+                    </td>
+                    <td data-label="最低分">
+                      <InputNumber v-model="dim.lowest_score" :min="0" :max="dim.full_score || 100" size="small" :showButtons="false" class="cell-input" />
+                    </td>
+                    <td data-label="满分">
+                      <InputNumber v-model="dim.full_score" :min="1" :max="100" size="small" :showButtons="false" class="cell-input" />
+                    </td>
+                    <td data-label="考核内容">
+                      <InputText v-model="dim.evaluation_content" placeholder="描述考核要点" class="cell-input" />
+                    </td>
+                    <td class="action-cell">
+                      <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="removeDim(idx)" :disabled="dimensions.length <= 1" />
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="totals-row">
+              <span class="totals-label">总满分</span>
+              <span class="totals-value">{{ totalFullScore }} 分</span>
+            </div>
+          </div>
+
+          <!-- 右：等级阈值 -->
+          <div>
+            <div class="sub-section-label">等级阈值（{{ totalFullScore }}分制）</div>
+            <div class="threshold-grid">
+              <div v-for="(val, key) in gradeThresholds" :key="key" :class="['threshold-item', 't-' + gradeIndex(key)]">
+                <span :class="['th-label', 'g-' + gradeIndex(key)]">{{ key }}</span>
+                <span class="th-label-op">得分 ≥</span>
+                <InputNumber v-model="gradeThresholds[key]" :min="0" :max="totalFullScore" size="small" :showButtons="false" class="th-input-num" />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="section-actions">
+          <span class="section-actions-hint">修改后请保存配置才能生效</span>
+          <div class="section-actions-buttons">
+            <Button label="重置默认" severity="secondary" outlined @click="resetConfig" />
+            <Button label="保存配置" icon="pi pi-save" @click="saveConfig" :loading="saving" />
+          </div>
+        </div>
       </div>
     </section>
 
-    <!-- 保存操作栏 -->
-    <div class="action-bar">
-      <span class="action-hint">修改后请保存配置才能生效</span>
-      <div class="action-buttons">
-        <Button label="重置默认" severity="secondary" outlined @click="resetConfig" />
-        <Button label="保存配置" icon="pi pi-save" @click="saveConfig" :loading="saving" />
-      </div>
-    </div>
-
-    <!-- 两栏布局 -->
-    <div class="grid-wrap">
-      <!-- 左列：评分维度 -->
-      <section class="panel-card">
-        <header class="panel-header">
-          <div>
-            <span class="panel-eyebrow">核心配置</span>
-            <h3>评分维度</h3>
-          </div>
-          <Button label="添加维度" icon="pi pi-plus" text size="small" @click="addDim" />
-        </header>
-
-        <div class="table-wrap">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th style="width: 22%">维度名称</th>
-                <th style="width: 12%">最高分</th>
-                <th style="width: 12%">最低分</th>
-                <th style="width: 12%">满分</th>
-                <th>考核内容</th>
-                <th style="width: 48px"></th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr v-for="(dim, idx) in dimensions" :key="idx">
-                <td>
-                  <InputText v-model="dim.name" placeholder="请输入" class="cell-input" />
-                </td>
-                <td>
-                  <InputNumber v-model="dim.highest_score" :min="0" :max="dim.full_score || 100" size="small" buttonLayout="horizontal" />
-                </td>
-                <td>
-                  <InputNumber v-model="dim.lowest_score" :min="0" :max="dim.full_score || 100" size="small" buttonLayout="horizontal" />
-                </td>
-                <td>
-                  <InputNumber v-model="dim.full_score" :min="1" :max="100" size="small" buttonLayout="horizontal" />
-                </td>
-                <td>
-                  <InputText v-model="dim.evaluation_content" placeholder="描述考核要点" class="cell-input" />
-                </td>
-                <td class="action-cell">
-                  <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="removeDim(idx)" :disabled="dimensions.length <= 1" />
-                </td>
-              </tr>
-            </tbody>
-          </table>
+    <!-- 三项 Prompt 模板 -->
+    <section class="panel-card collapsible" :class="{ collapsed: !expanded.prompts }">
+      <header class="panel-header clickable" @click="toggle('prompts')">
+        <div class="header-left">
+          <h3>三项评分 Prompt 模板</h3>
+          <p class="panel-desc">分别用于周报、考勤和沟通（含一周小结）评分；评分标准与分数范围由 Prompt 决定，系统不做硬性限制</p>
         </div>
-
-        <div class="totals-row">
-          <span class="totals-label">总满分</span>
-          <span class="totals-value">{{ totalFullScore }} 分</span>
-        </div>
-      </section>
-
-      <!-- 右列：等级阈值 + Prompt -->
-      <section class="panel-card">
-        <header class="panel-header">
-          <div>
-            <span class="panel-eyebrow">评级规则</span>
-            <h3>等级阈值（{{ totalFullScore }}分制）</h3>
-          </div>
-        </header>
-
-        <div class="threshold-grid">
-          <div v-for="(val, key) in gradeThresholds" :key="key" :class="['threshold-item', 't-' + gradeIndex(key)]">
-            <div class="th-grade">
-              <span :class="['th-tag', 'g-' + gradeIndex(key)]">{{ key }}</span>
-            </div>
-            <div class="th-input">
-              <span class="th-label">得分 ≥</span>
-              <InputNumber v-model="gradeThresholds[key]" :min="0" :max="totalFullScore" size="small" buttonLayout="horizontal" />
-            </div>
-          </div>
-        </div>
-
-        <div class="section-divider"></div>
-
-        <header class="panel-header">
-          <div>
-            <span class="panel-eyebrow">AI 提示词</span>
-            <h3>评分 Prompt 模板</h3>
-          </div>
-          <Button label="生成默认" icon="pi pi-magic" text size="small" @click="generateDefaultPrompt" />
-        </header>
-
-        <Textarea v-model="promptTemplate" rows="8" class="prompt-area" placeholder="留空则使用系统默认提示词..." autoResize />
-        <div class="prompt-vars">
-          <Tag value="{content}" severity="info" />
-          <span class="var-desc">周报内容</span>
-          <Tag value="{dimensions}" severity="info" />
-          <span class="var-desc">评分维度</span>
-        </div>
-      </section>
-    </div>
-
-    <!-- 测试评分 -->
-    <section class="panel-card test-card">
-      <header class="panel-header">
-        <div>
-          <span class="panel-eyebrow">功能验证</span>
-          <h3>测试评分</h3>
-          <p class="panel-desc">上传周报文件快速测试配置是否正确</p>
+        <div class="header-right">
+          <Button label="全部生成默认" icon="pi pi-magic" text size="small" @click.stop="generateAllPrompts" />
+          <i :class="['chevron', 'pi', expanded.prompts ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
         </div>
       </header>
-
-      <div class="test-layout">
-        <div class="upload-box" @dragover.prevent @drop.prevent="onTestDrop" @click="triggerTestFileInput">
-          <input ref="testFileInput" type="file" accept=".xlsx,.xls,.docx,.pdf" style="display:none" @change="onTestFileSelect" />
-          <div v-if="!testFile" class="upload-empty">
-            <i class="pi pi-cloud-upload upload-ic"></i>
-            <span class="upload-title">点击或拖拽上传周报文件</span>
-            <span class="upload-hint">支持 .xlsx / .xls / .docx / .pdf</span>
-          </div>
-          <div v-else class="upload-filled">
-            <i class="pi pi-file-excel file-ic"></i>
-            <div class="file-meta">
-              <span class="file-name">{{ testFile.name }}</span>
-              <span class="file-size">{{ formatFileSize(testFile.size) }}</span>
+      <div class="panel-body" v-show="expanded.prompts">
+        <div class="prompt-grid">
+          <div class="prompt-block">
+            <div class="prompt-block-head">
+              <span class="prompt-field-label">周报评分 · 权重</span>
+              <InputNumber v-model.number="weights.report" :min="0" :step="1" size="small" :showButtons="false" class="weight-input" />
             </div>
-            <Button icon="pi pi-times" text rounded severity="danger" @click.stop="clearTestFile" />
+            <Textarea v-model="reportPrompt" rows="6" class="prompt-area" placeholder="请输入周报评分提示词...（建议包含评分维度、标准与分数范围）" autoResize />
+          </div>
+
+          <div class="prompt-block">
+            <div class="prompt-block-head">
+              <span class="prompt-field-label">考勤评分 · 权重</span>
+              <InputNumber v-model.number="weights.attendance" :min="0" :step="1" size="small" :showButtons="false" class="weight-input" />
+            </div>
+            <Textarea v-model="attendancePrompt" rows="6" class="prompt-area" placeholder="请输入考勤评分提示词...（例如工作时长、迟到、异常、加班等标准）" autoResize />
+          </div>
+
+          <div class="prompt-block">
+            <div class="prompt-block-head">
+              <span class="prompt-field-label">沟通/一周小结 · 权重</span>
+              <InputNumber v-model.number="weights.chat" :min="0" :step="1" size="small" :showButtons="false" class="weight-input" />
+            </div>
+            <Textarea v-model="chatPrompt" rows="6" class="prompt-area" placeholder="请输入沟通/一周小结评分提示词...（如工作会话次数、响应效率、沟通质量）" autoResize />
           </div>
         </div>
 
-        <div class="test-actions">
-          <Button label="清空" severity="secondary" outlined @click="resetTest" :disabled="!testFile && !testResult" />
-          <Button label="上传并评分" icon="pi pi-play" @click="runTest" :loading="testing" :disabled="!testFile" />
+        <div class="weights-sum-row">
+          <span class="weights-label">综合得分 = 周报分 × {{ weights.report }} + 考勤分 × {{ weights.attendance }} + 沟通分 × {{ weights.chat }}</span>
         </div>
       </div>
+    </section>
 
-      <div v-if="testResult" class="test-result-box">
-        <div class="result-head">
-          <div class="result-score-wrap">
-            <span class="result-score">{{ testResult.total_score }}</span>
-            <span class="result-sub">综合评分</span>
+    <!-- 定时评分设置 -->
+    <section class="panel-card schedule-panel collapsible" :class="{ collapsed: !expanded.schedule }">
+      <header class="panel-header clickable" @click="toggle('schedule')">
+        <div class="header-left">
+          <h3>定时聚合评分</h3>
+          <p class="panel-sub">在配置时间自动聚合考勤分与沟通分。员工提交的周报会立即 AI 评分，无需等待。</p>
+        </div>
+        <div class="header-right">
+          <div class="schedule-toggle-wrap" @click.stop>
+            <InputSwitch v-model="schedule.enabled" :disabled="scheduleSaving" />
+            <span class="schedule-status">{{ schedule.enabled ? '已启用' : '已禁用' }}</span>
           </div>
-          <Tag v-if="testResult.grade" :value="testResult.grade" :severity="gradeSeverity(testResult.grade)" class="grade-pill" />
+          <i :class="['chevron', 'pi', expanded.schedule ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
+        </div>
+      </header>
+      <div class="panel-body" v-show="expanded.schedule">
+        <div class="schedule-row">
+          <label class="field-label">运行频率</label>
+          <Dropdown
+            v-model="schedule.recurrence"
+            :options="[{ label: '每天', value: 'daily' }, { label: '每周（按星期）', value: 'weekly' }]"
+            optionLabel="label"
+            optionValue="value"
+            :disabled="!schedule.enabled || scheduleSaving"
+            class="schedule-select"
+            placeholder="选择频率"
+          />
         </div>
 
-        <div v-if="testResult.dimension_scores?.length" class="result-dims">
-          <div v-for="(d, idx) in testResult.dimension_scores" :key="idx" class="rd-row">
-            <span class="rd-name">{{ d.name }}</span>
-            <div class="rd-bar-bg"><div class="rd-bar" :style="{ width: Math.min(100, ((d.score || 0) / (d.max || 100)) * 100) + '%' }"></div></div>
-            <span class="rd-val">{{ d.score }}/{{ d.max }}</span>
+        <div class="schedule-row">
+          <label class="field-label">运行时间</label>
+          <div class="time-inputs">
+            <InputNumber v-model.number="schedule.hour" :min="0" :max="23" :step="1" :showButtons="false" size="large" :disabled="!schedule.enabled" />
+            <span class="time-sep">:</span>
+            <InputNumber v-model.number="schedule.minute" :min="0" :max="59" :step="1" :showButtons="false" size="large" :disabled="!schedule.enabled" />
           </div>
         </div>
 
-        <div v-if="testResult.ai_comment" class="result-comment">
-          <span class="rc-label"><i class="pi pi-comments"></i> AI 评语</span>
-          <p>{{ testResult.ai_comment }}</p>
+        <div v-if="schedule.recurrence === 'weekly'" class="schedule-row">
+          <label class="field-label">运行日</label>
+          <div class="weekday-toggles">
+            <button
+              v-for="(label, idx) in WEEKDAY_LABELS"
+              :key="idx"
+              type="button"
+              class="weekday-btn"
+              :class="{ 'selected': isWeekdaySelected(idx), 'disabled': !schedule.enabled }"
+              :disabled="!schedule.enabled"
+              @click="toggleWeekday(idx)"
+            >
+              {{ label }}
+            </button>
+          </div>
         </div>
 
-        <div v-if="testResult.ai_suggestion" class="result-suggestion">
-          <span class="rc-label"><i class="pi pi-lightbulb"></i> 改进建议</span>
-          <p>{{ testResult.ai_suggestion }}</p>
+        <div class="schedule-row schedule-hint-row">
+          <span class="schedule-hint">
+            <template v-if="schedule.recurrence === 'daily'">
+              系统会在每天 {{ String(schedule.hour).padStart(2, '0') }}:{{ String(schedule.minute).padStart(2, '0') }} 自动聚合本周的考勤与沟通数据
+            </template>
+            <template v-else>
+              系统会在每周 {{ formatWeekdayHint() }} {{ String(schedule.hour).padStart(2, '0') }}:{{ String(schedule.minute).padStart(2, '0') }} 自动聚合本周的考勤与沟通数据
+            </template>
+          </span>
+        </div>
+
+        <div class="schedule-actions">
+          <Button label="保存定时设置" icon="pi pi-check" :loading="scheduleSaving" @click="saveSchedule" severity="success" />
+        </div>
+
+        <div v-if="scheduleMsg" class="schedule-msg" :class="scheduleMsg.type">
+          <i :class="scheduleMsg.type === 'success' ? 'pi pi-check-circle' : 'pi pi-exclamation-triangle'"></i>
+          <span>{{ scheduleMsg.text }}</span>
         </div>
       </div>
     </section>
@@ -190,76 +229,76 @@
     <div class="grid-wrap">
       <section class="panel-card">
         <header class="panel-header">
-          <div>
-            <span class="panel-eyebrow">组织管理</span>
+          <div class="header-left">
             <h3>部门管理</h3>
           </div>
         </header>
+        <div class="panel-body">
+          <div class="add-row">
+            <InputText v-model="newDeptName" placeholder="部门名称" class="grow-input" />
+            <InputText v-model="newDeptDesc" placeholder="部门描述（可选）" class="grow-input" />
+            <Button label="添加" icon="pi pi-plus" @click="addDepartment" :disabled="!newDeptName.trim()" />
+          </div>
 
-        <div class="add-row">
-          <InputText v-model="newDeptName" placeholder="部门名称" class="grow-input" />
-          <InputText v-model="newDeptDesc" placeholder="部门描述（可选）" class="grow-input" />
-          <Button label="添加" icon="pi pi-plus" @click="addDepartment" :disabled="!newDeptName.trim()" />
-        </div>
-
-        <div class="item-list">
-          <div v-if="!departments.length" class="empty-line">暂无部门数据</div>
-          <div v-for="dept in departments" :key="dept.id" class="item-row">
-            <template v-if="editingDeptId === dept.id">
-              <InputText v-model="editingDeptName" placeholder="部门名称" class="grow-input" />
-              <InputText v-model="editingDeptDesc" placeholder="部门描述" class="grow-input" />
-              <Button icon="pi pi-check" @click="saveEditDepartment(dept.id)" size="small" :disabled="!editingDeptName.trim()" />
-              <Button icon="pi pi-times" severity="secondary" text @click="cancelEditDepartment" size="small" />
-            </template>
-            <template v-else>
-              <div class="item-info">
-                <span class="item-title">{{ dept.name }}</span>
-                <span class="item-sub">{{ dept.description || '无描述' }}</span>
-              </div>
-              <div class="item-actions">
-                <Button icon="pi pi-pencil" text rounded size="small" @click="startEditDepartment(dept)" />
-                <Button icon="pi pi-trash" text rounded severity="danger" size="small" @click="deleteDepartment(dept.id)" />
-              </div>
-            </template>
+          <div class="item-list">
+            <div v-if="!departments.length" class="empty-line">暂无部门数据</div>
+            <div v-for="dept in departments" :key="dept.id" class="item-row">
+              <template v-if="editingDeptId === dept.id">
+                <InputText v-model="editingDeptName" placeholder="部门名称" class="grow-input" />
+                <InputText v-model="editingDeptDesc" placeholder="部门描述" class="grow-input" />
+                <Button icon="pi pi-check" @click="saveEditDepartment(dept.id)" size="small" :disabled="!editingDeptName.trim()" />
+                <Button icon="pi pi-times" severity="secondary" text @click="cancelEditDepartment" size="small" />
+              </template>
+              <template v-else>
+                <div class="item-info">
+                  <span class="item-title">{{ dept.name }}</span>
+                  <span class="item-sub">{{ dept.description || '无描述' }}</span>
+                </div>
+                <div class="item-actions">
+                  <Button icon="pi pi-pencil" text rounded size="small" @click="startEditDepartment(dept)" />
+                  <Button icon="pi pi-trash" text rounded severity="danger" size="small" @click="deleteDepartment(dept.id)" />
+                </div>
+              </template>
+            </div>
           </div>
         </div>
       </section>
 
       <section class="panel-card">
         <header class="panel-header">
-          <div>
-            <span class="panel-eyebrow">组织管理</span>
+          <div class="header-left">
             <h3>人员管理</h3>
           </div>
         </header>
+        <div class="panel-body">
+          <div class="add-row">
+            <InputText v-model="newPersonName" placeholder="姓名" class="grow-input" />
+            <Dropdown v-model="newPersonDept" :options="departments" optionLabel="name" placeholder="选择部门" showClear class="grow-input" />
+            <InputText v-model="newPersonPosition" placeholder="职位（可选）" class="grow-input" />
+            <Button label="添加" icon="pi pi-plus" @click="addPerson" :disabled="!newPersonName.trim()" />
+          </div>
 
-        <div class="add-row">
-          <InputText v-model="newPersonName" placeholder="姓名" class="grow-input" />
-          <Dropdown v-model="newPersonDept" :options="departments" optionLabel="name" placeholder="选择部门" showClear class="grow-input" />
-          <InputText v-model="newPersonPosition" placeholder="职位（可选）" class="grow-input" />
-          <Button label="添加" icon="pi pi-plus" @click="addPerson" :disabled="!newPersonName.trim()" />
-        </div>
-
-        <div class="item-list">
-          <div v-if="!persons.length" class="empty-line">暂无人员数据</div>
-          <div v-for="person in persons" :key="person.id" class="item-row">
-            <template v-if="editingPersonId === person.id">
-              <InputText v-model="editingPersonName" placeholder="姓名" class="grow-input" />
-              <Dropdown v-model="editingPersonDept" :options="departments" optionLabel="name" placeholder="部门" showClear class="grow-input" />
-              <InputText v-model="editingPersonPosition" placeholder="职位" class="grow-input" />
-              <Button icon="pi pi-check" @click="saveEditPerson(person.id)" size="small" :disabled="!editingPersonName.trim()" />
-              <Button icon="pi pi-times" severity="secondary" text @click="cancelEditPerson" size="small" />
-            </template>
-            <template v-else>
-              <div class="item-info">
-                <span class="item-title">{{ person.name }}</span>
-                <span class="item-sub">{{ person.department_name || '未分配部门' }}{{ person.position ? ' · ' + person.position : '' }}</span>
-              </div>
-              <div class="item-actions">
-                <Button icon="pi pi-pencil" text rounded size="small" @click="startEditPerson(person)" />
-                <Button icon="pi pi-trash" text rounded severity="danger" size="small" @click="deletePerson(person.id)" />
-              </div>
-            </template>
+          <div class="item-list">
+            <div v-if="!persons.length" class="empty-line">暂无人员数据</div>
+            <div v-for="person in persons" :key="person.id" class="item-row">
+              <template v-if="editingPersonId === person.id">
+                <InputText v-model="editingPersonName" placeholder="姓名" class="grow-input" />
+                <Dropdown v-model="editingPersonDept" :options="departments" optionLabel="name" placeholder="部门" showClear class="grow-input" />
+                <InputText v-model="editingPersonPosition" placeholder="职位" class="grow-input" />
+                <Button icon="pi pi-check" @click="saveEditPerson(person.id)" size="small" :disabled="!editingPersonName.trim()" />
+                <Button icon="pi pi-times" severity="secondary" text @click="cancelEditPerson" size="small" />
+              </template>
+              <template v-else>
+                <div class="item-info">
+                  <span class="item-title">{{ person.name }}</span>
+                  <span class="item-sub">{{ person.department_name || '未分配部门' }}{{ person.position ? ' · ' + person.position : '' }}</span>
+                </div>
+                <div class="item-actions">
+                  <Button icon="pi pi-pencil" text rounded size="small" @click="startEditPerson(person)" />
+                  <Button icon="pi pi-trash" text rounded severity="danger" size="small" @click="deletePerson(person.id)" />
+                </div>
+              </template>
+            </div>
           </div>
         </div>
       </section>
@@ -268,25 +307,36 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
-import { configAPI, departmentAPI, personAPI, reportAPI } from '../api'
+import { ref, reactive, computed, onMounted } from 'vue'
+import { configAPI, departmentAPI, personAPI, reportAPI, aggregateAPI } from '../api'
 import { useDataRefresh, getConfigEvents } from '../composables/useDataRefresh'
 import { useDataOperation } from '../composables/useDataOperation'
 import { DataEventType, emitDataChanged } from '../utils/dataEvents'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
+import InputSwitch from 'primevue/inputswitch'
 import Textarea from 'primevue/textarea'
 import Dropdown from 'primevue/dropdown'
-import Tag from 'primevue/tag'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
 const { execute } = useDataOperation()
 
+// 各板块展开状态
+const expanded = reactive({
+  status: true,
+  dimensions: false,
+  prompts: false,
+  schedule: false,
+})
+function toggle(key) {
+  if (key in expanded) expanded[key] = !expanded[key]
+}
+
 const saving = ref(false)
 const testing = ref(false)
-const aiStatus = ref({ provider: '', model: '', success: null })
+const aiStatus = ref({ provider: '', model: '', success: null, checkedAt: '', cached: false, ttl_remaining: 0 })
 const dimensions = ref([
   { name: '工作反馈深度', full_score: 14, highest_score: null, lowest_score: null, evaluation_content: '问题发现+分析+解决方案' },
   { name: '进度节点明确', full_score: 13, highest_score: null, lowest_score: null, evaluation_content: '项目是否有明确进度/节点' },
@@ -295,6 +345,22 @@ const dimensions = ref([
 ])
 const gradeThresholds = ref({ '优': 45, '良': 38, '一般': 33, '差': 28 })
 const promptTemplate = ref('')
+// v3 三项提示词 + 三项权重
+const reportPrompt = ref('')
+const attendancePrompt = ref('')
+const chatPrompt = ref('')
+const weights = ref({ report: 1, attendance: 1, chat: 1 })
+// 定时评分设置
+const schedule = ref({
+  enabled: false,
+  hour: 3,
+  minute: 0,
+  recurrence: 'daily',          // 'daily' / 'weekly'
+  weekdays: [0, 1, 2, 3, 4],    // 0=周一 ... 6=周日
+})
+const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
+const scheduleSaving = ref(false)
+const scheduleMsg = ref(null)
 const testFile = ref(null)
 const testFileInput = ref(null)
 const testResult = ref(null)
@@ -353,6 +419,10 @@ function resetConfig() {
   ]
   gradeThresholds.value = { '优': 45, '良': 38, '一般': 33, '差': 28 }
   promptTemplate.value = ''
+  reportPrompt.value = ''
+  attendancePrompt.value = ''
+  chatPrompt.value = ''
+  weights.value = { report: 1, attendance: 1, chat: 1 }
   toast.add({ severity: 'info', summary: '已重置为默认配置', life: 2000 })
 }
 
@@ -363,6 +433,17 @@ async function loadConfig() {
     if (d.dimensions?.length) dimensions.value = d.dimensions
     if (d.grade_thresholds) gradeThresholds.value = d.grade_thresholds
     if (d.prompt_template) promptTemplate.value = d.prompt_template
+    // v3 三项提示词
+    if (typeof d.report_prompt === 'string') reportPrompt.value = d.report_prompt
+    if (typeof d.attendance_prompt === 'string') attendancePrompt.value = d.attendance_prompt
+    if (typeof d.chat_prompt === 'string') chatPrompt.value = d.chat_prompt
+    if (d.weights && typeof d.weights === 'object') {
+      weights.value = {
+        report: Number(d.weights.report ?? 1),
+        attendance: Number(d.weights.attendance ?? 1),
+        chat: Number(d.weights.chat ?? 1),
+      }
+    }
   } catch (e) { console.error('[Config] 加载失败:', e) }
 }
 
@@ -383,6 +464,14 @@ async function saveConfig() {
       dimensions: dimensions.value,
       grade_thresholds: gradeThresholds.value,
       prompt_template: promptTemplate.value,
+      report_prompt: reportPrompt.value,
+      attendance_prompt: attendancePrompt.value,
+      chat_prompt: chatPrompt.value,
+      weights: {
+        report: Number(weights.value.report ?? 1),
+        attendance: Number(weights.value.attendance ?? 1),
+        chat: Number(weights.value.chat ?? 1),
+      },
     })
     emitDataChanged(DataEventType.CONFIG_CHANGED, { source: 'saveConfig' })
     toast.add({ severity: 'success', summary: '配置保存成功', life: 2000 })
@@ -391,6 +480,30 @@ async function saveConfig() {
   } finally {
     saving.value = false
   }
+}
+
+function generateAllPrompts() {
+  // 周报
+  const dims = dimensions.value.map((d, i) => {
+    let line = `  ${i + 1}. ${d.name}（满分${d.full_score}分`
+    if (d.highest_score != null) line += `，最高分${d.highest_score}分`
+    if (d.lowest_score != null) line += `，最低分${d.lowest_score}分`
+    line += `，考核内容：${d.evaluation_content || '待补充'}）`
+    return line
+  }).join('\n')
+  const gradeText = Object.entries(gradeThresholds.value)
+    .sort((a, b) => b[1] - a[1])
+    .map(([k, v]) => `${k}(≥${v})`)
+    .join('、')
+  reportPrompt.value = `# 周报评分提示词\n\n请根据员工提交的周报在 0-${totalFullScore.value} 分范围进行评分。\n\n## 评分维度\n${dims}\n\n## 等级划分\n${gradeText}\n\n## 输出要求\n请以 JSON 格式返回：\n- dimension_scores（每项含name/score/max/comment）\n- total_score（各维度相加）\n- grade（优/良/一般/差）\n- comment（总体评语）\n- suggestion（改进建议）\n\n## 周报内容\n{content}`
+
+  // 考勤
+  attendancePrompt.value = `# 考勤评分提示词\n\n请根据员工本周的考勤打卡数据，在 0-100 分范围内进行客观评分。\n\n## 评分参考维度\n1. 出勤完整性：是否全勤，有无迟到、早退、缺卡\n2. 工作时长：每日工作时长是否达标\n3. 异常情况：是否有未说明的异常考勤\n4. 加班情况：合理加班视为积极表现（无需额外加分上限）\n\n## 输出要求\n请以 JSON 格式返回：\n- score（0-100 的数值）\n- comment（简短点评）`
+
+  // 沟通
+  chatPrompt.value = `# 沟通与一周小结评分提示词\n\n请根据员工本周的工作沟通记录（企业微信对话记录）以及一周小结内容，在 0-100 分范围内对其沟通质量和响应效率进行评分。\n\n## 评分参考维度\n1. 工作会话数量：处理的工作相关对话数（体现在一周小结中）\n2. 响应效率：回复是否及时，阻塞时长如何\n3. 沟通质量：表达清晰、有层次、提供必要信息\n4. 一周小结完整性：是否完整反映本周工作\n\n## 输出要求\n请以 JSON 格式返回：\n- score（0-100 的数值）\n- comment（简短点评）`
+
+  toast.add({ severity: 'success', summary: '已生成三项默认提示词', life: 2000 })
 }
 
 function triggerTestFileInput() {
@@ -591,9 +704,6 @@ async function saveEditPerson(id) {
   if (editingPersonDept.value) {
     data.department_id = editingPersonDept.value.id
     data.department_name = editingPersonDept.value.name
-  } else {
-    data.department_id = ''
-    data.department_name = ''
   }
   const { success } = await execute(
     () => personAPI.update(id, data),
@@ -605,19 +715,105 @@ async function saveEditPerson(id) {
   }
 }
 
-async function checkAiStatus() {
+async function checkAiStatus(force = false) {
   try {
-    const res = await configAPI.aiStatus()
-    aiStatus.value = res.data
+    const res = await configAPI.aiStatus(force)
+    const data = res.data || {}
+    aiStatus.value = {
+      ...data,
+      // checkedAt 可能来自后端（缓存场景=checked_at，真测时需用返回值的时间）
+      checkedAt: data.checked_at || data.checkedAt || new Date().toISOString(),
+      cached: !!data.cached,
+    }
   } catch (e) {
-    aiStatus.value = { success: false, provider: 'unknown', model: '', error: '无法获取状态' }
+    aiStatus.value = { success: false, provider: 'unknown', model: '', error: '无法获取状态', checkedAt: '', cached: false }
   }
+}
+
+function formatBeijingTimeShort(iso) {
+  if (!iso) return ''
+  try {
+    const d = new Date(iso)
+    if (isNaN(d.getTime())) return String(iso).slice(0, 10)
+    const m = String(d.getMonth() + 1).padStart(2, '0')
+    const day = String(d.getDate()).padStart(2, '0')
+    const hh = String(d.getHours()).padStart(2, '0')
+    const mm = String(d.getMinutes()).padStart(2, '0')
+    return `${m}-${day} ${hh}:${mm}`
+  } catch (e) {
+    return ''
+  }
+}
+
+async function loadSchedule() {
+  try {
+    const res = await aggregateAPI.getSchedule()
+    const wd = res.data.weekdays
+    let weekdays = Array.isArray(wd) ? wd.filter(v => typeof v === 'number' && v >= 0 && v <= 6) : [0, 1, 2, 3, 4]
+    schedule.value = {
+      enabled: !!res.data.enabled,
+      hour: Number(res.data.hour ?? 3),
+      minute: Number(res.data.minute ?? 0),
+      recurrence: res.data.recurrence === 'weekly' ? 'weekly' : 'daily',
+      weekdays,
+    }
+  } catch (e) {
+    console.warn('[schedule] 加载失败:', e)
+  }
+}
+
+async function saveSchedule() {
+  scheduleSaving.value = true
+  scheduleMsg.value = null
+  try {
+    const recurrence = schedule.value.recurrence === 'weekly' ? 'weekly' : 'daily'
+    const weekdays = Array.isArray(schedule.value.weekdays)
+      ? [...new Set(schedule.value.weekdays.filter(v => Number.isInteger(v) && v >= 0 && v <= 6))].sort((a, b) => a - b)
+      : []
+    const payload = {
+      enabled: schedule.value.enabled,
+      hour: Math.min(23, Math.max(0, Number(schedule.value.hour) || 0)),
+      minute: Math.min(59, Math.max(0, Number(schedule.value.minute) || 0)),
+      recurrence,
+      weekdays,
+    }
+    const res = await aggregateAPI.saveSchedule(payload)
+    scheduleMsg.value = { type: 'success', text: res.data.message || '已保存' }
+    toast.add({ severity: 'success', summary: '定时设置已更新', life: 2500 })
+    setTimeout(() => { scheduleMsg.value = null }, 4000)
+  } catch (e) {
+    const msg = e.response?.data?.detail || '保存失败，请重试'
+    scheduleMsg.value = { type: 'error', text: msg }
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
+  } finally {
+    scheduleSaving.value = false
+  }
+}
+
+function toggleWeekday(day) {
+  if (!schedule.value.enabled) return
+  const idx = schedule.value.weekdays.indexOf(day)
+  if (idx >= 0) {
+    if (schedule.value.weekdays.length > 1) {
+      schedule.value.weekdays.splice(idx, 1)
+    }
+  } else {
+    schedule.value.weekdays.push(day)
+    schedule.value.weekdays.sort((a, b) => a - b)
+  }
+}
+function isWeekdaySelected(day) {
+  return schedule.value.weekdays.includes(day)
+}
+function formatWeekdayHint() {
+  return schedule.value.weekdays.map(i => WEEKDAY_LABELS[i]).join('、')
 }
 
 onMounted(() => {
   loadConfig()
   loadManagementData()
   checkAiStatus()
+  loadSchedule()
 })
 
 useDataRefresh({
@@ -632,28 +828,103 @@ useDataRefresh({
 .config-page {
   display: flex;
   flex-direction: column;
-  gap: 18px;
+  gap: 14px;
   padding-top: 4px;
 }
 
-/* 顶部状态卡片 */
-.status-card {
+/* ========== 可收起板块通用样式 ========== */
+.panel-card {
+  background: #fff;
+  border: 1px solid #eef1f9;
+  border-radius: 16px;
+  overflow: hidden;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+  width: 100%;
+  box-sizing: border-box;
+}
+.panel-card:hover {
+  border-color: #dde5ff;
+}
+.panel-card.collapsed {
+  box-shadow: none;
+}
+
+.panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
+  gap: 16px;
   padding: 18px 22px;
-  background: linear-gradient(135deg, #f4f7ff 0%, #ffffff 80%);
-  border: 1px solid #dde5ff;
-  border-radius: 16px;
+}
+.panel-header.clickable {
+  cursor: pointer;
+  user-select: none;
+}
+.panel-header.clickable:hover {
+  background: #fafbff;
+}
+.panel-header h3 {
+  margin: 0;
+  font-size: 15px;
+  color: #1e2335;
+  font-weight: 700;
+  letter-spacing: 0.01em;
+}
+.panel-desc {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #7a819a;
+  line-height: 1.5;
+}
+.panel-sub {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #7a819a;
 }
 
-.status-info {
+.header-left,
+.header-right {
   display: flex;
   align-items: center;
   gap: 14px;
+  min-width: 0;
+}
+.header-left {
+  flex: 1;
 }
 
-.status-icon {
+.chevron {
+  font-size: 14px;
+  color: #6a7288;
+  transition: transform 0.2s ease, color 0.2s ease;
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  cursor: pointer;
+  margin-left: 4px;
+}
+.panel-header.clickable:hover .chevron {
+  color: #4f6bff;
+}
+
+.panel-body {
+  padding: 4px 22px 22px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  border-top: 1px dashed #e3e7f3;
+  padding-top: 18px;
+}
+
+/* ========== 顶部状态卡片（AI 模型状态） ========== */
+.status-card .panel-header {
+  background: linear-gradient(135deg, #f4f7ff 0%, #ffffff 80%);
+}
+.status-card .status-icon {
   width: 44px;
   height: 44px;
   display: inline-flex;
@@ -663,112 +934,113 @@ useDataRefresh({
   background: linear-gradient(135deg, #4f6bff, #6ed0ff);
   color: #fff;
   font-size: 20px;
+  flex-shrink: 0;
+  box-shadow: 0 6px 16px rgba(79, 107, 255, 0.25);
 }
-
-.status-text {
+.status-card .status-text {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
 }
-
-.status-eyebrow {
-  font-size: 12px;
-  color: #7a819a;
-  font-weight: 600;
-}
-
-.status-provider {
-  font-size: 16px;
+.status-card .status-provider {
+  font-size: 15px;
   color: #1e2335;
   font-weight: 700;
 }
-
-.status-model {
+.status-card .status-model {
   font-size: 12px;
   color: #5a6481;
-}
-
-.status-right {
-  display: flex;
+  display: inline-flex;
   align-items: center;
-  gap: 12px;
+  gap: 6px;
 }
-
-.status-tag {
-  font-weight: 600;
+.status-card .status-check-time {
+  display: block;
+  font-size: 11px;
+  color: #8892b0;
+  margin-top: 3px;
+}
+.status-card .status-indicator {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 12px;
+  background: #fff;
+  border: 1px solid #eef1f9;
+  border-radius: 999px;
+}
+.status-card .indicator-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #f59e0b;
+  position: relative;
+}
+.status-card .indicator-dot.ok {
+  background: #10b981;
+  box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15);
+}
+.status-card .indicator-dot.fail {
+  background: #ef4444;
+  box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.15);
+}
+.status-card .indicator-text {
   font-size: 12px;
+  color: #1e2335;
+  font-weight: 600;
 }
-
-/* 操作栏 */
-.action-bar {
+.refresh-btn {
+  width: 32px;
+  height: 32px;
+  border-radius: 10px;
+}
+/* panel-card 底部操作条（用于维度/阈值 section） */
+.section-actions {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 14px 20px;
-  background: #fff;
-  border: 1px solid #eef1f9;
-  border-radius: 14px;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px dashed #e3e7f3;
+  flex-wrap: wrap;
 }
 
-.action-hint {
+.section-actions-hint {
   font-size: 13px;
   color: #7a819a;
 }
 
-.action-buttons {
+.section-actions-buttons {
   display: flex;
   gap: 10px;
 }
 
-/* 两栏网格 */
+/* 两栏网格（用于部门/人员管理） */
 .grid-wrap {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 18px;
+  align-items: stretch;
 }
 
-/* 通用面板 */
-.panel-card {
-  background: #fff;
-  border: 1px solid #eef1f9;
-  border-radius: 16px;
-  padding: 22px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
+/* 子网格：评分维度表 + 等级阈值 */
+.sub-grid {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 18px;
+  align-items: start;
 }
 
-.panel-header {
-  display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
-  gap: 12px;
-}
-
-.panel-eyebrow {
-  display: inline-block;
-  padding: 3px 10px;
-  border-radius: 999px;
-  background: #eef3ff;
-  color: #4f6bff;
-  font-size: 11px;
-  font-weight: 600;
-  margin-bottom: 6px;
-}
-
-.panel-header h3 {
-  margin: 0;
-  font-size: 16px;
+.sub-section-label {
+  font-size: 13px;
   color: #1e2335;
-  font-weight: 700;
+  font-weight: 600;
+  margin-bottom: 8px;
 }
 
-.panel-desc {
-  margin: 4px 0 0;
-  font-size: 12px;
-  color: #7a819a;
-}
-
+/* 注：通用 panel-card / panel-header / panel-desc 的主样式已在"可收起板块通用样式"区定义
+   此处仅保留 section-divider 作为向后兼容占位（如有其他页面引用） */
 .section-divider {
   height: 1px;
   background: #eef1f9;
@@ -796,21 +1068,32 @@ useDataRefresh({
   font-weight: 600;
   font-size: 12px;
   border-bottom: 1px solid #eef1f9;
+  white-space: nowrap;
 }
 
 .data-table tbody td {
   padding: 10px 14px;
   border-bottom: 1px solid #f3f5fb;
   color: #1e2335;
+  vertical-align: middle;
 }
 
 .data-table tbody tr:hover {
   background: #f8faff;
 }
 
-.cell-input :deep(.p-inputtext) {
+.cell-input :deep(.p-inputtext),
+.cell-input :deep(.p-inputnumber) {
   width: 100%;
+}
+
+.cell-input :deep(.p-inputtext) {
   font-size: 13px;
+  height: 34px;
+}
+
+.cell-input :deep(.p-inputnumber-input) {
+  height: 34px;
 }
 
 .action-cell {
@@ -839,10 +1122,10 @@ useDataRefresh({
   color: #4f6bff;
 }
 
-/* 等级阈值 */
+/* 等级阈值 - 右栏单列垂直排列 */
 .threshold-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 12px;
 }
 
@@ -850,46 +1133,39 @@ useDataRefresh({
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 12px 14px;
+  padding: 14px 16px;
   border-radius: 12px;
   border: 1px solid #eef1f9;
   background: #f8faff;
 }
 
-.threshold-item.t-0 { border-color: rgba(22, 168, 117, 0.3); background: rgba(22, 168, 117, 0.05); }
-.threshold-item.t-1 { border-color: rgba(79, 107, 255, 0.3); background: rgba(79, 107, 255, 0.05); }
-.threshold-item.t-2 { border-color: rgba(217, 119, 6, 0.3); background: rgba(217, 119, 6, 0.05); }
-.threshold-item.t-3 { border-color: rgba(239, 68, 68, 0.3); background: rgba(239, 68, 68, 0.05); }
-
-.th-grade { flex-shrink: 0; }
-
-.th-tag {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 28px;
-  border-radius: 8px;
-  font-weight: 700;
-  font-size: 13px;
-}
-
-.th-tag.g-0 { background: rgba(22, 168, 117, 0.12); color: #16a875; }
-.th-tag.g-1 { background: rgba(79, 107, 255, 0.12); color: #4f6bff; }
-.th-tag.g-2 { background: rgba(217, 119, 6, 0.12); color: #d97706; }
-.th-tag.g-3 { background: rgba(239, 68, 68, 0.12); color: #ef4444; }
-
-.th-input {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-}
+.threshold-item.t-0 { border-color: rgba(22, 168, 117, 0.25); background: rgba(22, 168, 117, 0.06); }
+.threshold-item.t-1 { border-color: rgba(79, 107, 255, 0.25); background: rgba(79, 107, 255, 0.06); }
+.threshold-item.t-2 { border-color: rgba(217, 119, 6, 0.25); background: rgba(217, 119, 6, 0.06); }
+.threshold-item.t-3 { border-color: rgba(239, 68, 68, 0.25); background: rgba(239, 68, 68, 0.06); }
 
 .th-label {
-  font-size: 12px;
+  font-size: 13px;
+  font-weight: 700;
+  flex-shrink: 0;
+}
+
+.th-label.g-0 { color: #16a875; }
+.th-label.g-1 { color: #4f6bff; }
+.th-label.g-2 { color: #d97706; }
+.th-label.g-3 { color: #ef4444; }
+
+.th-label-op {
+  font-size: 13px;
   color: #5a6481;
   flex-shrink: 0;
+}
+
+.th-input-num :deep(.p-inputnumber) {
+  flex: 1;
+}
+.th-input-num :deep(.p-inputnumber-input) {
+  height: 34px;
 }
 
 /* Prompt */
@@ -910,6 +1186,58 @@ useDataRefresh({
 
 .var-desc {
   margin-right: 8px;
+}
+
+/* 三项提示词网格布局 */
+.prompt-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+
+.prompt-block {
+  background: #f8faff;
+  border: 1px solid #e6ecff;
+  border-radius: 12px;
+  padding: 14px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.prompt-block-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.prompt-field-label {
+  font-size: 12px;
+  color: #7a819a;
+  font-weight: 500;
+}
+
+.weight-input {
+  width: 84px;
+  flex-shrink: 0;
+}
+.weight-input :deep(.p-inputnumber-input) {
+  text-align: center;
+  height: 32px;
+  font-weight: 600;
+}
+
+.weights-sum-row {
+  padding: 10px 14px;
+  background: #fff;
+  border: 1px dashed #dde5ff;
+  border-radius: 10px;
+}
+.weights-label {
+  font-size: 12px;
+  color: #4f6bff;
+  font-weight: 600;
 }
 
 /* 测试卡片 */
@@ -1126,6 +1454,10 @@ useDataRefresh({
   width: 100%;
 }
 
+.grow-input :deep(.p-inputtext) {
+  height: 34px;
+}
+
 .item-list {
   display: flex;
   flex-direction: column;
@@ -1133,6 +1465,8 @@ useDataRefresh({
   max-height: 320px;
   overflow-y: auto;
   padding: 4px;
+  flex: 1;
+  min-height: 0;
 }
 
 .item-row {
@@ -1186,14 +1520,224 @@ useDataRefresh({
   .grid-wrap { grid-template-columns: 1fr; }
 }
 
+/* 评分维度板块：窄屏下双栏→单列堆叠 */
+@media (max-width: 900px) {
+  .sub-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
 @media (max-width: 640px) {
-  .action-bar {
+  /* 板块通用：减小内边距 */
+  .panel-header {
+    padding: 14px 16px;
+    gap: 10px;
+  }
+  .panel-header h3 {
+    font-size: 14px;
+  }
+  .panel-body {
+    padding: 12px 16px 16px;
+    gap: 12px;
+  }
+
+  /* 评分维度表：表格→卡片堆叠 */
+  .table-wrap {
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .data-table thead {
+    display: none;
+  }
+  .data-table tbody tr {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    padding: 12px 14px;
+    border-bottom: 1px solid #eef1f9;
+    position: relative;
+  }
+  .data-table tbody tr:last-child { border-bottom: none; }
+  .data-table tbody td {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 0;
+    border: none;
+    font-size: 12px;
+  }
+  .data-table tbody td::before {
+    content: attr(data-label);
+    font-size: 11px;
+    color: #7a819a;
+    font-weight: 600;
+  }
+  .data-table tbody td.action-cell {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    display: block;
+    padding: 0;
+  }
+  .data-table tbody td.action-cell::before { content: none; }
+  .data-table tbody tr:hover { background: transparent; }
+  .cell-input :deep(.p-inputtext) { font-size: 13px; }
+
+  .totals-row {
+    padding: 10px 14px;
+    margin-top: 10px;
+  }
+
+  .sub-section-label {
+    font-size: 12px;
+    margin-top: 4px;
+  }
+  .threshold-grid {
+    grid-template-columns: 1fr;
+  }
+  .threshold-item {
+    padding: 10px 12px;
+  }
+  .th-label { font-size: 13px; }
+
+  /* section-actions：纵向全宽，按钮自适应占满 */
+  .section-actions {
     flex-direction: column;
     align-items: stretch;
     gap: 10px;
+    margin-top: 14px;
+    padding-top: 14px;
   }
-  .action-buttons { justify-content: flex-end; }
-  .threshold-grid { grid-template-columns: 1fr; }
-  .status-card { flex-direction: column; align-items: flex-start; gap: 12px; }
+  .section-actions-buttons {
+    flex-direction: column;
+  }
+  .section-actions-buttons :deep(.p-button) {
+    width: 100%;
+    justify-content: center;
+  }
+
+  /* AI 状态卡片 */
+  .status-card .header-left {
+    flex-wrap: wrap;
+  }
+  .status-card .header-right {
+    flex-wrap: wrap;
+  }
+  .status-card .status-indicator {
+    padding: 4px 10px;
+  }
+  .status-card .status-provider {
+    font-size: 14px;
+  }
+  .status-card .status-model {
+    font-size: 11px;
+  }
+}
+.schedule-panel .panel-header {
+  align-items: flex-start;
+}
+.schedule-toggle-wrap {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.schedule-status {
+  font-size: 14px;
+  color: #5a6481;
+  font-weight: 500;
+}
+.schedule-body {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px dashed #e3e7f3;
+}
+.schedule-row {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin-bottom: 18px;
+}
+.schedule-hint-row {
+  margin-bottom: 8px;
+}
+.field-label {
+  font-size: 14px;
+  color: #1e2335;
+  font-weight: 600;
+}
+.schedule-select {
+  width: 220px;
+}
+.time-inputs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.time-sep {
+  font-size: 24px;
+  font-weight: 700;
+  color: #5a6481;
+}
+.weekday-toggles {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.weekday-btn {
+  width: 42px;
+  height: 42px;
+  border-radius: 50%;
+  border: 1.5px solid #d7dcea;
+  background: #fff;
+  color: #5a6481;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.weekday-btn:hover:not(.disabled) {
+  border-color: #6c8bff;
+  color: #6c8bff;
+}
+.weekday-btn.selected {
+  background: #6c8bff;
+  border-color: #6c8bff;
+  color: #fff;
+}
+.weekday-btn.disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.schedule-hint {
+  font-size: 13px;
+  color: #7a8397;
+  background: #f4f7ff;
+  padding: 8px 12px;
+  border-radius: 8px;
+}
+.schedule-actions {
+  display: flex;
+  justify-content: flex-start;
+  margin-bottom: 12px;
+}
+.schedule-msg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 13px;
+}
+.schedule-msg.success {
+  background: #e8f7ee;
+  color: #1a7e3a;
+}
+.schedule-msg.error {
+  background: #fde8e8;
+  color: #b42318;
 }
 </style>

@@ -5,6 +5,8 @@ import functools
 from datetime import datetime
 from typing import Any, Callable
 
+from app.utils.time_utils import bj_now
+
 logger = logging.getLogger("weekly_scorer")
 logger.setLevel(logging.INFO)
 
@@ -23,8 +25,8 @@ def log_performance(func: Callable) -> Callable:
     @functools.wraps(func)
     async def async_wrapper(*args, **kwargs):
         start_time = time.perf_counter()
-        start_datetime = datetime.now()
-        
+        start_datetime = bj_now()
+
         try:
             result = await func(*args, **kwargs)
             duration = (time.perf_counter() - start_time) * 1000
@@ -39,12 +41,12 @@ def log_performance(func: Callable) -> Callable:
                 f"[PERF] {func.__name__} failed in {duration:.2f}ms: {str(e)}"
             )
             raise
-    
+
     @functools.wraps(func)
     def sync_wrapper(*args, **kwargs):
         start_time = time.perf_counter()
-        start_datetime = datetime.now()
-        
+        start_datetime = bj_now()
+
         try:
             result = func(*args, **kwargs)
             duration = (time.perf_counter() - start_time) * 1000
@@ -59,7 +61,7 @@ def log_performance(func: Callable) -> Callable:
                 f"[PERF] {func.__name__} failed in {duration:.2f}ms: {str(e)}"
             )
             raise
-    
+
     if asyncio.iscoroutinefunction(func):
         return async_wrapper
     return sync_wrapper
