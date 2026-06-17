@@ -227,13 +227,6 @@ weekly-scorer-v2/
 - **降级兜底**：AI 服务不可用时自动切换为后端评分规则
 - **定时聚合**：周/天定时自动聚合，支持手动触发，实时同步
 
-## 🔁 代码仓库
-
-本项目同时托管于 GitHub 与 Gitee：
-
-- GitHub：<https://github.com/1345412477/weekly-scorer-v2>
-- Gitee：<https://gitee.com/yostore/weekly-scorer-v2>
-
-## 📄 许可证
+##  许可证
 
 本项目为内部使用工具。
