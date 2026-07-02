@@ -4,7 +4,7 @@ from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 from decimal import Decimal
 
-from sqlalchemy import select, and_, func
+from sqlalchemy import select, and_, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.utils.time_utils import bj_now
@@ -157,7 +157,7 @@ async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: 
         ]
         summary = summarize_attendance_for_person(rec_dicts, author_name)
         try:
-            ai_result = await score_attendance(summary, author_name, "", prompt)
+            ai_result = await score_attendance(summary, author_name, "", prompt, db=db)
             score = float(ai_result["score"])
             return max(0.0, min(100.0, score))
         except AIScoringError as e:
@@ -233,7 +233,7 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
             for s in summaries
         ]
         summary = summarize_chat_for_person(chat_dicts, author_name, summary_dicts)
-        ai_result = await score_chat(summary, author_name, "", prompt)
+        ai_result = await score_chat(summary, author_name, "", prompt, db=db)
         score = float(ai_result["score"])
         return max(0.0, min(100.0, score))
     except AIScoringError as e:
@@ -540,19 +540,26 @@ async def restore_ai_scores(db: AsyncSession, aggregate_id: str) -> Optional[Wee
 async def _get_report_ids_for_aggregates(db: AsyncSession, aggregates: List[WeeklyAggregate]) -> Dict[str, str]:
     if not aggregates:
         return {}
+    pairs = [(a.author_name, a.week_start) for a in aggregates if a.author_name and a.week_start]
+    if not pairs:
+        return {}
     id_map = {}
-    for agg in aggregates:
-        try:
-            q = select(WeeklyReport).where(
-                WeeklyReport.author_name == agg.author_name,
-                WeeklyReport.week_start == agg.week_start,
-            ).order_by(WeeklyReport.created_at.asc()).limit(1)
-            res = await db.execute(q)
-            report = res.scalar_one_or_none()
-            if report:
-                id_map[agg.id] = report.id
-        except Exception as e:
-            logger.warning(f"[{agg.author_name}] 查找周报id失败: {e}")
+    try:
+        q = select(WeeklyReport).where(
+            tuple_(WeeklyReport.author_name, WeeklyReport.week_start).in_(pairs)
+        ).order_by(WeeklyReport.created_at.asc())
+        res = await db.execute(q)
+        reports_by_key = {}
+        for r in res.scalars().all():
+            key = (r.author_name, r.week_start)
+            if key not in reports_by_key:
+                reports_by_key[key] = r.id
+        for a in aggregates:
+            key = (a.author_name, a.week_start)
+            if key in reports_by_key:
+                id_map[a.id] = reports_by_key[key]
+    except Exception as e:
+        logger.warning(f"[聚合] 批量查找周报id失败: {e}")
     return id_map
 
 
@@ -581,8 +588,8 @@ async def list_aggregates(
     if conditions:
         count_q = count_q.where(and_(*conditions))
 
-    total_result = await db.execute(count_q)
-    total = len(list(total_result.scalars().all()))
+    total_result = await db.execute(select(func.count()).select_from(count_q.subquery()))
+    total = total_result.scalar() or 0
 
     result = await db.execute(q.offset((page - 1) * size).limit(size))
     items = list(result.scalars().all())

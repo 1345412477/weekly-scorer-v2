@@ -69,6 +69,7 @@ async def get_config(db: AsyncSession = Depends(get_db), user: AdminUser = Depen
         "report_prompt": getattr(config, "report_prompt", "") or "",
         "attendance_prompt": getattr(config, "attendance_prompt", "") or "",
         "chat_prompt": getattr(config, "chat_prompt", "") or "",
+        "business_summary_prompt": getattr(config, "business_summary_prompt", "") or "",
         "weights": weights,
         "min_content_length": config.min_content_length or 50,
     }
@@ -130,6 +131,11 @@ async def update_config(
     if chat_prompt is not None:
         config.chat_prompt = chat_prompt
 
+    # v4：业务盘提示词
+    business_summary_prompt = req.get("business_summary_prompt")
+    if business_summary_prompt is not None:
+        config.business_summary_prompt = business_summary_prompt
+
     # v3：三项权重
     weights = req.get("weights")
     if weights is not None and isinstance(weights, dict):
@@ -177,6 +183,7 @@ async def test_score(
         department="测试部门",
         dimensions=dimensions,
         prompt_template=req.prompt_template or "",
+        db=db,
     )
     return {
         "dimension_scores": ai_result["dimension_scores"],

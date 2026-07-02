@@ -1,13 +1,15 @@
-"""AI 评分引擎 - 支持小米 MiMo / 豆包 / DeepSeek"""
+"""AI 评分引擎 - 支持数据库自定义模型 + .env 配置"""
 import json
 import logging
 from typing import Optional
+import httpx
 from openai import AsyncOpenAI
 from app.config import get_settings
 
 logger = logging.getLogger("weekly_scorer")
 settings = get_settings()
 _client: Optional[AsyncOpenAI] = None
+_db_model_cache: Optional[dict] = None  # 缓存数据库中的活跃模型配置
 
 
 def _mask_key(key: str) -> str:
@@ -19,46 +21,126 @@ def _mask_key(key: str) -> str:
     return key[:4] + "****" + key[-4:]
 
 
-def get_client() -> AsyncOpenAI:
+async def _get_active_model_from_db(db=None) -> Optional[dict]:
+    """从数据库获取当前激活的 AI 模型配置"""
+    global _db_model_cache
+    if _db_model_cache is not None:
+        return _db_model_cache
+
+    if db is None:
+        return None
+
+    try:
+        from sqlalchemy import select
+        from app.models.models import AIModel
+        result = await db.execute(
+            select(AIModel).where(AIModel.is_active == True).limit(1)
+        )
+        model = result.scalar_one_or_none()
+        if model:
+            _db_model_cache = {
+                "id": model.id,
+                "name": model.name,
+                "provider": model.provider,
+                "model_id": model.model_id,
+                "api_key": model.api_key,
+                "base_url": model.base_url,
+                "is_vision": model.is_vision,
+            }
+            logger.info(f"[AI] 从数据库加载模型: {model.name} ({model.model_id})")
+            return _db_model_cache
+    except Exception as e:
+        logger.debug(f"[AI] 从数据库读取模型配置失败: {e}")
+
+    return None
+
+
+def _clear_db_model_cache():
+    """清除数据库模型缓存（模型配置变更时调用）"""
+    global _db_model_cache, _client
+    _db_model_cache = None
+    _client = None
+
+
+def get_client(api_key: str = None, base_url: str = None) -> AsyncOpenAI:
+    """获取 AI 客户端（支持自定义 api_key 和 base_url）"""
     global _client
     if _client is None:
-        # 使用 getattr 安全读取，避免用户注释配置项时报错
-        mimo_key = getattr(settings, "MIMO_API_KEY", "")
-        ark_key = getattr(settings, "ARK_API_KEY", "")
-        deepseek_key = getattr(settings, "DEEPSEEK_API_KEY", "")
-        
-        # 获取超时配置 - 使用 httpx.Timeout 格式
-        timeout = getattr(settings, "AI_TIMEOUT", 60)
+        # 明确区分连接超时和读取超时，关闭 SDK 默认重试
+        connect_timeout = int(getattr(settings, "AI_CONNECT_TIMEOUT", 10))
+        read_timeout = int(getattr(settings, "AI_TIMEOUT", 60))
+        timeout = httpx.Timeout(
+            connect=connect_timeout,
+            read=read_timeout,
+            write=30,
+            pool=5,
+        )
 
-        if mimo_key:
-            logger.info(f"[AI] 使用 MiMo | model={settings.SCORING_MODEL} | base_url={settings.MIMO_BASE_URL} | key={_mask_key(mimo_key)} | timeout={timeout}s")
+        key = api_key or ""
+        url = base_url or ""
+
+        if key and url:
+            # 使用传入的自定义配置
+            logger.info(f"[AI] 使用自定义模型 | base_url={url} | key={_mask_key(key)}")
             _client = AsyncOpenAI(
-                api_key=mimo_key,
-                base_url=settings.MIMO_BASE_URL,
+                api_key=key,
+                base_url=url,
                 timeout=timeout,
-            )
-        elif ark_key:
-            logger.info(f"[AI] 使用 Ark(豆包) | model={settings.SCORING_MODEL} | base_url={settings.ARK_BASE_URL} | key={_mask_key(ark_key)} | timeout={timeout}s")
-            _client = AsyncOpenAI(
-                api_key=ark_key,
-                base_url=settings.ARK_BASE_URL,
-                timeout=timeout,
-            )
-        elif deepseek_key:
-            logger.info(f"[AI] 使用 DeepSeek | model={settings.SCORING_MODEL} | base_url={settings.DEEPSEEK_BASE_URL} | key={_mask_key(deepseek_key)} | timeout={timeout}s")
-            _client = AsyncOpenAI(
-                api_key=deepseek_key,
-                base_url=settings.DEEPSEEK_BASE_URL,
-                timeout=timeout,
+                max_retries=0,
             )
         else:
-            raise AIScoringError("未配置任何 AI API Key，请在 .env 中配置 MIMO_API_KEY / ARK_API_KEY / DEEPSEEK_API_KEY")
+            # 回退到 .env 配置
+            mimo_key = getattr(settings, "MIMO_API_KEY", "")
+            ark_key = getattr(settings, "ARK_API_KEY", "")
+            deepseek_key = getattr(settings, "DEEPSEEK_API_KEY", "")
+
+            if mimo_key:
+                logger.info(f"[AI] 使用 MiMo | model={settings.SCORING_MODEL} | base_url={settings.MIMO_BASE_URL} | key={_mask_key(mimo_key)}")
+                _client = AsyncOpenAI(
+                    api_key=mimo_key,
+                    base_url=settings.MIMO_BASE_URL,
+                    timeout=timeout,
+                    max_retries=0,
+                )
+            elif ark_key:
+                logger.info(f"[AI] 使用 Ark(豆包) | model={settings.SCORING_MODEL} | base_url={settings.ARK_BASE_URL} | key={_mask_key(ark_key)}")
+                _client = AsyncOpenAI(
+                    api_key=ark_key,
+                    base_url=settings.ARK_BASE_URL,
+                    timeout=timeout,
+                    max_retries=0,
+                )
+            elif deepseek_key:
+                logger.info(f"[AI] 使用 DeepSeek | model={settings.SCORING_MODEL} | base_url={settings.DEEPSEEK_BASE_URL} | key={_mask_key(deepseek_key)}")
+                _client = AsyncOpenAI(
+                    api_key=deepseek_key,
+                    base_url=settings.DEEPSEEK_BASE_URL,
+                    timeout=timeout,
+                    max_retries=0,
+                )
+            else:
+                raise AIScoringError("未配置任何 AI API Key，请在 .env 中配置 MIMO_API_KEY / ARK_API_KEY / DEEPSEEK_API_KEY，或在系统设置中添加自定义模型")
     return _client
 
 
 class AIScoringError(Exception):
     """AI 评分失败的自定义异常"""
     pass
+
+
+def _safe_get_content(response) -> str:
+    """安全获取 AI 响应内容：处理 choices 为空的情况"""
+    if not response.choices:
+        raise AIScoringError("AI 服务返回空结果，请稍后重试")
+    return response.choices[0].message.content or ""
+
+
+async def _get_scoring_config(db=None) -> tuple[str, Optional[dict]]:
+    """获取评分配置：返回 (model_id, db_model_config)"""
+    db_model = await _get_active_model_from_db(db)
+    if db_model:
+        return db_model["model_id"], db_model
+    return settings.SCORING_MODEL, None
 
 
 async def score_report(
@@ -68,6 +150,7 @@ async def score_report(
     dimensions: list,
     prompt_template: str = "",
     grade_thresholds: dict = None,
+    db=None,
 ) -> dict:
     # 计算总满分
     total_full_score = sum(d.get("full_score", 0) for d in dimensions)
@@ -118,16 +201,20 @@ async def score_report(
     )
 
     try:
-        c = get_client()
+        model_id, db_model = await _get_scoring_config(db)
+        c = get_client(
+            api_key=db_model["api_key"] if db_model else None,
+            base_url=db_model["base_url"] if db_model else None,
+        )
         response = await c.chat.completions.create(
-            model=settings.SCORING_MODEL,
+            model=model_id,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=settings.SCORING_TEMPERATURE,
         )
-        raw = response.choices[0].message.content
+        raw = _safe_get_content(response)
         result = _extract_json(raw)
         return normalize_result(result, dimensions)
     except Exception as e:
@@ -160,7 +247,10 @@ def _extract_json(text: str) -> dict:
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0 and end > start:
-            return json.loads(text[start:end])
+            try:
+                return json.loads(text[start:end])
+            except json.JSONDecodeError:
+                return {}
         return {}
 
 
@@ -249,6 +339,7 @@ async def score_attendance(
     author_name: str,
     department: str,
     prompt_template: str = "",
+    db=None,
 ) -> dict:
     """考勤评分：将本周打卡摘要（日期+上下班+地点+状态）按 attendance_prompt 打分。
 
@@ -269,16 +360,20 @@ async def score_attendance(
     )
 
     try:
-        c = get_client()
+        model_id, db_model = await _get_scoring_config(db)
+        c = get_client(
+            api_key=db_model["api_key"] if db_model else None,
+            base_url=db_model["base_url"] if db_model else None,
+        )
         response = await c.chat.completions.create(
-            model=settings.SCORING_MODEL,
+            model=model_id,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=settings.SCORING_TEMPERATURE,
         )
-        raw = response.choices[0].message.content
+        raw = _safe_get_content(response)
         result = _extract_json(raw)
         score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
         return {
@@ -295,6 +390,7 @@ async def score_chat(
     author_name: str,
     department: str,
     prompt_template: str = "",
+    db=None,
 ) -> dict:
     """沟通评分：聊天记录摘要 + 一周小结 OCR 摘要，统一按 chat_prompt 打分。
 
@@ -314,16 +410,20 @@ async def score_chat(
     )
 
     try:
-        c = get_client()
+        model_id, db_model = await _get_scoring_config(db)
+        c = get_client(
+            api_key=db_model["api_key"] if db_model else None,
+            base_url=db_model["base_url"] if db_model else None,
+        )
         response = await c.chat.completions.create(
-            model=settings.SCORING_MODEL,
+            model=model_id,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=settings.SCORING_TEMPERATURE,
         )
-        raw = response.choices[0].message.content
+        raw = _safe_get_content(response)
         result = _extract_json(raw)
         score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
         return {
@@ -341,79 +441,75 @@ AI_CONNECTION_CACHE_TTL_SECONDS = 30 * 60  # 30 分钟，避免频繁检测产�
 async def test_connection(db=None, force_refresh: bool = False) -> dict:
     """测试 AI 模型连接。
 
-    - 默认启用缓存：30 分钟内相同 provider/model 直接返回上次结果，不消耗 token
+    - 优先使用数据库中的自定义模型配置
+    - 若数据库无配置，回退到 .env 配置
+    - force_refresh=False 时返回缓存状态（30 分钟有效）
     - force_refresh=True 时强制重新检测
-    - 失败不缓存，下一次会立即重试
     """
-    # --- 缓存读取 ---
-    if not force_refresh and db is not None:
+    from datetime import timedelta
+    from app.utils.time_utils import bj_now
+
+    # 如果不强制刷新，先尝试返回缓存状态
+    if not force_refresh and db:
         try:
             from sqlalchemy import select
             from app.models.models import ScoringConfig
-            from app.utils.time_utils import bj_now as _bj_now
-            result = await db.execute(
-                select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1)
-            )
+            result = await db.execute(select(ScoringConfig).limit(1))
             cfg = result.scalar_one_or_none()
-            if (
-                cfg
-                and getattr(cfg, "ai_connection_status", None) is not None
-                and getattr(cfg, "ai_connection_checked_at", None) is not None
-                and getattr(cfg, "ai_connection_provider", None) == settings.AI_PROVIDER
-                and getattr(cfg, "ai_connection_model", None) == settings.SCORING_MODEL
-            ):
-                elapsed = (_bj_now() - cfg.ai_connection_checked_at).total_seconds()
-                if 0 <= elapsed < AI_CONNECTION_CACHE_TTL_SECONDS:
-                    cached = {
-                        "success": bool(cfg.ai_connection_status),
-                        "provider": cfg.ai_connection_provider,
-                        "model": cfg.ai_connection_model,
-                        "checked_at": cfg.ai_connection_checked_at,
+            if cfg and cfg.ai_connection_checked_at:
+                if (bj_now() - cfg.ai_connection_checked_at) < timedelta(minutes=30):
+                    logger.info(f"[AI] 使用缓存状态 (checked_at={cfg.ai_connection_checked_at})")
+                    return {
+                        "success": cfg.ai_connection_status,
+                        "provider": cfg.ai_connection_provider or "unknown",
+                        "model": cfg.ai_connection_model or "unknown",
+                        "model_name": "缓存状态",
+                        "checked_at": cfg.ai_connection_checked_at.isoformat(),
                         "cached": True,
-                        "ttl_remaining": int(AI_CONNECTION_CACHE_TTL_SECONDS - elapsed),
                     }
-                    logger.info(f"[AI] test_connection 命中缓存（{int(elapsed)}s 前检测）")
-                    return cached
-        except Exception as cache_err:
-            logger.debug(f"[AI] 读取 AI 连接缓存失败（忽略，将走真测）：{cache_err}")
+        except Exception as e:
+            logger.debug(f"[AI] 读取缓存状态失败: {e}")
 
-    # --- 真实检测 ---
+    # 强制刷新或无缓存，进行真实检测
     try:
-        c = get_client()
-        logger.info(f"[AI] test_connection 真实检测: model={settings.SCORING_MODEL}, base_url={c.base_url}")
+        model_id, db_model = await _get_scoring_config(db)
+        c = get_client(
+            api_key=db_model["api_key"] if db_model else None,
+            base_url=db_model["base_url"] if db_model else None,
+        )
+        logger.info(f"[AI] test_connection 真实检测: model={model_id}, base_url={c.base_url}")
         response = await c.chat.completions.create(
-            model=settings.SCORING_MODEL,
+            model=model_id,
             messages=[{"role": "user", "content": "回复OK"}],
             max_tokens=10,
         )
-        logger.info(f"[AI] test_connection 成功: response={response.choices[0].message.content}")
+        logger.info(f"[AI] test_connection 成功: response={_safe_get_content(response)}")
 
-        # 写入缓存（仅写入成功结果；失败下一次自动继续检测）
-        if db is not None:
-            try:
-                from sqlalchemy import select as _select
-                from app.models.models import ScoringConfig as _ScoringConfig
-                from app.utils.time_utils import bj_now as _bj_now
-                result = await db.execute(
-                    _select(_ScoringConfig).where(_ScoringConfig.is_active == True).limit(1)
-                )
-                cfg = result.scalar_one_or_none()
-                if not cfg:
-                    cfg = _ScoringConfig(id=str(__import__("uuid").uuid4()), is_active=True)
-                    db.add(cfg)
-                cfg.ai_connection_status = True
-                cfg.ai_connection_provider = settings.AI_PROVIDER
-                cfg.ai_connection_model = settings.SCORING_MODEL
-                cfg.ai_connection_checked_at = _bj_now()
-                await db.commit()
-            except Exception as save_err:
-                logger.warning(f"[AI] 保存 AI 连接缓存失败（忽略）：{save_err}")
-
-        return {
+        result = {
             "success": True,
-            "provider": settings.AI_PROVIDER,
-            "model": settings.SCORING_MODEL,
+            "provider": db_model["provider"] if db_model else settings.AI_PROVIDER,
+            "model": model_id,
+            "model_name": db_model["name"] if db_model else "默认配置",
+            "checked_at": bj_now().isoformat(),
+            "cached": False,
         }
+
+        if db:
+            try:
+                from sqlalchemy import select
+                from app.models.models import ScoringConfig
+                cfg_result = await db.execute(select(ScoringConfig).limit(1))
+                cfg = cfg_result.scalar_one_or_none()
+                if cfg:
+                    cfg.ai_connection_status = True
+                    cfg.ai_connection_provider = result["provider"]
+                    cfg.ai_connection_model = model_id
+                    cfg.ai_connection_checked_at = bj_now()
+                    await db.commit()
+            except Exception as e:
+                logger.debug(f"[AI] 更新缓存状态失败: {e}")
+
+        return result
     except Exception as e:
         logger.error(f"[AI] test_connection 失败: {e}")
         if hasattr(e, 'response'):
@@ -422,9 +518,29 @@ async def test_connection(db=None, force_refresh: bool = False) -> dict:
                 logger.error(f"[AI] Response body: {e.response.text if hasattr(e.response, 'text') else 'N/A'}")
             except Exception as log_err:
                 logger.debug(f"[AI] 读取响应体时出错(可忽略): {log_err}")
-        return {
+
+        result = {
             "success": False,
-            "provider": settings.AI_PROVIDER,
-            "model": settings.SCORING_MODEL,
+            "provider": db_model["provider"] if db_model else settings.AI_PROVIDER,
+            "model": model_id if 'model_id' in dir() else settings.SCORING_MODEL,
             "error": str(e),
+            "checked_at": bj_now().isoformat(),
+            "cached": False,
         }
+
+        if db:
+            try:
+                from sqlalchemy import select
+                from app.models.models import ScoringConfig
+                cfg_result = await db.execute(select(ScoringConfig).limit(1))
+                cfg = cfg_result.scalar_one_or_none()
+                if cfg:
+                    cfg.ai_connection_status = False
+                    cfg.ai_connection_provider = result["provider"]
+                    cfg.ai_connection_model = result["model"]
+                    cfg.ai_connection_checked_at = bj_now()
+                    await db.commit()
+            except Exception as e2:
+                logger.debug(f"[AI] 更新失败状态缓存失败: {e2}")
+
+        return result

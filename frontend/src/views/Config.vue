@@ -148,6 +148,68 @@
       </div>
     </section>
 
+    <!-- 业务盘总结 Prompt -->
+    <section class="panel-card collapsible" :class="{ collapsed: !expanded.businessPrompt }">
+      <header class="panel-header clickable" @click="toggle('businessPrompt')">
+        <div class="header-left">
+          <h3>业务盘总结 Prompt</h3>
+          <p class="panel-desc">用于 AI 总结各部门每周工作事项，支持变量：{department}（部门名称）、{week_label}（周次）、{reports}（周报内容汇总）</p>
+        </div>
+        <div class="header-right">
+          <Button label="生成默认" icon="pi pi-magic" text size="small" @click.stop="generateBusinessPrompt" />
+          <i :class="['chevron', 'pi', expanded.businessPrompt ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
+        </div>
+      </header>
+      <div class="panel-body" v-show="expanded.businessPrompt">
+        <Textarea v-model="businessSummaryPrompt" rows="12" class="prompt-area" placeholder="请输入业务盘总结提示词..." autoResize />
+      </div>
+    </section>
+
+    <!-- AI 模型管理 -->
+    <section class="panel-card collapsible" :class="{ collapsed: !expanded.aiModels }">
+      <header class="panel-header clickable" @click="toggle('aiModels')">
+        <div class="header-left">
+          <h3>AI 模型管理</h3>
+          <p class="panel-desc">自定义模型 ID、API Key 和 Base URL，支持新增、切换和删除模型</p>
+        </div>
+        <div class="header-right">
+          <Button label="添加模型" icon="pi pi-plus" text size="small" @click.stop="openAddModel" />
+          <i :class="['chevron', 'pi', expanded.aiModels ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
+        </div>
+      </header>
+      <div class="panel-body" v-show="expanded.aiModels">
+        <div class="model-list">
+          <div v-if="aiModels.length === 0" class="empty-line">暂无自定义模型，请点击右上角"添加模型"</div>
+          <div v-for="m in aiModels" :key="m.id" class="model-row" :class="{ 'model-active': m.is_active }">
+            <div class="model-info">
+              <div class="model-name-row">
+                <span class="model-name">{{ m.name }}</span>
+                <Tag v-if="m.is_active" value="当前使用" severity="success" class="model-active-tag" />
+                <Tag v-if="m.is_vision" value="视觉" severity="info" class="model-vision-tag" />
+              </div>
+              <div class="model-meta">
+                <span class="model-provider">{{ m.provider }}</span>
+                <span class="model-sep">·</span>
+                <span class="model-id-text">{{ m.model_id }}</span>
+              </div>
+              <div class="model-meta">
+                <span class="model-key-text">Key: {{ m.api_key_masked }}</span>
+              </div>
+              <div class="model-meta">
+                <span class="model-url-text">{{ m.base_url }}</span>
+              </div>
+            </div>
+            <div class="model-actions">
+              <Button v-if="!m.is_active" label="切换" icon="pi pi-check" size="small" severity="success" outlined @click="activateModel(m.id)" />
+              <Button label="测试" icon="pi pi-bolt" size="small" severity="info" outlined @click="testModel(m)" />
+              <Button label="编辑" icon="pi pi-pencil" size="small" text @click="editModel(m)" />
+              <Button label="删除" icon="pi pi-trash" size="small" severity="danger" text @click="deleteModel(m)" :disabled="m.is_active" v-tooltip.top="m.is_active ? '不能删除当前使用的模型' : ''" />
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- 定时评分设置 -->
     <section class="panel-card schedule-panel collapsible" :class="{ collapsed: !expanded.schedule }">
       <header class="panel-header clickable" @click="toggle('schedule')">
@@ -303,12 +365,52 @@
         </div>
       </section>
     </div>
+
+    <!-- AI 模型添加/编辑弹窗 -->
+    <Dialog v-model:visible="showAddModel" :header="editingModelId ? '编辑模型' : '添加模型'" :modal="true" :style="{ width: '520px' }" :closable="true">
+      <div class="model-form">
+        <div class="form-field">
+          <label class="form-label">模型名称 <span class="required">*</span></label>
+          <InputText v-model="modelForm.name" placeholder="例如：豆包 Pro、DeepSeek V3" class="form-input" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">厂商 <span class="required">*</span></label>
+          <Dropdown v-model="modelForm.provider" :options="providerOptions" optionLabel="label" optionValue="value" placeholder="选择厂商" class="form-input" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">模型 ID <span class="required">*</span></label>
+          <InputText v-model="modelForm.model_id" placeholder="例如：doubao-seed-2.0-pro、deepseek-chat" class="form-input" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">API Key <span class="required">*</span></label>
+          <InputText v-model="modelForm.api_key" :placeholder="editingModelId ? '留空则不修改' : '请输入 API Key'" class="form-input" type="password" />
+        </div>
+        <div class="form-field">
+          <label class="form-label">Base URL <span class="required">*</span></label>
+          <InputText v-model="modelForm.base_url" placeholder="例如：https://ark.cn-beijing.volces.com/api/v3" class="form-input" />
+        </div>
+        <div class="form-field-row">
+          <label class="form-checkbox">
+            <InputSwitch v-model="modelForm.is_active" />
+            <span>设为当前使用模型</span>
+          </label>
+          <label class="form-checkbox">
+            <InputSwitch v-model="modelForm.is_vision" />
+            <span>视觉模型（支持图片识别）</span>
+          </label>
+        </div>
+      </div>
+      <template #footer>
+        <Button label="取消" severity="secondary" text @click="showAddModel = false" />
+        <Button :label="editingModelId ? '保存' : '添加'" icon="pi pi-check" @click="saveModel" />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <script setup>
 import { ref, reactive, computed, onMounted } from 'vue'
-import { configAPI, departmentAPI, personAPI, reportAPI, aggregateAPI } from '../api'
+import { configAPI, departmentAPI, personAPI, reportAPI, aggregateAPI, aiModelAPI } from '../api'
 import { useDataRefresh, getConfigEvents } from '../composables/useDataRefresh'
 import { useDataOperation } from '../composables/useDataOperation'
 import { DataEventType, emitDataChanged } from '../utils/dataEvents'
@@ -318,6 +420,8 @@ import InputNumber from 'primevue/inputnumber'
 import InputSwitch from 'primevue/inputswitch'
 import Textarea from 'primevue/textarea'
 import Dropdown from 'primevue/dropdown'
+import Tag from 'primevue/tag'
+import Dialog from 'primevue/dialog'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
@@ -328,6 +432,8 @@ const expanded = reactive({
   status: true,
   dimensions: false,
   prompts: false,
+  businessPrompt: false,
+  aiModels: false,
   schedule: false,
 })
 function toggle(key) {
@@ -349,6 +455,7 @@ const promptTemplate = ref('')
 const reportPrompt = ref('')
 const attendancePrompt = ref('')
 const chatPrompt = ref('')
+const businessSummaryPrompt = ref('')
 const weights = ref({ report: 1, attendance: 1, chat: 1 })
 // 定时评分设置
 const schedule = ref({
@@ -364,6 +471,28 @@ const scheduleMsg = ref(null)
 const testFile = ref(null)
 const testFileInput = ref(null)
 const testResult = ref(null)
+
+// AI 模型管理
+const aiModels = ref([])
+const showAddModel = ref(false)
+const editingModelId = ref(null)
+const modelForm = ref({
+  name: '',
+  provider: '',
+  model_id: '',
+  api_key: '',
+  base_url: '',
+  is_active: false,
+  is_vision: false,
+})
+
+const providerOptions = [
+  { label: '小米 MiMo', value: 'mimo' },
+  { label: '豆包 (火山引擎)', value: 'ark' },
+  { label: 'DeepSeek', value: 'deepseek' },
+  { label: 'OpenAI', value: 'openai' },
+  { label: '自定义', value: 'custom' },
+]
 
 const departments = ref([])
 const persons = ref([])
@@ -422,6 +551,7 @@ function resetConfig() {
   reportPrompt.value = ''
   attendancePrompt.value = ''
   chatPrompt.value = ''
+  businessSummaryPrompt.value = ''
   weights.value = { report: 1, attendance: 1, chat: 1 }
   toast.add({ severity: 'info', summary: '已重置为默认配置', life: 2000 })
 }
@@ -437,6 +567,7 @@ async function loadConfig() {
     if (typeof d.report_prompt === 'string') reportPrompt.value = d.report_prompt
     if (typeof d.attendance_prompt === 'string') attendancePrompt.value = d.attendance_prompt
     if (typeof d.chat_prompt === 'string') chatPrompt.value = d.chat_prompt
+    if (typeof d.business_summary_prompt === 'string') businessSummaryPrompt.value = d.business_summary_prompt
     if (d.weights && typeof d.weights === 'object') {
       weights.value = {
         report: Number(d.weights.report ?? 1),
@@ -467,6 +598,7 @@ async function saveConfig() {
       report_prompt: reportPrompt.value,
       attendance_prompt: attendancePrompt.value,
       chat_prompt: chatPrompt.value,
+      business_summary_prompt: businessSummaryPrompt.value,
       weights: {
         report: Number(weights.value.report ?? 1),
         attendance: Number(weights.value.attendance ?? 1),
@@ -504,6 +636,57 @@ function generateAllPrompts() {
   chatPrompt.value = `# 沟通与一周小结评分提示词\n\n请根据员工本周的工作沟通记录（企业微信对话记录）以及一周小结内容，在 0-100 分范围内对其沟通质量和响应效率进行评分。\n\n## 评分参考维度\n1. 工作会话数量：处理的工作相关对话数（体现在一周小结中）\n2. 响应效率：回复是否及时，阻塞时长如何\n3. 沟通质量：表达清晰、有层次、提供必要信息\n4. 一周小结完整性：是否完整反映本周工作\n\n## 输出要求\n请以 JSON 格式返回：\n- score（0-100 的数值）\n- comment（简短点评）`
 
   toast.add({ severity: 'success', summary: '已生成三项默认提示词', life: 2000 })
+}
+
+function generateBusinessPrompt() {
+  businessSummaryPrompt.value = `你是一个专业的业务分析助手，负责根据员工的周报内容，为部门生成工作事项总结。
+
+## 任务要求
+
+请根据提供的部门信息和员工周报内容，总结该部门在指定周期内的工作事项。
+
+## 输出格式
+
+请严格按照以下 JSON 格式输出，不要包含其他内容：
+
+\`\`\`json
+{
+  "last_week_summary": [
+    {
+      "content": "工作事项描述",
+      "persons": ["负责人1", "负责人2"]
+    }
+  ],
+  "this_week_summary": [
+    {
+      "content": "工作事项描述",
+      "persons": ["负责人1", "负责人2"]
+    }
+  ]
+}
+\`\`\`
+
+## 总结规则
+
+1. 按周报中提及的工作事项进行总结归类
+2. 每个部门总结 3-5 条核心事项
+3. 每条事项要具体明确，避免空泛描述
+4. 识别跨成员的共同项目/事项进行合并
+5. 标注每条事项的主要负责人（可多人）
+6. 如果某个周期没有相关周报内容，返回空数组
+
+## 部门信息
+
+- 部门名称：{department}
+- 统计周期：{week_label}
+
+## 员工周报内容
+
+{reports}
+
+请输出 JSON 格式的总结：`
+
+  toast.add({ severity: 'success', summary: '已生成业务盘默认提示词', life: 2000 })
 }
 
 function triggerTestFileInput() {
@@ -809,11 +992,158 @@ function formatWeekdayHint() {
   return schedule.value.weekdays.map(i => WEEKDAY_LABELS[i]).join('、')
 }
 
+async function loadAiModels() {
+  try {
+    const res = await aiModelAPI.list()
+    aiModels.value = res.data.models || []
+  } catch (e) {
+    console.error('[Config] 加载 AI 模型失败:', e)
+  }
+}
+
+async function activateModel(id) {
+  try {
+    const res = await aiModelAPI.activate(id)
+    toast.add({ severity: 'success', summary: res.data.message || '已切换模型', life: 2000 })
+    await loadAiModels()
+    checkAiStatus(true)
+  } catch (e) {
+    const msg = e.response?.data?.detail || '切换失败'
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
+  }
+}
+
+async function testModel(m) {
+  toast.add({ severity: 'info', summary: '正在测试连接...', life: 2000 })
+  try {
+    // 列表返回的是脱敏 Key，需要先获取完整模型数据
+    const detail = await aiModelAPI.get(m.id)
+    const res = await aiModelAPI.test({
+      api_key: detail.data.api_key || '',
+      base_url: detail.data.base_url,
+      model_id: detail.data.model_id,
+    })
+    if (res.data.success) {
+      toast.add({ severity: 'success', summary: '连接成功', detail: res.data.message, life: 3000 })
+    } else {
+      toast.add({ severity: 'error', summary: '连接失败', detail: res.data.message, life: 4000 })
+    }
+  } catch (e) {
+    const msg = e.response?.data?.detail || '连接失败'
+    toast.add({ severity: 'error', summary: '测试失败', detail: msg, life: 4000 })
+  }
+}
+
+function editModel(m) {
+  editingModelId.value = m.id
+  modelForm.value = {
+    name: m.name,
+    provider: m.provider,
+    model_id: m.model_id,
+    api_key: '',
+    base_url: m.base_url,
+    is_active: m.is_active,
+    is_vision: m.is_vision,
+  }
+  showAddModel.value = true
+}
+
+async function deleteModel(m) {
+  if (m.is_active) {
+    toast.add({ severity: 'warn', summary: '不能删除当前使用的模型', life: 2000 })
+    return
+  }
+  if (!confirm(`确定删除模型 "${m.name}" 吗？`)) return
+  try {
+    await aiModelAPI.delete(m.id)
+    toast.add({ severity: 'success', summary: '模型已删除', life: 2000 })
+    await loadAiModels()
+  } catch (e) {
+    const msg = e.response?.data?.detail || '删除失败'
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
+  }
+}
+
+function openAddModel() {
+  editingModelId.value = null
+  modelForm.value = {
+    name: '',
+    provider: 'custom',
+    model_id: '',
+    api_key: '',
+    base_url: '',
+    is_active: false,
+    is_vision: false,
+  }
+  showAddModel.value = true
+}
+
+async function saveModel() {
+  const f = modelForm.value
+  if (!f.name.trim()) {
+    toast.add({ severity: 'warn', summary: '请填写模型名称', life: 2000 })
+    return
+  }
+  if (!f.provider.trim()) {
+    toast.add({ severity: 'warn', summary: '请选择厂商', life: 2000 })
+    return
+  }
+  if (!f.model_id.trim()) {
+    toast.add({ severity: 'warn', summary: '请填写模型 ID', life: 2000 })
+    return
+  }
+  if (!f.base_url.trim()) {
+    toast.add({ severity: 'warn', summary: '请填写 Base URL', life: 2000 })
+    return
+  }
+
+  try {
+    if (editingModelId.value) {
+      const data = {
+        name: f.name.trim(),
+        provider: f.provider,
+        model_id: f.model_id.trim(),
+        base_url: f.base_url.trim(),
+        is_active: f.is_active,
+        is_vision: f.is_vision,
+      }
+      if (f.api_key.trim()) {
+        data.api_key = f.api_key.trim()
+      }
+      await aiModelAPI.update(editingModelId.value, data)
+      toast.add({ severity: 'success', summary: '模型已更新', life: 2000 })
+    } else {
+      if (!f.api_key.trim()) {
+        toast.add({ severity: 'warn', summary: '请填写 API Key', life: 2000 })
+        return
+      }
+      await aiModelAPI.create({
+        name: f.name.trim(),
+        provider: f.provider,
+        model_id: f.model_id.trim(),
+        api_key: f.api_key.trim(),
+        base_url: f.base_url.trim(),
+        is_active: f.is_active,
+        is_vision: f.is_vision,
+      })
+      toast.add({ severity: 'success', summary: '模型已添加', life: 2000 })
+    }
+    showAddModel.value = false
+    await loadAiModels()
+    if (f.is_active) checkAiStatus(true)
+  } catch (e) {
+    const msg = e.response?.data?.detail || '保存失败'
+    toast.add({ severity: 'error', summary: msg, life: 3000 })
+  }
+}
+
 onMounted(() => {
   loadConfig()
   loadManagementData()
-  checkAiStatus()
+  // 仅加载缓存状态，不触发真实检测（避免消耗额度）
+  checkAiStatus(false)
   loadSchedule()
+  loadAiModels()
 })
 
 useDataRefresh({
@@ -1739,5 +2069,138 @@ useDataRefresh({
 .schedule-msg.error {
   background: #fde8e8;
   color: #b42318;
+}
+
+/* AI 模型管理 */
+.model-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.model-row {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 18px;
+  background: #f8faff;
+  border: 1px solid #eef1f9;
+  border-radius: 12px;
+  transition: all 0.2s;
+}
+
+.model-row:hover {
+  background: #eef3ff;
+  border-color: #dde5ff;
+}
+
+.model-row.model-active {
+  background: linear-gradient(135deg, rgba(79, 107, 255, 0.06), #fff);
+  border-color: rgba(79, 107, 255, 0.3);
+  box-shadow: 0 2px 8px rgba(79, 107, 255, 0.1);
+}
+
+.model-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+}
+
+.model-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e2335;
+}
+
+.model-active-tag,
+.model-vision-tag {
+  font-size: 11px;
+  padding: 2px 8px;
+}
+
+.model-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #5a6481;
+}
+
+.model-sep {
+  color: #a6adc4;
+}
+
+.model-provider {
+  color: #4f6bff;
+  font-weight: 500;
+}
+
+.model-id-text,
+.model-key-text,
+.model-url-text {
+  font-family: 'Consolas', monospace;
+  color: #7a819a;
+}
+
+.model-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+/* 模型表单 */
+.model-form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.form-field {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.form-label {
+  font-size: 13px;
+  font-weight: 600;
+  color: #1e2335;
+}
+
+.form-label .required {
+  color: #ef4444;
+  margin-left: 2px;
+}
+
+.form-input :deep(.p-inputtext),
+.form-input :deep(.p-dropdown) {
+  width: 100%;
+}
+
+.form-input :deep(.p-inputtext) {
+  height: 38px;
+}
+
+.form-field-row {
+  display: flex;
+  gap: 24px;
+  flex-wrap: wrap;
+}
+
+.form-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+  color: #5a6481;
+  cursor: pointer;
 }
 </style>

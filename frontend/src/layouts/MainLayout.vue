@@ -63,6 +63,7 @@ const adminUser = getAdminUser()
 
 const navItems = [
   { path: '/admin/dashboard', label: '仪表盘', icon: 'pi pi-chart-pie' },
+  { path: '/admin/business-dashboard', label: '业务盘', icon: 'pi pi-briefcase' },
   { path: '/admin/wechat', label: '企业微信数据上传', icon: 'pi pi-upload' },
   { path: '/admin/reports', label: '周评列表', icon: 'pi pi-list' },
   { path: '/admin/config', label: '系统设置', icon: 'pi pi-cog' },

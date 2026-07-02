@@ -109,6 +109,8 @@ function handleError(err) {
     msg = parseDetail(detail) || '请求参数错误'
   } else if (status === 404) {
     msg = parseDetail(detail) || '资源不存在'
+  } else if (status === 409) {
+    msg = parseDetail(detail) || '操作冲突，请刷新页面后重试'
   } else if (status === 413) {
     msg = parseDetail(detail) || '文件过大，请压缩后重试'
   } else if (status === 503) {
@@ -313,6 +315,26 @@ export const personAPI = {
   create: (data) => api.post('/persons', data),
   update: (id, data) => api.put(`/persons/${id}`, data),
   delete: (id) => api.delete(`/persons/${id}`),
+}
+
+// 业务盘 API
+export const businessAPI = {
+  list: (params) => api.get('/business-dashboard', { params }),
+  get: (deptId, params) => api.get(`/business-dashboard/${deptId}`, { params }),
+  generateAll: (params) => scoringApi.post('/business-dashboard/generate', null, { params }),
+  generateDept: (deptId, params) => scoringApi.post(`/business-dashboard/${deptId}/generate`, null, { params }),
+  updateHighlight: (deptId, data) => api.patch(`/business-dashboard/${deptId}/highlight`, data),
+}
+
+// AI 模型管理 API
+export const aiModelAPI = {
+  list: () => api.get('/ai-models'),
+  get: (id) => api.get(`/ai-models/${id}`),
+  create: (data) => api.post('/ai-models', data),
+  update: (id, data) => api.put(`/ai-models/${id}`, data),
+  delete: (id) => api.delete(`/ai-models/${id}`),
+  activate: (id) => api.post(`/ai-models/${id}/activate`),
+  test: (data) => api.post('/ai-models/test', data),
 }
 
 export default api

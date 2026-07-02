@@ -130,6 +130,27 @@ async def upload_unified(
     person_id = detected_person_id
     department_id = detected_dept_id
 
+    # 4b. 同周重复提交检查（与 /reports/upload 保持一致）
+    existing_q = select(WeeklyReport).where(
+        WeeklyReport.author_name == author_name,
+        WeeklyReport.week_start == week_start,
+    )
+    existing_r = await db.execute(existing_q)
+    if existing_r.scalar_one_or_none():
+        # 清理已保存的文件（不会写入 DB 记录）
+        try:
+            os.remove(report_path)
+            os.remove(summary_path)
+        except OSError:
+            pass
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{author_name} 本周（{week_start.isoformat()}）已提交周报，"
+                f"如需重新提交，请先在周评列表中删除旧周报后再上传。"
+            ),
+        )
+
     # 5. 写入周报记录（随后立即触发后台异步 AI 评分，不阻塞当前请求）
     report_record = WeeklyReport(
         id=report_file_id,

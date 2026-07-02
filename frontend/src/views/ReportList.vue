@@ -297,6 +297,7 @@ import FilterBar from '../components/ui/FilterBar.vue'
 import ScoreBadge from '../components/ui/ScoreBadge.vue'
 import { formatBeijingTimeShort, getBeijingDateFilename } from '../utils/timeUtil.js'
 import { aggregateAPI } from '../api'
+import { emitDataChanged, DataEventType } from '../utils/dataEvents'
 
 const toast = useToast()
 const router = useRouter()
@@ -487,6 +488,7 @@ function onDelete(data) {
       await aggregateAPI.delete(data.id)
       toast.add({ severity: 'success', summary: '已删除', life: 2000 })
       loadData()
+      emitDataChanged(DataEventType.REPORTS_CHANGED)
     } catch (e) {
       const msg = e.response?.data?.detail || '删除失败'
       toast.add({ severity: 'error', summary: msg, life: 3000 })
@@ -505,6 +507,7 @@ function onBatchDelete() {
       await aggregateAPI.batchDelete(ids)
       toast.add({ severity: 'success', summary: `已删除 ${ids.length} 条记录`, life: 2500 })
       loadData()
+      emitDataChanged(DataEventType.REPORTS_CHANGED)
     } catch (e) {
       const msg = e.response?.data?.detail || '批量删除失败'
       toast.add({ severity: 'error', summary: msg, life: 3000 })

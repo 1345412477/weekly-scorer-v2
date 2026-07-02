@@ -16,7 +16,7 @@ from app.database import get_db
 from app.models.models import WeeklyAggregate, WeeklyReport, ReportScore
 from app.core.auth import require_admin, write_operation_log
 from app.services.aggregator import list_aggregates, update_aggregate_scores, restore_ai_scores
-from app.api.reports import is_safe_upload_path
+from app.utils.file_utils import is_safe_upload_path
 from app.utils.time_utils import bj_now
 
 logger = logging.getLogger(__name__)

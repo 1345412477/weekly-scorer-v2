@@ -1,7 +1,8 @@
 """日志工具模块"""
+import asyncio
+import functools
 import logging
 import time
-import functools
 from datetime import datetime
 from typing import Any, Callable
 
@@ -96,6 +97,3 @@ def log_info(message: str):
 def log_warning(message: str):
     """记录警告日志"""
     logger.warning(f"[WARN] {message}")
-
-
-import asyncio

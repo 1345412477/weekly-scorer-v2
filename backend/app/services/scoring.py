@@ -59,6 +59,7 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
             dimensions=dimensions,
             prompt_template=config.prompt_template or "",
             grade_thresholds=config.grade_thresholds,
+            db=db,
         )
 
         # 计算等级

@@ -1,6 +1,16 @@
 """应用配置"""
 import os
+import secrets
+import warnings
+import logging
 from pydantic_settings import BaseSettings
+
+# 内部标记值：用于检测用户是否尚未在 .env 中覆盖关键凭据
+_SENTINEL_AUTH_SECRET = "__UNSET_WEEKLY_SCORER_AUTH_SECRET__"
+_SENTINEL_ADMIN_PASSWORD = "__UNSET_WEEKLY_SCORER_ADMIN_PASSWORD__"
+# 未配置时的安全运行时默认值（仅用于开发/测试，生产必须覆盖）
+_DEV_AUTH_SECRET_FALLBACK = "weekly-scorer-v2-dev-fallback-secret-" + secrets.token_hex(8)
+_DEV_ADMIN_PASSWORD_FALLBACK = "admin123"
 
 
 class Settings(BaseSettings):
@@ -23,19 +33,19 @@ class Settings(BaseSettings):
     VISION_MODEL: str = ""
     SCORING_TEMPERATURE: float = 0.3
     AI_PROVIDER: str = "ark"
-    
+
     # AI 请求超时配置（秒）
     AI_TIMEOUT: int = 60
     AI_CONNECT_TIMEOUT: int = 10
 
     APP_TITLE: str = "周报评分系统 v2"
-    APP_VERSION: str = "2.1.0"
-    DEBUG: bool = True
+    APP_VERSION: str = "2.1.1"
     TEMPLATE_DIR: str = "./templates"
 
-    AUTH_SECRET_KEY: str = "weekly-scorer-v2-default-secret-please-override-in-dot-env"
+    # ⚠ 生产环境必须在 .env 中覆盖以下三项
+    AUTH_SECRET_KEY: str = _SENTINEL_AUTH_SECRET
     ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "admin123"
+    ADMIN_PASSWORD: str = _SENTINEL_ADMIN_PASSWORD
     CORS_ALLOW_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173"
 
     class Config:
@@ -47,8 +57,38 @@ class Settings(BaseSettings):
 _settings = None
 
 
+def _resolve_sensitive_defaults(settings: Settings) -> None:
+    """
+    若检测到使用默认标记值：
+    1. 回退到一个安全的运行时默认值（避免空值让应用崩溃）
+    2. 通过 logger + warnings 警告开发者在 .env 中覆盖
+    """
+    logger = logging.getLogger("weekly_scorer")
+    is_sentinel_auth = settings.AUTH_SECRET_KEY in (_SENTINEL_AUTH_SECRET, "")
+    is_sentinel_admin = settings.ADMIN_PASSWORD in (_SENTINEL_ADMIN_PASSWORD, "", "admin123")
+
+    if is_sentinel_auth:
+        settings.AUTH_SECRET_KEY = _DEV_AUTH_SECRET_FALLBACK
+        msg = (
+            "[config] AUTH_SECRET_KEY 使用运行时默认值（仅供开发/测试）。"
+            "生产环境请在 .env 中设置 AUTH_SECRET_KEY=<强随机密钥>"
+        )
+        logger.warning(msg)
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+
+    if is_sentinel_admin:
+        settings.ADMIN_PASSWORD = _DEV_ADMIN_PASSWORD_FALLBACK
+        msg = (
+            "[config] ADMIN_PASSWORD 使用运行时默认值（仅供开发/测试）。"
+            "生产环境请在 .env 中设置 ADMIN_PASSWORD=<强密码>"
+        )
+        logger.warning(msg)
+        warnings.warn(msg, RuntimeWarning, stacklevel=2)
+
+
 def get_settings() -> Settings:
     global _settings
     if _settings is None:
         _settings = Settings()
+        _resolve_sensitive_defaults(_settings)
     return _settings

@@ -44,6 +44,8 @@ class ScoringConfig(Base):
     report_prompt = Column(Text, nullable=True, default="")
     attendance_prompt = Column(Text, nullable=True, default="")
     chat_prompt = Column(Text, nullable=True, default="")
+    # v4 新增：业务盘总结提示词
+    business_summary_prompt = Column(Text, nullable=True, default="")
     # v3 新增：三项权重 JSON，默认 {"report": 1, "attendance": 1, "chat": 1}
     weights = Column(JSON, nullable=True, default=dict)
     min_content_length = Column(Integer, default=50)
@@ -299,3 +301,55 @@ class DataUploadLog(Base):
     uploaded_by = Column(String(100), nullable=True)  # 管理员用户名
     mode = Column(String(20), default="append")  # 'append' / 'replace'
     created_at = Column(DateTime, default=bj_now)
+
+
+class DepartmentSummary(Base):
+    """部门周总结 - 业务盘功能的核心数据表"""
+    __tablename__ = "department_summaries"
+    __table_args__ = (
+        UniqueConstraint("department_id", "week_start", name="uq_dept_summary_week"),
+        Index("idx_dept_summary_week", "week_start"),
+        Index("idx_dept_summary_dept", "department_id"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    department_id = Column(String(36), nullable=False)
+    department_name = Column(String(100), nullable=False)
+    week_start = Column(Date, nullable=False)
+    week_end = Column(Date, nullable=False)
+    # 上周工作事项列表
+    # 格式: [{"content": "事项内容", "highlight": false, "persons": ["张三", "李四"]}]
+    last_week_summary = Column(JSON, nullable=True, default=list)
+    # 本周工作事项列表
+    # 格式: [{"content": "事项内容", "highlight": false, "persons": ["张三", "李四"]}]
+    this_week_summary = Column(JSON, nullable=True, default=list)
+    # 部门是否重点关注
+    is_department_highlight = Column(Boolean, default=False)
+    # 生成状态: pending/generating/done/failed
+    status = Column(String(20), nullable=False, default="pending")
+    # 失败原因
+    error_message = Column(Text, nullable=True)
+    # 生成时间
+    generated_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=bj_now)
+    updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
+
+
+class AIModel(Base):
+    """AI 模型配置 - 支持自定义模型 ID、API Key 和 Base URL"""
+    __tablename__ = "ai_models"
+    __table_args__ = (
+        Index("idx_ai_model_active", "is_active"),
+    )
+
+    id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String(100), nullable=False)  # 显示名称，如 "豆包 Pro"
+    provider = Column(String(50), nullable=False)  # 厂商标识：mimo / ark / deepseek / openai / custom
+    model_id = Column(String(200), nullable=False)  # 模型 ID，如 "doubao-seed-2.0-pro"
+    api_key = Column(String(500), nullable=False)  # API Key
+    base_url = Column(String(500), nullable=False)  # API Base URL
+    is_active = Column(Boolean, default=False)  # 是否为当前使用的模型
+    is_vision = Column(Boolean, default=False)  # 是否为视觉模型
+    sort_order = Column(Integer, default=0)  # 排序权重
+    created_at = Column(DateTime, default=bj_now)
+    updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)

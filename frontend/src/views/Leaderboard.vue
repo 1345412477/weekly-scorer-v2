@@ -141,7 +141,7 @@
 </template>
 
 <script setup>
-import { ref, watch, nextTick, computed } from 'vue'
+import { ref, watch, nextTick, computed, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { leaderboardAPI } from '../api'
 import { useDataRefresh, getLeaderboardEvents } from '../composables/useDataRefresh'
@@ -221,7 +221,8 @@ const { loading } = useDataRefresh({
   debounceMs: 300,
 })
 
-watch([period, sortBy], () => { loadLeaderboard() })
+const unwatchFilters = watch([period, sortBy], () => { loadLeaderboard() })
+onUnmounted(() => { unwatchFilters() })
 
 function renderBarChart() {
   if (!barChartRef.value || !rankings.value.length) return

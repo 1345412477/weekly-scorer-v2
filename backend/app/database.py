@@ -69,13 +69,8 @@ async def _migrate_schema():
     注意：本函数仅在服务启动时执行，所有 SQL 片段均为硬编码内部常量，
     不处理外部输入，因此使用 text() 属 schema 迁移白名单场景。
     """
-    ALLOWED_COL_NAMES = {
-        "status", "manual_override", "modified_by", "modified_at",
-        "recurrence", "weekdays", "last_run_date",
-        "ai_connection_status", "ai_connection_provider",
-        "ai_connection_model", "ai_connection_checked_at",
-    }
-    ALLOWED_COL_DEFS = {
+    # 白名单：列名 -> 列定义（单一字典，避免两表同步维护不一致）
+    ALLOWED_COLUMNS = {
         "status": "VARCHAR(20) NOT NULL DEFAULT 'pending'",
         "manual_override": "TEXT",
         "modified_by": "VARCHAR(100)",
@@ -105,7 +100,7 @@ async def _migrate_schema():
         ]
         for col_name, col_def in weekly_agg_additions:
             if col_name not in cols:
-                if col_name not in ALLOWED_COL_NAMES or ALLOWED_COL_DEFS.get(col_name) != col_def:
+                if ALLOWED_COLUMNS.get(col_name) != col_def:
                     logger.warning(f"[migration] weekly_aggregates 新增列 {col_name} 不在白名单，跳过")
                     continue
                 try:
@@ -149,7 +144,7 @@ async def _migrate_schema():
                 ]
                 for col_name, col_def in sched_additions:
                     if col_name not in sched_cols:
-                        if col_name not in ALLOWED_COL_NAMES or ALLOWED_COL_DEFS.get(col_name) != col_def:
+                        if ALLOWED_COLUMNS.get(col_name) != col_def:
                             logger.warning(f"[migration] scoring_schedule 新增列 {col_name} 不在白名单，跳过")
                             continue
                         try:
@@ -175,7 +170,7 @@ async def _migrate_schema():
         for col_name, col_def in sc_additions:
             if col_name in sc_cols:
                 continue
-            if col_name not in ALLOWED_COL_NAMES or ALLOWED_COL_DEFS.get(col_name) != col_def:
+            if ALLOWED_COLUMNS.get(col_name) != col_def:
                 logger.warning(f"[migration] scoring_configs 新增列 {col_name} 不在白名单，跳过")
                 continue
             try:

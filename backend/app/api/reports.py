@@ -4,7 +4,7 @@ import re
 import uuid
 import shutil
 import logging
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, timedelta
 from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -28,15 +28,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/reports", tags=["周报管理"])
 
-UPLOAD_DIR = os.path.abspath(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads"))
-os.makedirs(UPLOAD_DIR, exist_ok=True)
+from app.utils.file_utils import is_safe_upload_path, get_upload_dir
 
-
-def is_safe_upload_path(file_path: str) -> bool:
-    if not file_path:
-        return False
-    resolved_path = os.path.abspath(file_path)
-    return resolved_path.startswith(UPLOAD_DIR + os.sep) and os.path.isfile(resolved_path)
+UPLOAD_DIR = get_upload_dir()
 
 
 def safe_download_name(filename: Optional[str], fallback: str) -> str:

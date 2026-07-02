@@ -148,48 +148,38 @@ async def _ocr_all_summaries(db: AsyncSession, valid_names: set) -> dict:
 
 
 async def _aggregate_all(db: AsyncSession, valid_names: set) -> dict:
-    """扫描所有（员工+周）组合并执行三项聚合（仅处理人员库中的员工）"""
+    """扫描所有（员工+周）组合并执行三项聚合（仅处理人员库中的员工）
+    
+    注：此函数为管理员手动触发的统一评分，不是常规 API。
+    数据量预期在正常范围（数百员工 × 数十周），全量扫描可接受。
+    """
+    MAX_WEEK_KEYS = 2000
     week_keys = set()
 
-    q1 = await db.execute(
+    queries = [
         select(WeeklyReport.author_name, WeeklyReport.person_id,
                WeeklyReport.department, WeeklyReport.department_id,
-               WeeklyReport.week_start, WeeklyReport.week_end)
-    )
-    for row in q1.all():
-        author_name, person_id, dept, dept_id, ws, we = row
-        if author_name and ws and we and author_name in valid_names:
-            week_keys.add((author_name, person_id or None, dept or "", dept_id or None, ws, we))
-
-    q2 = await db.execute(
+               WeeklyReport.week_start, WeeklyReport.week_end),
         select(WeeklySummary.author_name, WeeklySummary.person_id,
                WeeklySummary.department, WeeklySummary.department_id,
-               WeeklySummary.week_start, WeeklySummary.week_end)
-    )
-    for row in q2.all():
-        author_name, person_id, dept, dept_id, ws, we = row
-        if author_name and ws and we and author_name in valid_names:
-            week_keys.add((author_name, person_id or None, dept or "", dept_id or None, ws, we))
-
-    q3 = await db.execute(
+               WeeklySummary.week_start, WeeklySummary.week_end),
         select(AttendanceRecord.author_name, AttendanceRecord.person_id,
                AttendanceRecord.department, AttendanceRecord.department_id,
-               AttendanceRecord.week_start, AttendanceRecord.week_end)
-    )
-    for row in q3.all():
-        author_name, person_id, dept, dept_id, ws, we = row
-        if author_name and ws and we and author_name in valid_names:
-            week_keys.add((author_name, person_id or None, dept or "", dept_id or None, ws, we))
-
-    q4 = await db.execute(
+               AttendanceRecord.week_start, AttendanceRecord.week_end),
         select(ChatRecord.author_name, ChatRecord.person_id,
                ChatRecord.department, ChatRecord.department_id,
-               ChatRecord.week_start, ChatRecord.week_end)
-    )
-    for row in q4.all():
-        author_name, person_id, dept, dept_id, ws, we = row
-        if author_name and ws and we and author_name in valid_names:
-            week_keys.add((author_name, person_id or None, dept or "", dept_id or None, ws, we))
+               ChatRecord.week_start, ChatRecord.week_end),
+    ]
+
+    for q in queries:
+        result = await db.execute(q)
+        for row in result.all():
+            author_name, person_id, dept, dept_id, ws, we = row
+            if author_name and ws and we and author_name in valid_names:
+                week_keys.add((author_name, person_id or None, dept or "", dept_id or None, ws, we))
+
+    if len(week_keys) > MAX_WEEK_KEYS:
+        logger.warning(f"[scoring] 待聚合组合数 {len(week_keys)} 超过上限 {MAX_WEEK_KEYS}，可能影响性能")
 
     aggregated = 0
     skipped_non_person = 0
