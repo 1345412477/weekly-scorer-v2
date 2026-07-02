@@ -4,12 +4,13 @@ from sqlalchemy import select
 from datetime import date, timedelta
 from typing import Optional
 import json
+import re
 import uuid
 
 from app.models.models import (
     DepartmentSummary, Department, WeeklyReport, Person, ScoringConfig
 )
-from app.utils.logger import log_info, log_error
+from app.utils.logger import log_info, log_error, log_warning
 from app.utils.time_utils import bj_now
 
 
@@ -127,11 +128,11 @@ async def call_ai_summary(
     # 构建周报内容汇总
     if not reports:
         return {"last_week_summary": [], "this_week_summary": []}
-    
+
     reports_text = ""
     for r in reports:
         reports_text += f"\n### {r['author_name']}（{r['week_start']}）\n{r['content']}\n"
-    
+
     # 获取提示词
     prompt_template = await get_business_summary_prompt(db)
     prompt = prompt_template.format(
@@ -139,13 +140,13 @@ async def call_ai_summary(
         week_label=week_label,
         reports=reports_text,
     )
-    
+
     # 调用 AI
     try:
         from app.services.ai_scorer import get_client, _safe_get_content, AIScoringError, _get_scoring_config
         from app.config import get_settings
         settings = get_settings()
-        
+
         model_id, db_model = await _get_scoring_config(db)
         client = get_client(
             api_key=db_model["api_key"] if db_model else None,
@@ -154,29 +155,112 @@ async def call_ai_summary(
         response = await client.chat.completions.create(
             model=model_id,
             messages=[
-                {"role": "system", "content": "你是一个专业的业务分析助手。"},
+                {"role": "system", "content": "你是一个专业的业务分析助手，请严格输出 JSON 格式。"},
                 {"role": "user", "content": prompt},
             ],
             temperature=settings.SCORING_TEMPERATURE,
-            max_tokens=2000,
+            max_tokens=4000,  # 增加 token 上限防止截断
         )
         raw_text = _safe_get_content(response)
-        
+        log_info(f"[业务盘] AI 原始响应 (前500字符): {raw_text[:500]}")
+
         # 解析 JSON 响应
         result = parse_ai_summary(raw_text)
+        log_info(f"[业务盘] 解析结果: last_week={len(result.get('last_week_summary', []))}条, this_week={len(result.get('this_week_summary', []))}条")
         return result
     except AIScoringError:
         raise
     except Exception as e:
-        log_error(f"AI 总结调用失败: {e}")
+        import traceback
+        log_error(f"AI 总结调用失败: {type(e).__name__}: {e}")
+        log_error(f"完整堆栈: {traceback.format_exc()}")
         raise
 
 
+def _repair_truncated_json(text: str) -> str:
+    """尝试修复被截断的 JSON（AI 输出 token 超限常见）。
+    策略：
+    1. 补全缺失的闭合括号
+    2. 如果仍失败，逐步回退到最后一个完整的 key-value 对
+    """
+    # 第一步：补全缺失的闭合括号
+    stack = []
+    in_string = False
+    escape = False
+    for ch in text:
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch in ('{', '['):
+            stack.append(ch)
+        elif ch == '}':
+            if stack and stack[-1] == '{':
+                stack.pop()
+        elif ch == ']':
+            if stack and stack[-1] == '[':
+                stack.pop()
+    close_map = {'{': '}', '[': ']'}
+    for bracket in reversed(stack):
+        text += close_map[bracket]
+
+    # 第二步：如果仍无法解析，逐步截断到最后一个完整结构
+    try:
+        json.loads(text)
+        return text
+    except json.JSONDecodeError:
+        pass
+
+    # 找到最后一个完整的 "key": value 对的位置
+    # 策略：从后往前找最后一个 }, 或 ], 或 "value" 的结束位置
+    for cut_pos in range(len(text) - 1, 0, -1):
+        candidate = text[:cut_pos].rstrip().rstrip(',').rstrip()
+        # 补全括号
+        s2 = []
+        in_s = False
+        esc = False
+        for ch in candidate:
+            if esc:
+                esc = False
+                continue
+            if ch == '\\':
+                esc = True
+                continue
+            if ch == '"':
+                in_s = not in_s
+                continue
+            if in_s:
+                continue
+            if ch in ('{', '['):
+                s2.append(ch)
+            elif ch == '}':
+                if s2 and s2[-1] == '{':
+                    s2.pop()
+            elif ch == ']':
+                if s2 and s2[-1] == '[':
+                    s2.pop()
+        for bracket in reversed(s2):
+            candidate += close_map[bracket]
+        try:
+            json.loads(candidate)
+            return candidate
+        except json.JSONDecodeError:
+            continue
+
+    return text
+
+
 def parse_ai_summary(raw_text: str) -> dict:
-    """解析 AI 返回的 JSON 总结"""
-    # 提取 JSON 部分
+    """解析 AI 返回的 JSON 总结，兼容截断/格式不完整的输出"""
     text = raw_text.strip()
-    
+
     # 尝试提取 ```json ... ``` 中的内容
     if "```json" in text:
         start = text.find("```json") + 7
@@ -188,40 +272,90 @@ def parse_ai_summary(raw_text: str) -> dict:
         end = text.find("```", start)
         if end > start:
             text = text[start:end].strip()
-    
-    # 解析 JSON
+
+    # 提取 { ... } 范围
+    start = text.find("{")
+    end = text.rfind("}")
+    if start >= 0 and end > start:
+        text = text[start:end + 1]
+
+    # 解析 JSON，失败则尝试修复截断
+    data = None
     try:
         data = json.loads(text)
     except json.JSONDecodeError:
-        # 尝试找到第一个 { 和最后一个 }
-        start = text.find("{")
-        end = text.rfind("}")
-        if start >= 0 and end > start:
-            text = text[start:end+1]
-            data = json.loads(text)
-        else:
-            raise ValueError(f"无法解析 AI 返回的 JSON: {raw_text[:200]}")
-    
+        try:
+            repaired = _repair_truncated_json(text)
+            data = json.loads(repaired)
+        except json.JSONDecodeError:
+            # 使用 regex 提取 last_week_summary 和 this_week_summary 数组
+            log_warning(f"JSON 解析失败，尝试 regex 提取: {raw_text[:100]}")
+            data = _extract_summary_by_regex(raw_text)
+        except Exception as e2:
+            log_warning(f"JSON 修复失败 ({type(e2).__name__}): {e2}")
+            data = _extract_summary_by_regex(raw_text)
+    except Exception as e:
+        # 兜底：任何异常都返回空结果
+        log_warning(f"JSON 解析异常 ({type(e).__name__}): {e}")
+        data = {"last_week_summary": [], "this_week_summary": []}
+
     # 标准化输出格式
     result = {
         "last_week_summary": [],
         "this_week_summary": [],
     }
-    
+
+    if data and isinstance(data, dict):
+        # 规范化 key：AI 可能返回带空白/引号的 key（如 '\n  "last_week_summary"'）
+        normalized = {}
+        for dk, dv in data.items():
+            clean_key = re.sub(r'[\s"\']+', '', str(dk))
+            normalized[clean_key] = dv
+
+        for key in ["last_week_summary", "this_week_summary"]:
+            items = normalized.get(key, [])
+            if isinstance(items, list):
+                for item in items:
+                    if isinstance(item, dict):
+                        content = item.get("content", "")
+                        persons = item.get("persons", [])
+                        if content:
+                            result[key].append({
+                                "content": content,
+                                "highlight": False,
+                                "persons": persons if isinstance(persons, list) else [],
+                            })
+
+    return result
+
+
+def _extract_summary_by_regex(text: str) -> dict:
+    """使用 regex 从 AI 响应中提取 last_week_summary 和 this_week_summary 数组"""
+    result = {"last_week_summary": [], "this_week_summary": []}
+
     for key in ["last_week_summary", "this_week_summary"]:
-        items = data.get(key, [])
-        if isinstance(items, list):
-            for item in items:
-                if isinstance(item, dict):
-                    content = item.get("content", "")
-                    persons = item.get("persons", [])
-                    if content:
-                        result[key].append({
-                            "content": content,
-                            "highlight": False,
-                            "persons": persons if isinstance(persons, list) else [],
-                        })
-    
+        # 匹配 "last_week_summary": [...] 或 "last_week_summary" : [...]
+        pattern = rf'"{re.escape(key)}"\s*:\s*\[(.*?)\](?:\s*,|\s*\}})'
+        match = re.search(pattern, text, re.DOTALL)
+        if match:
+            array_text = match.group(1).strip()
+            if array_text:
+                # 尝试解析数组中的每个对象
+                items = re.findall(r'\{[^}]*\}', array_text)
+                for item_text in items:
+                    try:
+                        item = json.loads(item_text)
+                        content = item.get("content", "")
+                        persons = item.get("persons", [])
+                        if content:
+                            result[key].append({
+                                "content": content,
+                                "highlight": False,
+                                "persons": persons if isinstance(persons, list) else [],
+                            })
+                    except json.JSONDecodeError:
+                        continue
+
     return result
 
 
@@ -279,17 +413,33 @@ async def generate_department_summary(
         ai_result = await call_ai_summary(
             db, department_name, this_week_reports + last_week_reports, week_label
         )
-        
-        # 更新总结记录
+
+        # 更新总结记录（即使 AI 返回空结果也标记为 done）
         summary.last_week_summary = ai_result.get("last_week_summary", [])
         summary.this_week_summary = ai_result.get("this_week_summary", [])
         summary.status = "done"
         summary.generated_at = bj_now()
-        
+
         await db.commit()
-        
+
         log_info(f"部门总结生成完成: {department_name} ({week_start})")
-        
+
+        return {
+            "success": True,
+            "department_id": department_id,
+            "department_name": department_name,
+            "status": "done",
+        }
+    except (ValueError, KeyError, TypeError) as e:
+        # JSON 解析失败或数据结构异常：记录空结果，标记为 done（不阻塞其他部门）
+        log_warning(f"部门总结数据异常，使用空结果: {department_name} - {type(e).__name__}: {e}")
+        summary.last_week_summary = []
+        summary.this_week_summary = []
+        summary.status = "done"
+        summary.error_message = None
+        summary.generated_at = bj_now()
+        await db.commit()
+
         return {
             "success": True,
             "department_id": department_id,
@@ -297,11 +447,13 @@ async def generate_department_summary(
             "status": "done",
         }
     except Exception as e:
-        log_error(f"部门总结生成失败: {department_name} - {e}")
+        log_error(f"部门总结生成失败: {department_name} - {type(e).__name__}: {e}")
+        import traceback
+        log_error(f"完整堆栈: {traceback.format_exc()}")
         summary.status = "failed"
         summary.error_message = str(e)
         await db.commit()
-        
+
         return {
             "success": False,
             "department_id": department_id,
