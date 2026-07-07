@@ -154,6 +154,8 @@ async def upload_chat(
         db.add(rec)
         inserted += 1
 
+    total_messages = sum(r.get("message_count", 0) for r in records)
+
     # 写上传日志
     admin_username = None
     if admin and hasattr(admin, "username"):
@@ -166,7 +168,7 @@ async def upload_chat(
         week_start=min_week_start,
         week_end=week_end_for_log or (max_week_start + timedelta(days=6)),
         filename=file.filename,
-        record_count=inserted,
+        record_count=total_messages,
         employees_matched=matched_count,
         uploaded_by=admin_username,
         mode=mode,
@@ -176,12 +178,15 @@ async def upload_chat(
 
     await db.commit()
 
+    total_messages = sum(r.get("message_count", 0) for r in records)
+
     return {
         "message": "聊天记录上传成功（覆盖模式）" if mode == "replace" else "聊天记录上传成功",
         "mode": mode,
         "week_start": min_week_start.isoformat(),
         "week_end": (week_end_for_log or (max_week_start + timedelta(days=6))).isoformat(),
-        "total_records": inserted,
+        "total_records": total_messages,
+        "total_aggregated": inserted,
         "matched_records": inserted_matched,
         "unmatched_records": inserted_unmatched,
         "employees_matched": matched_count,
@@ -199,11 +204,12 @@ async def get_chat_status(
     """返回聊天记录上传状态：本周是否已上传 + 最近一次上传信息。"""
     week_start, week_end = _get_current_week_range()
 
+    # 用 created_at 判断是否在本周内上传过（而非 week_start，避免上周上传的数据跨周误判）
     q = select(DataUploadLog).where(
         and_(
             DataUploadLog.data_type == "chat",
-            DataUploadLog.week_start >= week_start - timedelta(days=1),
-            DataUploadLog.week_start <= week_end + timedelta(days=1),
+            DataUploadLog.created_at >= datetime.combine(week_start, datetime.min.time()),
+            DataUploadLog.created_at <= datetime.combine(week_end, datetime.max.time()),
         )
     ).order_by(DataUploadLog.created_at.desc())
 

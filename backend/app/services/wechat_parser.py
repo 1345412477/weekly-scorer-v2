@@ -117,6 +117,7 @@ _ATTENDANCE_FIELD_MAP = {
     "员工": "author_name",
     "日期": "record_date",
     "时间": "record_date",
+    # "打卡时间" 移除，避免在两行表头中误匹配（二级表头"打卡时间"不应被覆盖）
     "打卡日期": "record_date",
     "部门": "department",
     "所属部门": "department",
@@ -133,6 +134,38 @@ _ATTENDANCE_FIELD_MAP = {
     "备注": "notes",
     "说明": "notes",
     "假勤申请": "leave_request",
+    # 新版企业微信导出字段
+    "最早": "check_in_time",
+    "最晚": "check_out_time",
+    "考勤结果": "status",
+    "上班打卡时间": "check_in_time",
+    "下班打卡时间": "check_out_time",
+    "迟到次数": "late_count",
+    "早退次数": "early_count",
+    "缺卡次数": "miss_count",
+    "补卡次数": "supplement_count",
+    "实际工作时长(小时)": "work_hours",
+    "加班时长(小时)": "overtime_hours",
+}
+
+# 新版两行表头组合映射：(一级表头, 二级表头) -> field
+_ATTENDANCE_COMBINED_MAP = {
+    ("上班1", "打卡时间"): "check_in_time",
+    ("下班1", "打卡时间"): "check_out_time",
+    ("上班1", "打卡状态"): "check_in_status",
+    ("下班1", "打卡状态"): "check_out_status",
+    # "时间" 列作为 record_date（仅当无二级表头时）
+    ("时间", ""): "record_date",
+}
+
+# 通配符组合：任意一级表头 + 特定二级表头 -> field
+_ATTENDANCE_SECONDARY_ONLY = {
+    "最早": "check_in_time",
+    "最晚": "check_out_time",
+    "班次": "shift_type",
+    "考勤结果": "status",
+    "打卡时间": "actual_time",
+    "打卡状态": "status",
 }
 
 
@@ -140,10 +173,12 @@ def _match_att_field(header: str) -> Optional[str]:
     header = _norm(header)
     if not header:
         return None
+    # 精确匹配优先
     if header in _ATTENDANCE_FIELD_MAP:
         return _ATTENDANCE_FIELD_MAP[header]
+    # 子串匹配：要求 header 以 key 开头或结尾，避免 "打卡时间记录" 误匹配 "打卡日期"
     for key, field in _ATTENDANCE_FIELD_MAP.items():
-        if key in header:
+        if header.startswith(key) or header.endswith(key):
             return field
     return None
 
@@ -155,17 +190,79 @@ def _find_attendance_sheet(wb) -> str:
     for name in wb.sheetnames:
         if name in exact:
             return name
-    # 模糊匹配但排除"概况统计"之类的概览表
+    # 模糊匹配：包含"打卡"或"考勤"的 sheet
+    # 注意：新版企业微信导出 sheet 名可能是"概况统计与打卡明细"，需要接受
     for name in wb.sheetnames:
-        if ("打卡" in name or "考勤" in name) and "概况" not in name and "统计" not in name:
+        if "打卡" in name or "考勤" in name:
             return name
     return wb.active.title
+
+
+def _detect_two_row_header(rows) -> Tuple[bool, int]:
+    """检测是否为新版两行表头格式。
+    返回 (is_two_row, header_row_idx)。
+    两行表头特征：某行的前几列包含「姓名」但无「日期」，下一行包含「最早/班次/考勤结果」等二级字段。
+    只看前 10 列以避免后面"打卡详情"等干扰列的影响。
+    """
+    for idx in range(min(8, len(rows) - 1)):
+        row_prefix = "".join(_norm(c) for c in rows[idx][:10])
+        next_text = "".join(_norm(c) for c in rows[idx + 1])
+        # 一级表头前几列有「姓名」但无「日期」
+        if ("姓名" in row_prefix or "员工" in row_prefix) and "日期" not in row_prefix:
+            # 下一行有二级字段
+            if "最早" in next_text or "班次" in next_text or "考勤结果" in next_text:
+                return True, idx
+    return False, -1
+
+
+# 新版格式中作为分组标题、不应映射为数据字段的列名
+_TWO_ROW_SKIP_HEADERS = {"打卡时间记录", "打卡详情", "基础信息", "考勤概况", "异常统计", "外出打卡", "加班统计", "假勤统计"}
+
+
+def _build_two_row_field_cols(rows, header_row_idx: int) -> Dict[int, str]:
+    """根据两行表头构建 col -> field 映射。
+    一级表头在 header_row_idx，二级表头在 header_row_idx+1。
+    """
+    primary = [_norm(c) for c in rows[header_row_idx]]
+    secondary = [_norm(c) for c in rows[header_row_idx + 1]]
+    field_cols: Dict[int, str] = {}
+
+    for col_idx in range(max(len(primary), len(secondary))):
+        p = primary[col_idx] if col_idx < len(primary) else ""
+        s = secondary[col_idx] if col_idx < len(secondary) else ""
+
+        # 跳过分组标题列
+        if p in _TWO_ROW_SKIP_HEADERS:
+            continue
+
+        # 优先用组合映射
+        if p and s and (p, s) in _ATTENDANCE_COMBINED_MAP:
+            field_cols[col_idx] = _ATTENDANCE_COMBINED_MAP[(p, s)]
+            continue
+
+        # 一级表头单独匹配
+        if p and not s:
+            field = _match_att_field(p)
+            if field:
+                field_cols[col_idx] = field
+                continue
+
+        # 二级表头单独匹配
+        if s:
+            field = _match_att_field(s)
+            if field:
+                field_cols[col_idx] = field
+                continue
+
+    return field_cols
 
 
 def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     解析企业微信打卡 Excel。
-    规则：按（员工, 日期）聚合一次上下班打卡，保留最早上班时间地点和最晚下班时间地点。
+    兼容两种格式：
+    - 旧版：单行表头，每行一条打卡记录（含打卡类型区分上下班）
+    - 新版：两行表头，每行一个员工一天的汇总（含上班1/下班1打卡时间列）
     返回 (records, unmatched_names)。
     """
     if load_workbook is None:
@@ -178,14 +275,33 @@ def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[s
     if len(rows) < 2:
         return [], []
 
-    # 定位表头行（查找包含 日期/姓名 的行）
-    header_row_idx = 0
-    for idx, row in enumerate(rows[:10]):
-        text = "".join(_norm(c) for c in row)
-        if ("日期" in text or "打卡" in text) and ("姓名" in text or "员工" in text):
-            header_row_idx = idx
-            break
+    # 检测表头格式
+    is_two_row, header_row_idx = _detect_two_row_header(rows)
 
+    if is_two_row:
+        return _parse_new_format(rows, header_row_idx)
+    else:
+        # 单行表头：在前 10 行中找到包含「姓名」或「员工」的行作为表头
+        header_row_idx = _find_single_row_header(rows)
+        if header_row_idx < 0:
+            logger.warning(f"[考勤解析] 未找到表头行，文件: {file_path}")
+            return [], []
+        return _parse_old_format(rows, header_row_idx)
+
+
+def _find_single_row_header(rows) -> int:
+    """在单行表头模式下找到表头行索引。
+    在前 10 行中查找包含「姓名」或「员工」的行。
+    """
+    for idx in range(min(10, len(rows))):
+        row_text = "".join(_norm(c) for c in rows[idx])
+        if "姓名" in row_text or "员工" in row_text or "成员" in row_text:
+            return idx
+    return -1
+
+
+def _parse_old_format(rows, header_row_idx: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """旧版单行表头解析（原有逻辑）"""
     headers = [_norm(c) for c in rows[header_row_idx]]
     field_cols: Dict[int, str] = {}
     for col_idx, h in enumerate(headers):
@@ -193,8 +309,6 @@ def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[s
         if field:
             field_cols[col_idx] = field
 
-    # 收集原始打卡行（先不分上下班，按 punch_type 归类）
-    # key: (author_name, record_date) -> dict of details
     buckets: Dict[Tuple[str, date], Dict[str, Any]] = {}
 
     for row in rows[header_row_idx + 1:]:
@@ -246,7 +360,6 @@ def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[s
 
         bucket = buckets[key]
 
-        # 聚合状态/备注（多条拼接）
         status_parts = []
         if status and status not in bucket["attendance_status"]:
             status_parts.append(status)
@@ -259,7 +372,6 @@ def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[s
             prev = bucket["notes"]
             bucket["notes"] = (prev + " / " + notes).strip(" / ")
 
-        # 区分上下班
         if "上班" in ptype and atime:
             if bucket["check_in_time"] is None or atime < bucket["check_in_time"]:
                 bucket["check_in_time"] = atime
@@ -268,7 +380,6 @@ def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[s
             if bucket["check_out_time"] is None or atime > bucket["check_out_time"]:
                 bucket["check_out_time"] = atime
                 bucket["check_out_location"] = loc or bucket.get("check_out_location")
-        # 外出打卡作为补充时间（如果同一天没有上/下班打卡，则外出打卡也算作一条）
         elif ("外出" in ptype or "打卡" in ptype) and atime:
             if bucket["check_in_time"] is None:
                 bucket["check_in_time"] = atime
@@ -277,7 +388,80 @@ def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[s
                 bucket["check_out_time"] = atime
                 bucket["check_out_location"] = loc
 
-    # 计算工作时长（小时）
+    return _finalize_buckets(buckets)
+
+
+def _parse_new_format(rows, header_row_idx: int) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """新版两行表头解析。
+    每行是一个员工一天的汇总，直接包含上班/下班打卡时间列。
+    表头结构：
+      Row N:   时间 | 姓名 | 账号 | 基础信息 | ... | 上班1 | ... | 下班1 | ...
+      Row N+1:      |      |      | 部门|职务|工号 | ... | 打卡时间|打卡状态 | 打卡时间|打卡状态 | ...
+    """
+    field_cols = _build_two_row_field_cols(rows, header_row_idx)
+    data_start = header_row_idx + 2  # 跳过两行表头
+
+    buckets: Dict[Tuple[str, date], Dict[str, Any]] = {}
+
+    for row in rows[data_start:]:
+        if all(_norm(c) == "" for c in row):
+            continue
+
+        raw: Dict[str, Any] = {}
+        for col_idx, field_name in field_cols.items():
+            val = row[col_idx] if col_idx < len(row) else None
+            if field_name == "record_date":
+                raw["record_date"] = _parse_date(val)
+            elif field_name in ("check_in_time", "check_out_time"):
+                raw[field_name] = _parse_time(val)
+            elif field_name == "should_time":
+                raw["should_time"] = _parse_time(val)
+            else:
+                raw[field_name] = _norm(val) if val is not None else ""
+
+        author = raw.get("author_name", "")
+        if not author:
+            continue
+        rdate = raw.get("record_date")
+        if not rdate:
+            continue
+
+        key = (author, rdate)
+        if key not in buckets:
+            ws_date, we_date = _week_range(rdate)
+            buckets[key] = {
+                "author_name": author,
+                "department": raw.get("department", ""),
+                "record_date": rdate,
+                "week_start": ws_date,
+                "week_end": we_date,
+                "check_in_time": None,
+                "check_out_time": None,
+                "check_in_location": None,
+                "check_out_location": None,
+                "attendance_status": "",
+                "notes": "",
+            }
+
+        bucket = buckets[key]
+
+        # 新版格式直接有 check_in_time / check_out_time
+        if raw.get("check_in_time"):
+            bucket["check_in_time"] = raw["check_in_time"]
+        if raw.get("check_out_time"):
+            bucket["check_out_time"] = raw["check_out_time"]
+
+        # 考勤结果作为状态
+        status = raw.get("status", "") or ""
+        if status and status != "--" and status not in bucket["attendance_status"]:
+            prev = bucket["attendance_status"]
+            bucket["attendance_status"] = (prev + " / " + status).strip(" / ")
+
+    return _finalize_buckets(buckets)
+
+
+def _finalize_buckets(buckets: Dict) -> Tuple[List[Dict[str, Any]], List[str]]:
+    """计算工时、排序、返回结果"""
     records: List[Dict[str, Any]] = []
     for bucket in buckets.values():
         if bucket["check_in_time"] and bucket["check_out_time"]:
@@ -295,9 +479,7 @@ def parse_attendance_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[s
             bucket["work_duration_hours"] = None
         records.append(bucket)
 
-    # 按日期+姓名排序
     records.sort(key=lambda r: (r["record_date"], r["author_name"]))
-
     unmatched = sorted({r["author_name"] for r in records})
     logger.info(f"[考勤解析] 读取 {len(records)} 条员工-日记录，涉及 {len(unmatched)} 位员工")
     return records, unmatched
@@ -370,6 +552,23 @@ def _match_chat_field(header: str) -> Optional[str]:
     return None
 
 
+def _extract_chat_dates_from_filename(file_path: str) -> Tuple[Optional[date], Optional[date]]:
+    """从聊天记录文件名中提取日期范围，作为发送时间的 fallback。
+    支持格式：20260706-20260712、20260706_20260712、2026-07-06_2026-07-12
+    返回 (start_date, end_date)。
+    """
+    fname = os.path.basename(file_path)
+    m = re.search(r"(\d{4})[-_]?(\d{1,2})[-_]?(\d{1,2})[-_](\d{4})[-_]?(\d{1,2})[-_]?(\d{1,2})", fname)
+    if m:
+        try:
+            start = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            end = date(int(m.group(4)), int(m.group(5)), int(m.group(6)))
+            return start, end
+        except ValueError:
+            pass
+    return None, None
+
+
 def parse_chat_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
     """
     解析企业微信聊天记录 Excel。
@@ -400,6 +599,12 @@ def parse_chat_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
         if field:
             field_cols[col_idx] = field
 
+    has_send_time = "send_time" in field_cols.values()
+    # 无发送时间列时，从文件名推算日期作为 fallback
+    fn_start, fn_end = (None, None)
+    if not has_send_time:
+        fn_start, fn_end = _extract_chat_dates_from_filename(file_path)
+
     # 原始消息
     raw_messages: List[Dict[str, Any]] = []
     for row in rows[header_row_idx + 1:]:
@@ -421,6 +626,11 @@ def parse_chat_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
 
         receiver_raw = msg.get("receiver", "")
         msg["receiver"] = _strip_wecom_role(receiver_raw)
+
+        # 无发送时间时，用文件名日期作为 fallback
+        if not has_send_time and msg.get("send_time") is None and fn_start:
+            msg["send_time"] = datetime(fn_start.year, fn_start.month, fn_start.day, 12, 0, 0)
+
         raw_messages.append(msg)
 
     # 按（sender, week）聚合消息

@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     AI_CONNECT_TIMEOUT: int = 10
 
     APP_TITLE: str = "周报评分系统 v2"
-    APP_VERSION: str = "2.1.1"
+    APP_VERSION: str = "2.1.2"
     TEMPLATE_DIR: str = "./templates"
 
     # ⚠ 生产环境必须在 .env 中覆盖以下三项
