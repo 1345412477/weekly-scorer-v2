@@ -73,7 +73,7 @@
               <p class="status-card-info">
                 匹配员工：<strong>{{ chatStatus.employees_count ?? 0 }}</strong> 人 ·
                 其他参与：<strong>{{ chatStatus.unmatched_employees_count ?? 0 }}</strong> 人 ·
-                共 <strong>{{ chatStatus.records_count ?? 0 }}</strong> 条记录
+                共 <strong>{{ chatStatus.last_upload?.record_count ?? chatStatus.records_count ?? 0 }}</strong> 条记录
               </p>
               <template v-if="chatStatus.last_upload">
                 <p class="status-card-meta">

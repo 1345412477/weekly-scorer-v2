@@ -24,7 +24,7 @@ from tests.conftest import make_excel_file, make_docx_file, make_empty_file, get
 class TestFileFormatValidation:
     """文件格式验证测试"""
 
-    async def test_upload_xlsx_success(self, client, seed_scoring_config):
+    async def test_upload_xlsx_success(self, client, seed_scoring_config, seed_ai_model):
         """上传 .xlsx 文件成功"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -229,7 +229,7 @@ class TestTimeClassification:
         finally:
             os.unlink(f.name)
 
-    async def test_last_week_report_type_catch_up(self, client, seed_scoring_config):
+    async def test_last_week_report_type_catch_up(self, client, seed_scoring_config, seed_ai_model):
         """上周周报识别为 catch_up"""
         monday, sunday = get_current_week()
         last_monday = monday - timedelta(days=7)
@@ -392,7 +392,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_chinese_characters_in_content(self, client, seed_scoring_config):
+    async def test_chinese_characters_in_content(self, client, seed_scoring_config, seed_ai_model):
         """周报内容包含中文特殊字符"""
         monday, sunday = get_current_week()
         last_monday = monday - timedelta(days=7)
@@ -444,7 +444,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_upload_report_persists_in_database(self, client, admin_headers, seed_scoring_config):
+    async def test_upload_report_persists_in_database(self, client, admin_headers, seed_scoring_config, seed_ai_model):
         """上传的周报正确持久化到数据库"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -526,7 +526,7 @@ class TestEdgeCases:
 class TestAIScoringIntegration:
     """AI 评分集成测试"""
 
-    async def test_upload_triggers_scoring(self, client, seed_scoring_config):
+    async def test_upload_triggers_scoring(self, client, seed_scoring_config, seed_ai_model):
         """上传后自动触发评分"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -545,7 +545,7 @@ class TestAIScoringIntegration:
         finally:
             os.unlink(f.name)
 
-    async def test_scoring_dimensions_in_detail(self, client, admin_headers, seed_scoring_config):
+    async def test_scoring_dimensions_in_detail(self, client, admin_headers, seed_scoring_config, seed_ai_model):
         """评分详情包含各维度分数"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -570,7 +570,7 @@ class TestAIScoringIntegration:
         finally:
             os.unlink(f.name)
 
-    async def test_report_status_after_upload(self, client, admin_headers, seed_scoring_config):
+    async def test_report_status_after_upload(self, client, admin_headers, seed_scoring_config, seed_ai_model):
         """上传并评分后状态为 scored"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)

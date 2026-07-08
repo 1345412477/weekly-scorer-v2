@@ -34,13 +34,26 @@ def get_current_month():
     return first, last
 
 
-def _first_submission_cte(period, department_filter=None):
+def _resolve_week_range(week_start_str=None):
+    """根据 week_start 字符串解析周一/周日，未传则用当前周"""
+    if week_start_str:
+        try:
+            target = date.fromisoformat(week_start_str)
+            monday = target
+            sunday = monday + timedelta(days=6)
+            return monday, sunday
+        except ValueError:
+            pass
+    return get_current_week()
+
+
+def _first_submission_cte(period, department_filter=None, week_start_str=None):
     """
     生成一个 CTE：在指定周期内，每位员工每周最新一次提交且有评分的 weekly_report.id
     策略：按 author_name + week_start + week_end 分组，优先选有 ReportScore 关联的报告，
           同组内按 created_at 倒序，取最新一条，避免旧/无评分报告被选中
     """
-    current_monday, current_sunday = get_current_week()
+    current_monday, current_sunday = _resolve_week_range(week_start_str)
 
     inner = (
         select(
@@ -95,16 +108,18 @@ async def get_leaderboard(
     period: str = Query("week", pattern="^(week|month|all)$"),
     department: Optional[str] = None,
     sort_by: str = Query("total_score", pattern="^(total_score|avg_score|report_count)$"),
+    week_start: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
 ):
     """获取排行榜数据：每位员工每周只算首次提交的分数"""
     dep_filter = department if department and department != "all" else None
-    first_cte = _first_submission_cte(period, dep_filter)
+    first_cte = _first_submission_cte(period, dep_filter, week_start)
 
     total_score = func.coalesce(func.sum(ReportScore.total_score), 0).label("total_score")
     avg_score = func.coalesce(func.avg(ReportScore.total_score), 0).label("avg_score")
     report_count = func.count(first_cte.c.id).label("report_count")
     latest_grade = func.max(ReportScore.grade).label("latest_grade")
+    latest_report_id = func.max(first_cte.c.id).label("latest_report_id")
 
     query = (
         select(
@@ -114,6 +129,7 @@ async def get_leaderboard(
             avg_score,
             report_count,
             latest_grade,
+            latest_report_id,
         )
         .select_from(first_cte)
         .join(ReportScore, ReportScore.report_id == first_cte.c.id, isouter=True)
@@ -130,8 +146,8 @@ async def get_leaderboard(
     result = await db.execute(query)
     rows = result.fetchall()
 
-    # 计算本周趋势（与上周「首条提交」分数对比）
-    current_monday, current_sunday = get_current_week()
+    # 计算趋势（与上一周「首条提交」分数对比）
+    current_monday, current_sunday = _resolve_week_range(week_start)
     prev_monday, prev_sunday = get_previous_week(current_monday, current_sunday)
 
     prev_scores = {}

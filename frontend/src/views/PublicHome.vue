@@ -107,7 +107,7 @@
         <div class="section-inner equal-height">
           <div class="section-title-row fade-in-up" style="--delay: 400ms">
             <div>
-            <h2>本周排行榜</h2>
+            <h2>上周排行榜</h2>
           </div>
           </div>
 
@@ -121,7 +121,7 @@
             </Column>
             <Column field="author_name" header="姓名" />
             <Column field="department" header="部门" />
-            <Column field="total_score" header="本周得分" style="width:120px">
+            <Column field="total_score" header="上周得分" style="width:120px">
               <template #body="{ data }">
                 <span class="score-cell">{{ data.total_score }}</span>
               </template>
@@ -298,7 +298,16 @@ async function uploadAll() {
 async function loadLeaderboard() {
   loading.value = true
   try {
-    const res = await leaderboardAPI.get({ period: 'week' })
+    // 计算上周周一日期
+    const today = new Date()
+    const dayOfWeek = today.getDay() || 7 // 周日=7
+    const thisMonday = new Date(today)
+    thisMonday.setDate(today.getDate() - dayOfWeek + 1)
+    const lastMonday = new Date(thisMonday)
+    lastMonday.setDate(thisMonday.getDate() - 7)
+    const weekStart = lastMonday.toISOString().split('T')[0]
+
+    const res = await leaderboardAPI.get({ period: 'week', week_start: weekStart })
     rankings.value = res.data.rankings || []
   } catch (e) {
     rankings.value = []

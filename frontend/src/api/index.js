@@ -223,6 +223,7 @@ export const reportAPI = {
   create: (data) => api.post('/reports', data),
   list: (params) => api.get('/reports', { params }),
   get: (id) => api.get(`/reports/${id}`),
+  getPublic: (id) => api.get(`/reports/public/${id}`),
   submit: (id) => api.post(`/reports/${id}/submit`),
   delete: (id) => api.delete(`/reports/${id}`),
   batchDelete: (ids) => api.post('/reports/batch-delete', ids),

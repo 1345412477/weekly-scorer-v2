@@ -701,6 +701,50 @@ async def clear_all_reports(
     }
 
 
+@router.get("/public/{report_id}")
+async def get_public_report(report_id: str, db: AsyncSession = Depends(get_db)):
+    """员工端查看周报详情（无需管理员认证，含评分和 AI 评语）"""
+    result = await db.execute(
+        select(WeeklyReport).where(WeeklyReport.id == report_id)
+    )
+    report = result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(status_code=404, detail="周报不存在")
+
+    scores_r = await db.execute(
+        select(ReportScore).where(ReportScore.report_id == report_id)
+    )
+    scores = scores_r.scalar_one_or_none()
+
+    ws = report.week_start
+    we = report.week_end
+    ws_str = ws.isoformat() if hasattr(ws, "isoformat") else str(ws)
+    we_str = we.isoformat() if hasattr(we, "isoformat") else str(we)
+
+    dim_scores = []
+    if scores and scores.dimension_scores:
+        dim_scores = scores.dimension_scores
+
+    return {
+        "id": report.id,
+        "author_name": report.author_name,
+        "department": report.department or "",
+        "week_start": ws_str,
+        "week_end": we_str,
+        "week_num": iso_week_number(ws),
+        "content": report.content,
+        "status": report.status,
+        "total_score": float(scores.total_score) if scores else None,
+        "grade": scores.grade if scores else None,
+        "dimension_scores": dim_scores,
+        "ai_comment": scores.ai_comment if scores else None,
+        "ai_suggestion": scores.ai_suggestion if scores else None,
+        "submit_time": report.submit_time.isoformat() if report.submit_time else None,
+        "score_time": report.score_time.isoformat() if report.score_time else None,
+        "created_at": report.created_at.isoformat() if report.created_at else None,
+    }
+
+
 @router.get("/{report_id}")
 async def get_report(report_id: str, db: AsyncSession = Depends(get_db), user: AdminUser = Depends(require_admin)):
     """获取周报详情（含评分维度）"""

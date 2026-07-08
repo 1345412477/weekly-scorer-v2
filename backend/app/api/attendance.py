@@ -119,20 +119,35 @@ async def upload_attendance(
     unmatched_names = set()
     skipped_non_person = 0
 
+    # 预加载所有在职人员，用于模糊匹配
+    all_persons_result = await db.execute(select(Person))
+    all_persons = all_persons_result.scalars().all()
+    person_by_exact = {p.name: p for p in all_persons}
+
+    def _fuzzy_match_person(name: str) -> Optional[Person]:
+        """精确匹配失败时，尝试模糊匹配（处理企业微信导出人名差异，如"肖体焱"→"肖体炎"）"""
+        if name in person_by_exact:
+            return person_by_exact[name]
+        # 策略：前 N-1 个字符相同（中文姓名通常 2-4 字，末字可能因繁简/异体字不同）
+        for p in all_persons:
+            if len(p.name) >= 2 and len(name) >= 2:
+                min_len = min(len(p.name), len(name))
+                if p.name[:min_len - 1] == name[:min_len - 1]:
+                    logger.info(f"[考勤匹配] 模糊匹配: '{name}' -> '{p.name}'")
+                    return p
+        return None
+
     for r in records:
         author_name = r.get("author_name", "")
-        person = None
-        try:
-            res = await db.execute(select(Person).where(Person.name == author_name).limit(1))
-            person = res.scalar_one_or_none()
-        except Exception as e:
-            logger.warning(f"匹配人员失败: {e}")
+        person = _fuzzy_match_person(author_name)
 
         if person:
             matched_names.add(author_name)
             person_id = person.id
             department = person.department_name or ""
             department_id = person.department_id or ""
+            # 使用数据库中的标准人名，避免企业微信导出异体字导致聚合时查不到
+            author_name = person.name
         else:
             skipped_non_person += 1
             unmatched_names.add(author_name)
@@ -201,31 +216,17 @@ async def get_attendance_status(
     """返回考勤数据上传状态：本周是否已上传 + 最近一次上传信息。"""
     week_start, week_end = _get_current_week_range()
 
-    # 查本周内是否有上传日志
+    # 用 created_at 判断是否在本周内上传过（而非 week_start，避免上周上传的数据跨周误判）
     q = select(DataUploadLog).where(
         and_(
             DataUploadLog.data_type == "attendance",
-            DataUploadLog.week_start >= week_start - timedelta(days=1),
-            DataUploadLog.week_start <= week_end + timedelta(days=1),
+            DataUploadLog.created_at >= datetime.combine(week_start, datetime.min.time()),
+            DataUploadLog.created_at <= datetime.combine(week_end, datetime.max.time()),
         )
     ).order_by(DataUploadLog.created_at.desc())
 
     result = await db.execute(q)
     logs = result.scalars().all()
-
-    last_upload = None
-    if logs:
-        last = logs[0]
-        last_upload = {
-            "week_start": last.week_start.isoformat(),
-            "week_end": last.week_end.isoformat(),
-            "filename": last.filename,
-            "record_count": last.record_count,
-            "employees_matched": last.employees_matched,
-            "mode": last.mode,
-            "uploaded_at": last.created_at.isoformat() if last.created_at else None,
-            "uploaded_by": last.uploaded_by,
-        }
 
     # 直接查考勤记录数，作为"是否真有数据"的兜底判断
     count_q = select(func.count()).select_from(AttendanceRecord).where(
@@ -235,6 +236,20 @@ async def get_attendance_status(
         )
     )
     records_count = (await db.execute(count_q)).scalar() or 0
+
+    last_upload = None
+    if logs:
+        last = logs[0]
+        last_upload = {
+            "week_start": last.week_start.isoformat(),
+            "week_end": last.week_end.isoformat(),
+            "filename": last.filename,
+            "record_count": records_count if records_count > 0 else last.record_count,
+            "employees_matched": last.employees_matched,
+            "mode": last.mode,
+            "uploaded_at": last.created_at.isoformat() if last.created_at else None,
+            "uploaded_by": last.uploaded_by,
+        }
 
     # 覆盖的员工数
     emp_q = select(func.count(func.distinct(AttendanceRecord.author_name))).where(

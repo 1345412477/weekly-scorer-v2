@@ -1,17 +1,23 @@
 <template>
   <div class="business-dashboard">
     <div class="page-header">
-      <h1>业务盘</h1>
       <div class="header-actions">
-        <DatePicker
-          v-model="selectedWeek"
-          view="week"
-          showIcon
-          iconDisplay="input"
-          placeholder="选择周次"
-          dateFormat="yy-mm-dd"
-          @dateChange="onWeekChange"
-        />
+        <div class="week-selector">
+          <Button icon="pi pi-chevron-left" text size="small" @click="prevWeek" />
+          <span class="week-label" @click="showDatePicker = !showDatePicker">
+            {{ weekDisplayText }}
+          </span>
+          <Button icon="pi pi-chevron-right" text size="small" @click="nextWeek" />
+          <DatePicker
+            v-if="showDatePicker"
+            v-model="selectedWeek"
+            showIcon
+            iconDisplay="input"
+            dateFormat="yy-mm-dd"
+            class="week-datepicker"
+            @update:modelValue="onWeekPicked"
+          />
+        </div>
         <Button
           label="生成总结"
           icon="pi pi-refresh"
@@ -61,23 +67,32 @@
           <div class="summary-section">
             <div class="section-title">
               <i class="pi pi-calendar"></i>
-              上周工作回顾
+              上周已完成项目
             </div>
-            <div class="summary-list">
+            <div class="project-list">
               <div
-                v-for="(item, idx) in dept.last_week_summary"
+                v-for="(project, idx) in (dept.last_week_projects || [])"
                 :key="idx"
-                class="summary-item"
-                :class="{ highlighted: item.highlight }"
-                @click.stop="toggleItemHighlight(dept, 'last_week', idx, item)"
+                class="project-item"
+                :class="{ 'project-highlight': project.highlight }"
               >
-                <i
-                  v-if="item.highlight"
-                  class="pi pi-star-fill star-icon"
-                ></i>
-                <span class="item-content">{{ item.content }}</span>
+                <div class="project-header">
+                  <span class="project-name" :class="{ 'project-name-bold': project.highlight }">
+                    {{ project.name }}
+                  </span>
+                  <div class="project-progress-wrapper">
+                    <div class="progress-bar-bg">
+                      <div
+                        class="progress-bar-fill"
+                        :style="{ width: project.progress + '%' }"
+                        :class="getProgressColor(project.progress)"
+                      ></div>
+                    </div>
+                    <span class="progress-text">{{ project.progress }}%</span>
+                  </div>
+                </div>
               </div>
-              <div v-if="!dept.last_week_summary?.length" class="empty-text">
+              <div v-if="!dept.last_week_projects?.length" class="empty-text">
                 暂无数据
               </div>
             </div>
@@ -86,23 +101,32 @@
           <div class="summary-section">
             <div class="section-title">
               <i class="pi pi-calendar-plus"></i>
-              本周工作重点
+              本周进行中项目
             </div>
-            <div class="summary-list">
+            <div class="project-list">
               <div
-                v-for="(item, idx) in dept.this_week_summary"
+                v-for="(project, idx) in (dept.this_week_projects || [])"
                 :key="idx"
-                class="summary-item"
-                :class="{ highlighted: item.highlight }"
-                @click.stop="toggleItemHighlight(dept, 'this_week', idx, item)"
+                class="project-item"
+                :class="{ 'project-highlight': project.highlight }"
               >
-                <i
-                  v-if="item.highlight"
-                  class="pi pi-star-fill star-icon"
-                ></i>
-                <span class="item-content">{{ item.content }}</span>
+                <div class="project-header">
+                  <span class="project-name" :class="{ 'project-name-bold': project.highlight }">
+                    {{ project.name }}
+                  </span>
+                  <div class="project-progress-wrapper">
+                    <div class="progress-bar-bg">
+                      <div
+                        class="progress-bar-fill"
+                        :style="{ width: project.progress + '%' }"
+                        :class="getProgressColor(project.progress)"
+                      ></div>
+                    </div>
+                    <span class="progress-text">{{ project.progress }}%</span>
+                  </div>
+                </div>
               </div>
-              <div v-if="!dept.this_week_summary?.length" class="empty-text">
+              <div v-if="!dept.this_week_projects?.length" class="empty-text">
                 暂无数据
               </div>
             </div>
@@ -131,20 +155,36 @@
         <div class="detail-section">
           <h3>
             <i class="pi pi-calendar"></i>
-            上周工作回顾
+            上周已完成项目
           </h3>
-          <div class="detail-list">
+          <div class="project-detail-list">
             <div
-              v-for="(item, idx) in selectedDepartment.last_week_summary"
+              v-for="(project, idx) in (selectedDepartment.last_week_projects || [])"
               :key="idx"
-              class="detail-item"
+              class="project-detail-item"
+              :class="{ 'project-detail-highlight': project.highlight }"
             >
-              <div class="item-header">
-                <span class="item-content">{{ item.content }}</span>
+              <div class="project-detail-header">
+                <span class="project-detail-name" :class="{ 'project-detail-name-bold': project.highlight }">
+                  {{ project.name }}
+                </span>
+                <div class="project-detail-progress">
+                  <div class="progress-bar-bg">
+                    <div
+                      class="progress-bar-fill"
+                      :style="{ width: project.progress + '%' }"
+                      :class="getProgressColor(project.progress)"
+                    ></div>
+                  </div>
+                  <span class="progress-text">{{ project.progress }}%</span>
+                </div>
               </div>
-              <div class="item-persons" v-if="item.persons?.length">
+              <div class="project-detail-summary" v-if="project.summary">
+                {{ project.summary }}
+              </div>
+              <div class="item-persons" v-if="project.persons?.length">
                 <Tag
-                  v-for="person in item.persons"
+                  v-for="person in project.persons"
                   :key="person"
                   :value="person"
                   severity="info"
@@ -152,7 +192,7 @@
                 />
               </div>
             </div>
-            <div v-if="!selectedDepartment.last_week_summary?.length" class="empty-text">
+            <div v-if="!selectedDepartment.last_week_projects?.length" class="empty-text">
               暂无数据
             </div>
           </div>
@@ -161,20 +201,36 @@
         <div class="detail-section">
           <h3>
             <i class="pi pi-calendar-plus"></i>
-            本周工作重点
+            本周进行中项目
           </h3>
-          <div class="detail-list">
+          <div class="project-detail-list">
             <div
-              v-for="(item, idx) in selectedDepartment.this_week_summary"
+              v-for="(project, idx) in (selectedDepartment.this_week_projects || [])"
               :key="idx"
-              class="detail-item"
+              class="project-detail-item"
+              :class="{ 'project-detail-highlight': project.highlight }"
             >
-              <div class="item-header">
-                <span class="item-content">{{ item.content }}</span>
+              <div class="project-detail-header">
+                <span class="project-detail-name" :class="{ 'project-detail-name-bold': project.highlight }">
+                  {{ project.name }}
+                </span>
+                <div class="project-detail-progress">
+                  <div class="progress-bar-bg">
+                    <div
+                      class="progress-bar-fill"
+                      :style="{ width: project.progress + '%' }"
+                      :class="getProgressColor(project.progress)"
+                    ></div>
+                  </div>
+                  <span class="progress-text">{{ project.progress }}%</span>
+                </div>
               </div>
-              <div class="item-persons" v-if="item.persons?.length">
+              <div class="project-detail-summary" v-if="project.summary">
+                {{ project.summary }}
+              </div>
+              <div class="item-persons" v-if="project.persons?.length">
                 <Tag
-                  v-for="person in item.persons"
+                  v-for="person in project.persons"
                   :key="person"
                   :value="person"
                   severity="info"
@@ -182,7 +238,7 @@
                 />
               </div>
             </div>
-            <div v-if="!selectedDepartment.this_week_summary?.length" class="empty-text">
+            <div v-if="!selectedDepartment.this_week_projects?.length" class="empty-text">
               暂无数据
             </div>
           </div>
@@ -222,7 +278,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { businessAPI } from '../api'
 import { useToast } from 'primevue/usetoast'
 import DatePicker from 'primevue/datepicker'
@@ -241,6 +297,68 @@ const selectedWeek = ref(new Date())
 const drawerVisible = ref(false)
 const selectedDepartment = ref(null)
 const persons = ref([])
+const showDatePicker = ref(false)
+
+/** 获取 ISO 周数 */
+function getISOWeek(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = date.getUTCDay() || 7
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7)
+}
+
+/** 获取周一日期 */
+function getMonday(d) {
+  const date = new Date(d)
+  const day = date.getDay()
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1)
+  date.setDate(diff)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+/** 获取周日日期 */
+function getSunday(d) {
+  const monday = getMonday(d)
+  const sunday = new Date(monday)
+  sunday.setDate(monday.getDate() + 6)
+  return sunday
+}
+
+/** 周显示文本：2026年第27周 06.29~07.05 */
+const weekDisplayText = computed(() => {
+  const d = selectedWeek.value
+  if (!d) return ''
+  const year = d.getFullYear()
+  const weekNum = getISOWeek(d)
+  const monday = getMonday(d)
+  const sunday = getSunday(d)
+  const sm = String(monday.getMonth() + 1).padStart(2, '0')
+  const md = String(monday.getDate()).padStart(2, '0')
+  const em = String(sunday.getMonth() + 1).padStart(2, '0')
+  const sd = String(sunday.getDate()).padStart(2, '0')
+  return `${year}年第${weekNum}周 ${sm}.${md}~${em}.${sd}`
+})
+
+function prevWeek() {
+  const d = new Date(selectedWeek.value)
+  d.setDate(d.getDate() - 7)
+  selectedWeek.value = d
+  loadDepartments()
+}
+
+function nextWeek() {
+  const d = new Date(selectedWeek.value)
+  d.setDate(d.getDate() + 7)
+  selectedWeek.value = d
+  loadDepartments()
+}
+
+function onWeekPicked() {
+  showDatePicker.value = false
+  loadDepartments()
+}
 
 const loadDepartments = async () => {
   loading.value = true
@@ -259,10 +377,6 @@ const loadDepartments = async () => {
   } finally {
     loading.value = false
   }
-}
-
-const onWeekChange = () => {
-  loadDepartments()
 }
 
 const generateAll = async () => {
@@ -381,7 +495,7 @@ const toggleItemHighlight = async (dept, itemType, idx, item) => {
 
 const formatDate = (date) => {
   if (!date) return ''
-  const d = new Date(date)
+  const d = getMonday(new Date(date))
   const year = d.getFullYear()
   const month = String(d.getMonth() + 1).padStart(2, '0')
   const day = String(d.getDate()).padStart(2, '0')
@@ -418,6 +532,12 @@ const getStatusSeverity = (status) => {
   return map[status] || 'secondary'
 }
 
+const getProgressColor = (progress) => {
+  if (progress >= 80) return 'progress-success'
+  if (progress >= 50) return 'progress-warning'
+  return 'progress-danger'
+}
+
 onMounted(() => {
   loadDepartments()
 })
@@ -448,6 +568,40 @@ onMounted(() => {
   display: flex;
   gap: 12px;
   align-items: center;
+}
+
+.week-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  background: #ffffff;
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 6px 12px;
+  position: relative;
+}
+
+.week-label {
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--text-color);
+  cursor: pointer;
+  user-select: none;
+  white-space: nowrap;
+  min-width: 200px;
+  text-align: center;
+}
+
+.week-label:hover {
+  color: var(--primary-color);
+}
+
+.week-datepicker {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 4px;
+  z-index: 100;
 }
 
 .loading-container {
@@ -570,50 +724,92 @@ onMounted(() => {
   color: #94a3b8;
 }
 
-.summary-list {
+.project-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
-.summary-item {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  padding: 10px 12px;
+.project-item {
+  padding: 12px 14px;
   border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
   background: #f8fafc;
   border: 1px solid transparent;
+  transition: all 0.2s ease;
 }
 
-.summary-item:hover {
+.project-item:hover {
   background: #f1f5f9;
   border-color: #e2e8f0;
 }
 
-.summary-item.highlighted {
+.project-item.project-highlight {
   background: #fffbeb;
   border-color: #fde68a;
 }
 
-.star-icon {
-  color: #f59e0b;
-  font-size: 13px;
-  margin-top: 3px;
-  flex-shrink: 0;
+.project-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
 }
 
-.item-content {
+.project-name {
   font-size: 14px;
-  line-height: 1.6;
   color: #334155;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.summary-item.highlighted .item-content {
+.project-name-bold {
   font-weight: 700;
   color: #1e293b;
+}
+
+.project-progress-wrapper {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 120px;
+}
+
+.progress-bar-bg {
+  flex: 1;
+  height: 8px;
+  background: #e2e8f0;
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.progress-bar-fill {
+  height: 100%;
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-bar-fill.progress-success {
+  background: linear-gradient(90deg, #10b981, #34d399);
+}
+
+.progress-bar-fill.progress-warning {
+  background: linear-gradient(90deg, #f59e0b, #fbbf24);
+}
+
+.progress-bar-fill.progress-danger {
+  background: linear-gradient(90deg, #ef4444, #f87171);
+}
+
+.progress-text {
+  font-size: 13px;
+  font-weight: 600;
+  color: #64748b;
+  min-width: 40px;
+  text-align: right;
 }
 
 .empty-text {
@@ -739,6 +935,72 @@ onMounted(() => {
 .person-position {
   font-size: 12px;
   color: #94a3b8;
+}
+
+.project-detail-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.project-detail-item {
+  padding: 16px 18px;
+  background: #f8fafc;
+  border-radius: 10px;
+  border: 1px solid #e2e8f0;
+  transition: all 0.2s ease;
+}
+
+.project-detail-item:hover {
+  background: #f1f5f9;
+  border-color: #cbd5e1;
+}
+
+.project-detail-item.project-detail-highlight {
+  background: #fffbeb;
+  border-color: #fde68a;
+}
+
+.project-detail-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 10px;
+}
+
+.project-detail-name {
+  font-size: 15px;
+  color: #334155;
+  flex: 1;
+}
+
+.project-detail-name-bold {
+  font-weight: 700;
+  color: #1e293b;
+}
+
+.project-detail-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+  min-width: 140px;
+}
+
+.project-detail-summary {
+  font-size: 13px;
+  line-height: 1.6;
+  color: #64748b;
+  margin-bottom: 10px;
+  padding: 8px 12px;
+  background: #ffffff;
+  border-radius: 6px;
+  border-left: 3px solid #e2e8f0;
+}
+
+.project-detail-item.project-detail-highlight .project-detail-summary {
+  border-left-color: #f59e0b;
 }
 
 .drawer-actions {

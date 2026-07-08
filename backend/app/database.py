@@ -1,9 +1,9 @@
-"""数据库配置 - 异步 SQLite"""
+"""数据库配置 - 支持 SQLite 和 PostgreSQL"""
 import logging
 import os
 import shutil
 from datetime import datetime
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
 from app.config import get_settings
@@ -13,13 +13,17 @@ logger = logging.getLogger(__name__)
 
 settings = get_settings()
 
+# 检测数据库类型
+_IS_POSTGRES = settings.DATABASE_URL.startswith("postgresql")
+_IS_SQLITE = settings.DATABASE_URL.startswith("sqlite")
+
 DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weekly_scorer.db")
 BACKUP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backups")
 
 
 def backup_database():
-    """备份数据库文件"""
-    if not os.path.exists(DB_PATH):
+    """备份数据库文件（仅 SQLite 需要文件级备份）"""
+    if not _IS_SQLITE or not os.path.exists(DB_PATH):
         return None
 
     os.makedirs(BACKUP_DIR, exist_ok=True)
@@ -37,7 +41,23 @@ def backup_database():
 
     return backup_path
 
-engine = create_async_engine(settings.DATABASE_URL, echo=False)
+
+def _get_engine_kwargs() -> dict:
+    """根据数据库类型返回引擎配置"""
+    kwargs: dict = {"echo": False}
+    if _IS_POSTGRES:
+        kwargs.update({
+            "pool_size": 10,
+            "max_overflow": 20,
+            "pool_pre_ping": True,
+            "pool_recycle": 3600,
+        })
+    elif _IS_SQLITE:
+        kwargs["connect_args"] = {"check_same_thread": False}
+    return kwargs
+
+
+engine = create_async_engine(settings.DATABASE_URL, **_get_engine_kwargs())
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
 
 
@@ -57,38 +77,60 @@ async def init_db():
     backup_database()
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
-    # 对已有表做列迁移（SQLite 不支持自动改表）
     await _migrate_schema()
+
+
+async def _get_existing_columns(conn, table_name: str) -> set:
+    """获取表的已有列名（兼容 SQLite 和 PostgreSQL）"""
+    if _IS_SQLITE:
+        r = await conn.execute(text(f"PRAGMA table_info({table_name})"))
+        return {row[1] for row in r.fetchall()}
+    else:
+        # PostgreSQL: 使用 information_schema
+        r = await conn.execute(text("""
+            SELECT column_name FROM information_schema.columns
+            WHERE table_name = :table_name
+        """), {"table_name": table_name})
+        return {row[0] for row in r.fetchall()}
+
+
+async def _table_exists(conn, table_name: str) -> bool:
+    """检查表是否存在（兼容 SQLite 和 PostgreSQL）"""
+    if _IS_SQLITE:
+        r = await conn.execute(text(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=:name"
+        ), {"name": table_name})
+    else:
+        r = await conn.execute(text("""
+            SELECT table_name FROM information_schema.tables
+            WHERE table_name = :name
+        """), {"name": table_name})
+    return r.fetchone() is not None
 
 
 async def _migrate_schema():
     """
-    检查 weekly_aggregates 表是否有最新列，没有则 ALTER TABLE 新增。
-    这解决了"先建表后改模型"的场景，不会丢数据。
-
-    注意：本函数仅在服务启动时执行，所有 SQL 片段均为硬编码内部常量，
-    不处理外部输入，因此使用 text() 属 schema 迁移白名单场景。
+    检查表是否有最新列，没有则 ALTER TABLE 新增。
+    兼容 SQLite 和 PostgreSQL。
     """
-    # 白名单：列名 -> 列定义（单一字典，避免两表同步维护不一致）
     ALLOWED_COLUMNS = {
         "status": "VARCHAR(20) NOT NULL DEFAULT 'pending'",
         "manual_override": "TEXT",
         "modified_by": "VARCHAR(100)",
-        "modified_at": "DATETIME",
+        "modified_at": "TIMESTAMP",
         "recurrence": "VARCHAR(16) DEFAULT 'daily'",
         "weekdays": "VARCHAR(32) DEFAULT ''",
         "last_run_date": "DATE",
         "ai_connection_status": "BOOLEAN",
         "ai_connection_provider": "VARCHAR(50)",
         "ai_connection_model": "VARCHAR(100)",
-        "ai_connection_checked_at": "DATETIME",
+        "ai_connection_checked_at": "TIMESTAMP",
     }
+
     async with engine.begin() as conn:
         # 1) weekly_aggregates 新增列检查
         try:
-            # raw-sql-migration: SQLite PRAGMA 无对应 ORM API
-            r = await conn.execute(text("PRAGMA table_info(weekly_aggregates)"))  # noqa: raw-sql-migration
-            cols = {row[1] for row in r.fetchall()}
+            cols = await _get_existing_columns(conn, "weekly_aggregates")
         except Exception:
             cols = set()
 
@@ -96,7 +138,7 @@ async def _migrate_schema():
             ("status", "VARCHAR(20) NOT NULL DEFAULT 'pending'"),
             ("manual_override", "TEXT"),
             ("modified_by", "VARCHAR(100)"),
-            ("modified_at", "DATETIME"),
+            ("modified_at", "TIMESTAMP"),
         ]
         for col_name, col_def in weekly_agg_additions:
             if col_name not in cols:
@@ -104,37 +146,38 @@ async def _migrate_schema():
                     logger.warning(f"[migration] weekly_aggregates 新增列 {col_name} 不在白名单，跳过")
                     continue
                 try:
-                    # raw-sql-migration: SQLite ALTER TABLE ADD COLUMN
-                    await conn.execute(text(f"ALTER TABLE weekly_aggregates ADD COLUMN {col_name} {col_def}"))  # noqa: raw-sql-migration
+                    await conn.execute(text(f"ALTER TABLE weekly_aggregates ADD COLUMN {col_name} {col_def}"))
                     logger.info(f"[migration] weekly_aggregates 新增列 {col_name}")
                 except Exception as e:
                     logger.warning(f"[migration] weekly_aggregates 新增 {col_name} 失败: {e}")
 
         # 2) 创建 scoring_schedule 表（如果 Base.metadata.create_all 没处理到）
         try:
-            # raw-sql-migration: sqlite_master 反射
-            r = await conn.execute(text("SELECT name FROM sqlite_master WHERE type='table' AND name='scoring_schedule'"))  # noqa: raw-sql-migration
-            if r.fetchone() is None:
-                # raw-sql-migration: SQLite CREATE TABLE 兜底
-                # noqa: raw-sql-migration
+            if not await _table_exists(conn, "scoring_schedule"):
+                if _IS_SQLITE:
+                    ts_default = "DATETIME DEFAULT CURRENT_TIMESTAMP"
+                    bool_default = "BOOLEAN DEFAULT 1"
+                else:
+                    ts_default = "TIMESTAMP DEFAULT CURRENT_TIMESTAMP"
+                    bool_default = "BOOLEAN DEFAULT true"
+
                 await conn.execute(text(
-                    "CREATE TABLE scoring_schedule ("
-                    "id VARCHAR(36) PRIMARY KEY, "
-                    "enabled BOOLEAN DEFAULT 1, "
-                    "hour INTEGER DEFAULT 3, "
-                    "minute INTEGER DEFAULT 0, "
-                    "recurrence VARCHAR(16) DEFAULT 'daily', "
-                    "weekdays VARCHAR(32) DEFAULT '', "
-                    "last_run_date DATE, "
-                    "created_at DATETIME DEFAULT CURRENT_TIMESTAMP, "
-                    "updated_at DATETIME DEFAULT CURRENT_TIMESTAMP)"
+                    f"CREATE TABLE scoring_schedule ("
+                    f"id VARCHAR(36) PRIMARY KEY, "
+                    f"enabled {bool_default}, "
+                    f"hour INTEGER DEFAULT 3, "
+                    f"minute INTEGER DEFAULT 0, "
+                    f"recurrence VARCHAR(16) DEFAULT 'daily', "
+                    f"weekdays VARCHAR(32) DEFAULT '', "
+                    f"last_run_date DATE, "
+                    f"created_at {ts_default}, "
+                    f"updated_at {ts_default})"
                 ))
                 logger.info("[migration] 已创建 scoring_schedule 表")
             else:
                 # 3) scoring_schedule 已有表 → 检查新增列
                 try:
-                    r2 = await conn.execute(text("PRAGMA table_info(scoring_schedule)"))  # noqa: raw-sql-migration
-                    sched_cols = {row[1] for row in r2.fetchall()}
+                    sched_cols = await _get_existing_columns(conn, "scoring_schedule")
                 except Exception:
                     sched_cols = set()
                 sched_additions = [
@@ -148,7 +191,7 @@ async def _migrate_schema():
                             logger.warning(f"[migration] scoring_schedule 新增列 {col_name} 不在白名单，跳过")
                             continue
                         try:
-                            await conn.execute(text(f"ALTER TABLE scoring_schedule ADD COLUMN {col_name} {col_def}"))  # noqa: raw-sql-migration
+                            await conn.execute(text(f"ALTER TABLE scoring_schedule ADD COLUMN {col_name} {col_def}"))
                             logger.info(f"[migration] scoring_schedule 新增列 {col_name}")
                         except Exception as e:
                             logger.warning(f"[migration] scoring_schedule 新增 {col_name} 失败: {e}")
@@ -157,15 +200,14 @@ async def _migrate_schema():
 
         # 4) scoring_configs 表：AI 连接状态缓存列
         try:
-            r3 = await conn.execute(text("PRAGMA table_info(scoring_configs)"))  # noqa: raw-sql-migration
-            sc_cols = {row[1] for row in r3.fetchall()}
+            sc_cols = await _get_existing_columns(conn, "scoring_configs")
         except Exception:
             sc_cols = set()
         sc_additions = [
             ("ai_connection_status", "BOOLEAN"),
             ("ai_connection_provider", "VARCHAR(50)"),
             ("ai_connection_model", "VARCHAR(100)"),
-            ("ai_connection_checked_at", "DATETIME"),
+            ("ai_connection_checked_at", "TIMESTAMP"),
         ]
         for col_name, col_def in sc_additions:
             if col_name in sc_cols:
@@ -174,7 +216,7 @@ async def _migrate_schema():
                 logger.warning(f"[migration] scoring_configs 新增列 {col_name} 不在白名单，跳过")
                 continue
             try:
-                await conn.execute(text(f"ALTER TABLE scoring_configs ADD COLUMN {col_name} {col_def}"))  # noqa: raw-sql-migration
+                await conn.execute(text(f"ALTER TABLE scoring_configs ADD COLUMN {col_name} {col_def}"))
                 logger.info(f"[migration] scoring_configs 新增列 {col_name}")
             except Exception as e:
                 logger.warning(f"[migration] scoring_configs 新增 {col_name} 失败: {e}")

@@ -23,10 +23,33 @@
     <div v-else class="detail-layout">
       <!-- 左：内容 -->
       <div class="content-panel">
-        <Card class="detail-card">
-          <template #title>周报内容</template>
+        <Card class="detail-card" v-for="(section, sIdx) in parsedSections" :key="sIdx" :style="sIdx > 0 ? 'margin-top: 20px' : ''">
+          <template #title>{{ section.title }}</template>
           <template #content>
-            <pre class="report-content">{{ report.content }}</pre>
+            <div v-if="section.items.length" class="report-table-wrap">
+              <table class="report-table">
+                <thead>
+                  <tr>
+                    <th style="width:50px">#</th>
+                    <th>工作事项</th>
+                    <th style="width:100px">负责人</th>
+                    <th style="width:180px">{{ section.type === 'last_week' ? '结果反馈' : '预期产出' }}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr v-for="(item, iIdx) in section.items" :key="iIdx">
+                    <td class="item-num">{{ iIdx + 1 }}</td>
+                    <td>
+                      <div class="item-title">{{ item.title }}</div>
+                      <div class="item-content">{{ item.content }}</div>
+                    </td>
+                    <td>{{ item.person || '-' }}</td>
+                    <td class="item-result">{{ item.result || '-' }}</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+            <div v-else class="empty-hint">暂无内容</div>
           </template>
         </Card>
       </div>
@@ -53,23 +76,6 @@
               </div>
             </div>
             <div v-else class="empty-hint">暂无评分数据</div>
-          </template>
-        </Card>
-
-        <!-- AI 评语 -->
-        <Card class="detail-card" style="margin-top:16px">
-          <template #title><i class="pi pi-sparkles" style="color:#8b5cf6;margin-right:6px"></i>AI 评语</template>
-          <template #content>
-            <div v-if="report.ai_comment" class="ai-comment">
-              <p>{{ report.ai_comment }}</p>
-            </div>
-            <div v-if="report.ai_suggestion" class="ai-suggestion">
-              <h4><i class="pi pi-lightbulb" style="color:#f59e0b;margin-right:6px"></i>改进建议</h4>
-              <p>{{ report.ai_suggestion }}</p>
-            </div>
-            <div v-if="!report.ai_comment && !report.ai_suggestion" class="empty-hint">
-              暂无 AI 评语
-            </div>
           </template>
         </Card>
 
@@ -130,6 +136,74 @@ import GradeTag from '../components/ui/GradeTag.vue'
 const route = useRoute()
 const loading = ref(true)
 const report = ref({})
+
+/**
+ * 解析周报内容为结构化表格数据
+ * 支持格式：
+ *   ## 上周工作内容 / ## 上周工作回顾
+ *   ### 1. 事项标题
+ *   - 工作内容：...
+ *   - 汇报人：...
+ *   - 结果反馈：... / - 预期产出：...
+ */
+const parsedSections = computed(() => {
+  const content = report.value.content || ''
+  if (!content) return []
+
+  const sections = []
+
+  // 按 ## 标题分割
+  const sectionBlocks = content.split(/^##\s+/m).filter(Boolean)
+
+  for (const block of sectionBlocks) {
+    const lines = block.split('\n')
+    const titleLine = lines[0].trim()
+    // 识别"上周"或"本周"相关标题
+    const isLastWeek = /上周|回顾/.test(titleLine)
+    const isThisWeek = /本周|计划/.test(titleLine)
+    if (!isLastWeek && !isThisWeek) continue
+
+    const type = isLastWeek ? 'last_week' : 'this_week'
+    const title = titleLine.replace(/\d+[、.]\s*/, '').trim() || (isLastWeek ? '上周工作内容' : '本周工作计划')
+
+    const items = []
+    let currentItem = null
+
+    for (let i = 1; i < lines.length; i++) {
+      const line = lines[i].trim()
+      if (!line) continue
+
+      // ### 开头 = 新事项
+      if (line.startsWith('###')) {
+        if (currentItem) items.push(currentItem)
+        const itemTitle = line.replace(/^###\s*\d+[、.]*\s*/, '').trim()
+        currentItem = { title: itemTitle, content: '', person: '', result: '' }
+        continue
+      }
+
+      // - 开头 = 属性行
+      if (line.startsWith('-') && currentItem) {
+        const body = line.replace(/^-\s*/, '').trim()
+        if (body.startsWith('工作内容：') || body.startsWith('工作内容:')) {
+          currentItem.content = body.replace(/^工作内容[：:]\s*/, '')
+        } else if (body.startsWith('汇报人：') || body.startsWith('汇报人:')) {
+          currentItem.person = body.replace(/^汇报人[：:]\s*/, '')
+        } else if (body.startsWith('结果反馈：') || body.startsWith('结果反馈:')) {
+          currentItem.result = body.replace(/^结果反馈[：:]\s*/, '')
+        } else if (body.startsWith('预期产出：') || body.startsWith('预期产出:')) {
+          currentItem.result = body.replace(/^预期产出[：:]\s*/, '')
+        }
+      }
+    }
+    if (currentItem) items.push(currentItem)
+
+    if (items.length) {
+      sections.push({ type, title, items })
+    }
+  }
+
+  return sections
+})
 
 const weekNum = computed(() => {
   if (!report.value.week_start) return '-'
@@ -249,33 +323,65 @@ onMounted(loadReport)
 }
 
 /* ========== 内容 ========== */
-.report-content {
-  color: var(--text-primary);
-  font-size: var(--text-base);
-  line-height: 1.8;
-  word-break: break-word;
-  overflow-wrap: break-word;
-  white-space: pre-wrap;
-  font-family: inherit;
-  margin: 0;
+.report-table-wrap {
+  overflow-x: auto;
 }
 
-.report-content :deep(h3) {
-  color: var(--primary);
-  font-size: var(--text-lg);
-  margin: var(--spacing-lg) 0 var(--spacing-sm);
+.report-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: var(--text-sm);
 }
 
-.report-content :deep(h4) {
-  color: var(--text-primary);
-  font-size: var(--text-base);
-  margin: var(--spacing-md) 0 var(--spacing-xs);
-}
-
-.report-content :deep(li) {
-  margin-left: var(--spacing-md);
+.report-table thead th {
+  background: var(--bg-dark);
   color: var(--text-secondary);
-  list-style: disc;
+  font-weight: var(--font-semibold);
+  padding: 10px 12px;
+  text-align: left;
+  border-bottom: 2px solid var(--border-light);
+  white-space: nowrap;
+}
+
+.report-table tbody tr {
+  border-bottom: 1px solid var(--border-light);
+  transition: background 0.15s;
+}
+
+.report-table tbody tr:hover {
+  background: var(--bg-dark);
+}
+
+.report-table td {
+  padding: 10px 12px;
+  vertical-align: top;
+  color: var(--text-primary);
+}
+
+.item-num {
+  color: var(--text-muted);
+  font-weight: var(--font-semibold);
+  text-align: center;
+  font-size: var(--text-xs);
+}
+
+.item-title {
+  font-weight: var(--font-semibold);
+  color: var(--primary);
+  margin-bottom: 4px;
+  font-size: var(--text-sm);
+}
+
+.item-content {
+  color: var(--text-secondary);
+  line-height: 1.6;
+  font-size: var(--text-xs);
+}
+
+.item-result {
+  color: var(--text-secondary);
+  font-size: var(--text-xs);
+  line-height: 1.5;
 }
 
 /* ========== 维度评分 ========== */
@@ -340,45 +446,6 @@ onMounted(loadReport)
   font-size: var(--text-xs);
   color: var(--text-muted);
   line-height: 1.5;
-}
-
-/* ========== AI 评语 ========== */
-.ai-comment {
-  background: var(--bg-dark);
-  border: 1px solid var(--border-light);
-  border-left: 3px solid var(--primary);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-md);
-  margin-bottom: var(--spacing-md);
-}
-
-.ai-comment p {
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  line-height: 1.7;
-  margin: 0;
-  word-break: break-word;
-}
-
-.ai-suggestion {
-  background: var(--bg-dark);
-  border: 1px solid var(--border-light);
-  border-left: 3px solid var(--warning);
-  border-radius: var(--radius-md);
-  padding: var(--spacing-md);
-}
-
-.ai-suggestion h4 {
-  color: var(--text-primary);
-  font-size: var(--text-sm);
-  margin: 0 0 var(--spacing-sm) 0;
-}
-
-.ai-suggestion p {
-  color: var(--text-secondary);
-  font-size: var(--text-sm);
-  line-height: 1.7;
-  word-break: break-word;
 }
 
 .empty-hint {

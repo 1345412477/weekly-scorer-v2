@@ -219,11 +219,22 @@ async def get_chat_status(
     last_upload = None
     if logs:
         last = logs[0]
+        # 用 last_upload 的周范围来查询实际消息数（而非当前周，避免跨周数据查不到）
+        upload_week_start = last.week_start
+        upload_week_end = last.week_end
+        total_messages_q = select(func.sum(ChatRecord.message_count)).where(
+            and_(
+                ChatRecord.week_start >= upload_week_start,
+                ChatRecord.week_start <= upload_week_end,
+            )
+        )
+        total_messages = (await db.execute(total_messages_q)).scalar() or 0
+        
         last_upload = {
             "week_start": last.week_start.isoformat(),
             "week_end": last.week_end.isoformat(),
             "filename": last.filename,
-            "record_count": last.record_count,
+            "record_count": total_messages if total_messages > 0 else last.record_count,
             "employees_matched": last.employees_matched,
             "mode": last.mode,
             "uploaded_at": last.created_at.isoformat() if last.created_at else None,

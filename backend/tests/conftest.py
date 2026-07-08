@@ -31,6 +31,10 @@ app.dependency_overrides[get_db] = override_get_db
 
 @pytest_asyncio.fixture(autouse=True)
 async def setup_database():
+    # 清除 AI 评分器的全局缓存，避免跨测试用例残留
+    from app.services.ai_scorer import _clear_db_model_cache
+    _clear_db_model_cache()
+
     async with test_engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     yield
@@ -105,6 +109,25 @@ async def seed_scoring_config(db):
     db.add(config)
     await db.commit()
     return config
+
+
+@pytest_asyncio.fixture
+async def seed_ai_model(db):
+    """Seed 一个可用的 AI 模型配置（qwen3.7-plus）"""
+    from app.models.models import AIModel
+    model = AIModel(
+        id="test-ai-model",
+        name="qwen3.7-plus",
+        provider="openai",
+        model_id="qwen3.7-plus",
+        api_key="sk-ws-H.RXLLPYD.EZ2r.MEQCIFAIRQ9LLE2dTV9n2FTjqAevbyNeCO1akYmm2bIF6CHJAiA1SdMtXf0BfYx5lexqqyR7_InCpdyQXT1nXmx1kkm9Nw",
+        base_url="https://llm-5e0l0navgirl2i2v.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        is_vision=True,
+        is_active=True,
+    )
+    db.add(model)
+    await db.commit()
+    return model
 
 
 def get_current_week():

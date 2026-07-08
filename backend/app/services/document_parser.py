@@ -110,7 +110,33 @@ def extract_week_dates(file_path: str) -> tuple[Optional[date], Optional[date]]:
         return None, None
     ext = os.path.splitext(file_path)[1].lower()
     if ext in SUPPORTED_EXTENSIONS:
-        return _extract_dates_from_excel(file_path)
+        # 优先从文件内容中提取
+        d1, d2 = _extract_dates_from_excel(file_path)
+        if d1 and d2:
+            return d1, d2
+        # 内容提取失败时，尝试从文件名中提取日期
+        return _extract_dates_from_filename(file_path)
+    return None, None
+
+
+def _extract_dates_from_filename(file_path: str) -> tuple[Optional[date], Optional[date]]:
+    """从文件名中提取日期，作为备用方案。
+    支持格式：
+      - 张三-2026年6月第2周周报20260614.xlsx  → 从 YYYYMMDD 提取
+      - 张三-2026年7月第3周周报20260719.xlsx
+    """
+    stem = os.path.splitext(os.path.basename(file_path))[0]
+    # 匹配 YYYYMMDD 8位数字
+    m = re.search(r'(\d{4})(\d{2})(\d{2})', stem)
+    if m:
+        try:
+            d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            # 从该日期推算所在周的周一和周日
+            monday = d - timedelta(days=d.weekday())
+            sunday = monday + timedelta(days=6)
+            return monday, sunday
+        except ValueError:
+            pass
     return None, None
 
 
@@ -148,12 +174,14 @@ def classify_report_week(
         result["message"] = f"无法提交未来时间的周报。文件标注时间为 {week_start} ~ {week_end}，当前周为 {current_monday} ~ {current_sunday}"
         return result
 
+    # 完全在当前周内
     if week_start >= current_monday and week_end <= current_sunday:
         result["report_type"] = "normal"
         result["week_diff"] = 0
         result["message"] = "本周周报"
         return result
 
+    # 完全在过去（结束日期在当前周之前）
     if week_end < current_monday:
         diff_days = (current_monday - week_start).days
         weeks_behind = max(1, diff_days // 7)
@@ -162,22 +190,41 @@ def classify_report_week(
         result["message"] = f"补周报：这是 {weeks_behind} 周前的周报（{week_start} ~ {week_end}）"
         return result
 
-    result["report_type"] = "normal"
-    result["message"] = "本周周报"
+    # 跨周情况：开始日期在当前周之前，但结束日期在当前周内或之后
+    # 这种情况应该要求用户确认，而不是默认归类为"本周"
+    result["report_type"] = "unknown"
+    result["needs_confirmation"] = True
+    result["message"] = f"周报时间跨周（{week_start} ~ {week_end}），请手动确认所属周次"
     return result
 
 
 def _dates_from_text(text: str) -> tuple[Optional[date], Optional[date]]:
-    patterns = [
-        r'(\d{4})[.\-/年](\d{1,2})[.\-/月](\d{1,2})',
-    ]
+    """从文本中提取日期范围。
+    支持格式：
+      - 2026.6.29-2026.7.3  （4位年份）
+      - 26.6.29-26.7.3      （2位年份，自动补全为20xx）
+      - 2026-6-29 ~ 2026-7-3
+      - 2026/6/29-2026/7/3
+    """
     all_dates = []
-    for pat in patterns:
-        for m in re.finditer(pat, text):
+
+    # 4位年份
+    for m in re.finditer(r'(\d{4})[.\-/年](\d{1,2})[.\-/月](\d{1,2})', text):
+        try:
+            d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+            all_dates.append(d)
+        except ValueError:
+            continue
+
+    # 2位年份（仅当4位年份未匹配到时使用）
+    if not all_dates:
+        for m in re.finditer(r'(\d{2})[.\-/年](\d{1,2})[.\-/月](\d{1,2})', text):
             try:
-                d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+                year = int(m.group(1))
+                year += 2000 if year < 50 else 1900
+                d = date(year, int(m.group(2)), int(m.group(3)))
                 all_dates.append(d)
-            except (ValueError, IndexError):
+            except ValueError:
                 continue
 
     if len(all_dates) >= 2:
@@ -269,21 +316,38 @@ def _parse_excel(file_path: str) -> dict:
 
 
 def _extract_dates_from_excel(file_path: str) -> tuple[Optional[date], Optional[date]]:
+    """从 Excel 文件中提取周报日期范围。
+    扫描前 20 行（而非原来的 10 行），查找包含"上周"或"本周"的标题行。
+    优先使用"上周工作内容"中的日期（更可靠），其次使用"本周工作计划"中的日期。
+    """
     wb = _safe_load_workbook(file_path)
     ws = wb.active
 
-    for row in ws.iter_rows(min_row=1, max_row=min(10, ws.max_row), max_col=ws.max_column, values_only=False):
+    last_week_dates = None
+    this_week_dates = None
+
+    for row in ws.iter_rows(min_row=1, max_row=min(20, ws.max_row), max_col=ws.max_column, values_only=False):
         first_cell = row[0]
         if first_cell.value is None:
             continue
         cell_value = str(first_cell.value)
-        if "上周" in cell_value or "本周" in cell_value or "工作" in cell_value:
+
+        if "上周" in cell_value and "工作" in cell_value:
             d1, d2 = _dates_from_text(cell_value)
             if d1 and d2:
-                wb.close()
-                return d1, d2
+                last_week_dates = (d1, d2)
+        elif "本周" in cell_value and "工作" in cell_value:
+            d1, d2 = _dates_from_text(cell_value)
+            if d1 and d2:
+                this_week_dates = (d1, d2)
 
     wb.close()
+
+    # 优先使用"上周工作内容"的日期（因为周报是回顾上周）
+    if last_week_dates:
+        return last_week_dates
+    if this_week_dates:
+        return this_week_dates
     return None, None
 
 

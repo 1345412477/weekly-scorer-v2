@@ -323,6 +323,11 @@ class DepartmentSummary(Base):
     # 本周工作事项列表
     # 格式: [{"content": "事项内容", "highlight": false, "persons": ["张三", "李四"]}]
     this_week_summary = Column(JSON, nullable=True, default=list)
+    # 上周项目维度总结（业务盘卡片展示用）
+    # 格式: [{"name": "项目名", "progress": 75, "highlight": true, "summary": "精炼描述", "persons": ["张三"]}]
+    last_week_projects = Column(JSON, nullable=True, default=list)
+    # 本周项目维度总结（业务盘卡片展示用）
+    this_week_projects = Column(JSON, nullable=True, default=list)
     # 部门是否重点关注
     is_department_highlight = Column(Boolean, default=False)
     # 生成状态: pending/generating/done/failed

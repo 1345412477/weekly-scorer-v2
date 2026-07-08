@@ -157,8 +157,6 @@
                       size="small" text severity="success" @click="onDownloadReport(data)" />
               <Button label="删除" icon="pi pi-trash"
                       size="small" text severity="danger" @click="onDelete(data)" />
-              <Button v-if="data.manual_override && Object.keys(data.manual_override).length" label="恢复 AI" icon="pi pi-reply"
-                      size="small" text severity="secondary" @click="restoreAI(data)" />
             </div>
           </template>
         </Column>
@@ -433,16 +431,6 @@ async function saveEdit() {
     toast.add({ severity: 'error', summary: msg, life: 3000 })
   } finally {
     editDialog.saving = false
-  }
-}
-
-async function restoreAI(data) {
-  try {
-    await aggregateAPI.restoreAI(data.id)
-    toast.add({ severity: 'success', summary: '已恢复 AI 原始评分', life: 2500 })
-    loadData()
-  } catch (e) {
-    toast.add({ severity: 'error', summary: '恢复失败，请重试', life: 3000 })
   }
 }
 
