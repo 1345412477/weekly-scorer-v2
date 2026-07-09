@@ -50,7 +50,7 @@ def _get_engine_kwargs() -> dict:
             "pool_size": 10,
             "max_overflow": 20,
             "pool_pre_ping": True,
-            "pool_recycle": 3600,
+            "pool_recycle": 300,
         })
     elif _IS_SQLITE:
         kwargs["connect_args"] = {"check_same_thread": False}

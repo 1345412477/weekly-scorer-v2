@@ -84,9 +84,9 @@ services:
     ports:
       - "80:80"
       - "443:443"
-    volumes:
-      - ./nginx-ssl.conf:/etc/nginx/conf.d/ssl.conf:ro  # 可选：HTTPS 配置
-      - ./ssl:/etc/nginx/ssl:ro  # 可选：SSL 证书目录
+    # volumes:  # 启用 HTTPS 时取消注释
+    #   - ./nginx-ssl.conf:/etc/nginx/conf.d/ssl.conf:ro
+    #   - ./ssl:/etc/nginx/ssl:ro
 
 volumes:
   postgres_data:

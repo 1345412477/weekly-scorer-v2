@@ -7,11 +7,14 @@ FROM node:20-alpine AS builder
 
 WORKDIR /build
 
-# 复制依赖文件
-COPY package.json ./
+# 配置 npm 国内镜像源（服务器在中国网络环境）
+RUN npm config set registry https://registry.npmmirror.com
 
-# 安装依赖
-RUN npm ci --no-optional
+# 复制依赖文件（含 lockfile）
+COPY package*.json ./
+
+# 安装依赖（用 install 而非 ci，解决 Windows→Linux 锁文件架构差异）
+RUN npm install --no-optional && npm install @rollup/rollup-linux-arm64-musl --no-optional
 
 # 复制源码
 COPY . .

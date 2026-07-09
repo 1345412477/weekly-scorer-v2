@@ -19,6 +19,7 @@ from app.utils.time_utils import bj_now
 _running_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> {type, ref, status, started_at}
 _scheduler_thread: Optional["AggregateSchedulerThread"] = None
 _pending_schedule_cfg: Optional[Dict[str, Any]] = None  # 调度线程未启动时保存配置
+_main_event_loop: Optional[asyncio.AbstractEventLoop] = None  # 主事件循环引用（避免线程用 asyncpg 冲突）
 
 # 聚合评分进度追踪（供前端轮询）
 _aggregate_status: Dict[str, Any] = {
@@ -164,7 +165,7 @@ class AggregateSchedulerThread(threading.Thread):
     def _save_last_run_date_to_db(self, run_date: Optional[date]):
         """将 _last_run_date 持久化到 DB scoring_schedule 表"""
         try:
-            import asyncio
+            global _main_event_loop
             async def _save():
                 from app.database import async_session
                 from app.models.models import ScoringSchedule
@@ -175,22 +176,9 @@ class AggregateSchedulerThread(threading.Thread):
                     if cfg:
                         cfg.last_run_date = run_date
                         await db.commit()
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    new_loop = asyncio.new_event_loop()
-                    try:
-                        new_loop.run_until_complete(_save())
-                    finally:
-                        new_loop.close()
-                else:
-                    loop.run_until_complete(_save())
-            except RuntimeError:
-                new_loop = asyncio.new_event_loop()
-                try:
-                    new_loop.run_until_complete(_save())
-                finally:
-                    new_loop.close()
+            if _main_event_loop and _main_event_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(_save(), _main_event_loop)
+                future.result(timeout=30)
         except Exception as e:
             log_warning(f"[scheduler] 持久化 last_run_date 失败: {e}")
 
@@ -312,28 +300,14 @@ class AggregateSchedulerThread(threading.Thread):
 
     @staticmethod
     def _execute_aggregate():
-        """执行聚合评分（跑在独立线程中）"""
+        """执行聚合评分（在主事件循环上运行）"""
         try:
-            import asyncio
-            try:
-                loop = asyncio.get_event_loop()
-                if loop.is_running():
-                    # 当前循环在跑 → 用 run_coroutine_threadsafe 在另一个循环中跑
-                    new_loop = asyncio.new_event_loop()
-                    try:
-                        asyncio.set_event_loop(new_loop)
-                        new_loop.run_until_complete(_aggregate_worker_coro())
-                    finally:
-                        new_loop.close()
-                else:
-                    loop.run_until_complete(_aggregate_worker_coro())
-            except RuntimeError:
-                new_loop = asyncio.new_event_loop()
-                try:
-                    asyncio.set_event_loop(new_loop)
-                    new_loop.run_until_complete(_aggregate_worker_coro())
-                finally:
-                    new_loop.close()
+            global _main_event_loop
+            if _main_event_loop and _main_event_loop.is_running():
+                future = asyncio.run_coroutine_threadsafe(
+                    _aggregate_worker_coro(), _main_event_loop
+                )
+                future.result(timeout=3600)
         except Exception as e:
             log_error(f"[scheduler] _execute_aggregate 异常: {e}")
 
@@ -420,7 +394,8 @@ async def _aggregate_worker_coro():
 
 async def init_scheduler():
     """在 FastAPI lifespan 中调用 - 启动调度线程"""
-    global _scheduler_thread, _pending_schedule_cfg
+    global _scheduler_thread, _pending_schedule_cfg, _main_event_loop
+    _main_event_loop = asyncio.get_running_loop()
     if _scheduler_thread is None or not _scheduler_thread.is_alive():
         _scheduler_thread = AggregateSchedulerThread()
 
