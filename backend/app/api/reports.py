@@ -20,9 +20,142 @@ from app.core.auth import require_admin, write_operation_log
 from app.services.document_parser import (
     parse_report, extract_week_dates, get_template_path,
     classify_report_week, get_current_week, SUPPORTED_EXTENSIONS,
-    extract_author_from_filename,
+    extract_author_from_filename, extract_week_dates_from_content,
+    parse_multi_week_excel,
 )
 from app.utils.time_utils import bj_now
+
+logger = logging.getLogger(__name__)
+
+
+async def _upload_multi_week_report(
+    multi_week_data: list,
+    file_path: str,
+    original_filename: str,
+    person_id: Optional[str],
+    department_id: Optional[str],
+    author_name: Optional[str],
+    department: Optional[str],
+    db: AsyncSession,
+):
+    """处理多周数据的上传，为每周创建一条记录"""
+    created_reports = []
+    skipped_weeks = []
+    
+    # 自动识别提交人
+    if not person_id:
+        detected_name, detected_dept, detected_person_id, detected_dept_id, detected, dup_hint = await (
+            extract_author_and_match_department(original_filename, db)
+        )
+        if detected:
+            author_name = detected_name
+            department = detected_dept
+            person_id = detected_person_id
+            department_id = detected_dept_id
+        else:
+            if detected_name and not detected_dept:
+                os.remove(file_path)
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"系统中无员工信息：{detected_name}（未配置部门）{dup_hint}"
+                )
+            if not (author_name and department):
+                if author_name and not department:
+                    os.remove(file_path)
+                    raise HTTPException(
+                        status_code=400,
+                        detail="提交人已提供但部门信息缺失，无法上传"
+                    )
+                author_name = author_name or "匿名"
+                department = department or "未填写部门"
+    
+    department = department or "未填写部门"
+    department_id = department_id or None
+    author_name = author_name or "匿名"
+    
+    # 为每周创建记录
+    for week_data in multi_week_data:
+        week_start = week_data["week_start"]
+        week_end = week_data["week_end"]
+        content = week_data["raw_content"]
+        
+        if not content or len(content.strip()) < 20:
+            logger.warning(f"跳过空内容周次: {week_start} ~ {week_end}")
+            skipped_weeks.append(week_start.isoformat())
+            continue
+        
+        # 检查重复
+        dup_q = select(WeeklyReport).where(
+            WeeklyReport.author_name == author_name,
+            WeeklyReport.week_start == week_start,
+        )
+        dup_r = await db.execute(dup_q)
+        if dup_r.scalar_one_or_none():
+            logger.info(f"跳过已存在周次: {week_start}")
+            skipped_weeks.append(week_start.isoformat())
+            continue
+        
+        classification = classify_report_week(week_start, week_end)
+        if classification["is_future"]:
+            logger.warning(f"跳过未来周次: {week_start}")
+            skipped_weeks.append(week_start.isoformat())
+            continue
+        
+        report_id = str(uuid.uuid4())
+        report = WeeklyReport(
+            id=report_id,
+            author_name=author_name,
+            department=department,
+            person_id=person_id,
+            department_id=department_id,
+            week_start=week_start,
+            week_end=week_end,
+            content=content,
+            file_path=file_path,
+            original_filename=original_filename,
+            status="submitted",
+            report_type=classification["report_type"],
+            week_diff=classification["week_diff"],
+            submit_time=bj_now(),
+        )
+        db.add(report)
+        await db.commit()
+        await db.refresh(report)
+        
+        # 触发评分
+        try:
+            await trigger_scoring(report.id, db)
+        except Exception as e:
+            logger.warning(f"评分失败: {e}")
+        
+        # 触发聚合
+        try:
+            from app.services.aggregator import auto_aggregate
+            await auto_aggregate(
+                db,
+                person_id=person_id,
+                author_name=author_name,
+                department=department,
+                department_id=department_id,
+                week_start=week_start,
+                week_end=week_end,
+            )
+        except Exception as e:
+            logger.warning(f"聚合失败: {e}")
+        
+        created_reports.append({
+            "report_id": report_id,
+            "week_start": week_start.isoformat(),
+            "week_end": week_end.isoformat(),
+        })
+    
+    return {
+        "message": f"成功创建 {len(created_reports)} 条周报记录",
+        "created_count": len(created_reports),
+        "skipped_weeks": skipped_weeks,
+        "reports": created_reports,
+    }
+
 
 logger = logging.getLogger(__name__)
 
@@ -166,7 +299,9 @@ async def upload_report(
     confirmed_week_end: Optional[str] = Form(None),
     db: AsyncSession = Depends(get_db),
 ):
-    """上传周报文件，仅支持 .xlsx。从文件名自动识别提交人并匹配部门，未在人员库中则拒绝上传。"""
+    """上传周报文件，仅支持 .xlsx。从文件名自动识别提交人并匹配部门，未在人员库中则拒绝上传。
+    支持多周数据：如果Excel包含多周内容，会自动拆分为多条周报记录。
+    """
     file_ext = os.path.splitext(file.filename or "")[1].lower()
     if file_ext not in SUPPORTED_EXTENSIONS:
         raise HTTPException(
@@ -194,154 +329,180 @@ async def upload_report(
         shutil.copyfileobj(file.file, buffer)
 
     try:
-        parsed = parse_report(file_path)
-        week_start, week_end = extract_week_dates(file_path)
-
-        if confirmed_week_start and confirmed_week_end:
-            week_start = date.fromisoformat(confirmed_week_start)
-            week_end = date.fromisoformat(confirmed_week_end)
-
-        classification = classify_report_week(week_start, week_end)
-
-        if classification["is_future"]:
-            os.remove(file_path)
-            raise HTTPException(status_code=400, detail=classification["message"])
-
-        content = parsed["raw_content"]
-
-        if not content or len(content.strip()) < 20:
-            os.remove(file_path)
-            raise HTTPException(status_code=400, detail="文件内容为空或格式不正确，无法解析周报内容")
-
-        if week_start is None:
-            monday, sunday = get_current_week()
-            week_start = monday
-            week_end = sunday
-
-        # 自动识别提交人并匹配部门（仅当用户未显式指定 person_id 时生效）
-        auto_detected = False
-        if not person_id:
-            detected_name, detected_dept, detected_person_id, detected_dept_id, detected, dup_hint = await (
-                extract_author_and_match_department(original_filename, db)
+        # 尝试解析多周数据
+        multi_week_data = parse_multi_week_excel(file_path)
+        
+        if multi_week_data and len(multi_week_data) > 1:
+            # 多周数据：为每周创建一条记录
+            logger.info(f"检测到多周数据，共 {len(multi_week_data)} 周")
+            return await _upload_multi_week_report(
+                multi_week_data=multi_week_data,
+                file_path=file_path,
+                original_filename=original_filename,
+                person_id=person_id,
+                department_id=department_id,
+                author_name=author_name,
+                department=department,
+                db=db,
             )
-            if detected:
-                author_name = detected_name
-                department = detected_dept
-                person_id = detected_person_id
-                department_id = detected_dept_id
-                auto_detected = True
-            else:
-                # 命中人员但未配置部门 → 拒绝
-                if detected_name and not detected_dept:
-                    os.remove(file_path)
-                    raise HTTPException(
-                        status_code=400,
-                        detail=f"系统中无员工信息：{detected_name}（未配置部门）{dup_hint}"
-                    )
-                # 否则：调用方显式提供 author_name + department 则使用之；若均未提供，使用"匿名"兜底
-                if not (author_name and department):
-                    if author_name and not department:
+        else:
+            # 单周数据：使用原有逻辑
+            parsed = parse_report(file_path)
+            week_start, week_end = extract_week_dates(file_path)
+
+            if confirmed_week_start and confirmed_week_end:
+                week_start = date.fromisoformat(confirmed_week_start)
+                week_end = date.fromisoformat(confirmed_week_end)
+
+            classification = classify_report_week(week_start, week_end)
+
+            if classification["is_future"]:
+                os.remove(file_path)
+                raise HTTPException(status_code=400, detail=classification["message"])
+
+            content = parsed["raw_content"]
+
+            if not content or len(content.strip()) < 20:
+                os.remove(file_path)
+                raise HTTPException(status_code=400, detail="文件内容为空或格式不正确，无法解析周报内容")
+
+            # 优先从内容中提取日期（AI解析周报内容区分时间段）
+            if week_start is None or classification.get("needs_confirmation"):
+                content_dates = extract_week_dates_from_content(content)
+                if content_dates[0] and content_dates[1]:
+                    week_start, week_end = content_dates
+                    classification = classify_report_week(week_start, week_end)
+                    logger.info(f"从周报内容中提取到日期: {week_start} ~ {week_end}")
+
+            if week_start is None:
+                monday, sunday = get_current_week()
+                week_start = monday
+                week_end = sunday
+
+            # 自动识别提交人并匹配部门（仅当用户未显式指定 person_id 时生效）
+            auto_detected = False
+            if not person_id:
+                detected_name, detected_dept, detected_person_id, detected_dept_id, detected, dup_hint = await (
+                    extract_author_and_match_department(original_filename, db)
+                )
+                if detected:
+                    author_name = detected_name
+                    department = detected_dept
+                    person_id = detected_person_id
+                    department_id = detected_dept_id
+                    auto_detected = True
+                else:
+                    # 命中人员但未配置部门 → 拒绝
+                    if detected_name and not detected_dept:
                         os.remove(file_path)
                         raise HTTPException(
                             status_code=400,
-                            detail="提交人已提供但部门信息缺失，无法上传"
+                            detail=f"系统中无员工信息：{detected_name}（未配置部门）{dup_hint}"
                         )
-                    # 两者均未提供 → 以"匿名/未填写部门"兜底
-                    author_name = author_name or "匿名"
-                    department = department or "未填写部门"
+                    # 否则：调用方显式提供 author_name + department 则使用之；若均未提供，使用"匿名"兜底
+                    if not (author_name and department):
+                        if author_name and not department:
+                            os.remove(file_path)
+                            raise HTTPException(
+                                status_code=400,
+                                detail="提交人已提供但部门信息缺失，无法上传"
+                            )
+                        # 两者均未提供 → 以"匿名/未填写部门"兜底
+                        author_name = author_name or "匿名"
+                        department = department or "未填写部门"
 
-        # 最后做一次安全默认值
-        department = department or "未填写部门"
-        department_id = department_id or None
-        author_name = author_name or "匿名"
+            # 最后做一次安全默认值
+            department = department or "未填写部门"
+            department_id = department_id or None
+            author_name = author_name or "匿名"
 
-        # === 同周重复提交检查：同一用户同一周只能有一条周报记录 ===
-        dup_q = select(WeeklyReport).where(
-            WeeklyReport.author_name == author_name,
-            WeeklyReport.week_start == week_start,
-        )
-        dup_r = await db.execute(dup_q)
-        existing_report = dup_r.scalar_one_or_none()
-        if existing_report:
-            os.remove(file_path)
-            raise HTTPException(
-                status_code=409,
-                detail=(
-                    f"{author_name} 本周（{week_start.isoformat()}）已提交周报，"
-                    f"如需重新提交，请先在周评列表中删除旧周报后再上传。"
-                )
+            # === 同周重复提交检查：同一用户同一周只能有一条周报记录 ===
+            dup_q = select(WeeklyReport).where(
+                WeeklyReport.author_name == author_name,
+                WeeklyReport.week_start == week_start,
             )
+            dup_r = await db.execute(dup_q)
+            existing_report = dup_r.scalar_one_or_none()
+            if existing_report:
+                os.remove(file_path)
+                raise HTTPException(
+                    status_code=409,
+                    detail=(
+                        f"{author_name} 本周（{week_start.isoformat()}）已提交周报，"
+                        f"如需重新提交，请先在周评列表中删除旧周报后再上传。"
+                    )
+                )
 
-        report_type = classification["report_type"]
-        week_diff = classification["week_diff"]
+            report_type = classification["report_type"]
+            week_diff = classification["week_diff"]
 
-        report = WeeklyReport(
-            id=file_id,
-            author_name=author_name,
-            department=department,
-            person_id=person_id,
-            department_id=department_id,
-            week_start=week_start,
-            week_end=week_end,
-            content=content,
-            file_path=file_path,
-            original_filename=original_filename,
-            status="submitted",
-            report_type=report_type,
-            week_diff=week_diff,
-            submit_time=bj_now(),
-        )
-        db.add(report)
-        await db.commit()
-        await db.refresh(report)
-
-        score_result = None
-        scoring_error = None
-        try:
-            score_result = await trigger_scoring(report.id, db)
-        except AIScoringError as e:
-            scoring_error = str(e)
-        except Exception as e:
-            scoring_error = f"评分失败：{str(e)}"
-
-        # 评分完成后读取完整 score 信息（含 ai_comment / ai_suggestion）
-        dimension_scores = []
-        ai_comment = ""
-        ai_suggestion = ""
-        if score_result and not scoring_error:
-            try:
-                detail_q = select(ReportScore).where(ReportScore.report_id == report.id)
-                detail_r = await db.execute(detail_q)
-                score_row = detail_r.scalar_one_or_none()
-                if score_row:
-                    dimension_scores = score_row.dimension_scores or []
-                    ai_comment = score_row.ai_comment or ""
-                    ai_suggestion = score_row.ai_suggestion or ""
-            except Exception as e:
-                logger.warning(f"读取评分详情失败: {e}")
-
-        # 触发周评自动聚合（综合三项分数）
-        aggregate_data = None
-        try:
-            from app.services.aggregator import auto_aggregate
-            agg = await auto_aggregate(
-                db,
-                person_id=report.person_id,
+            report = WeeklyReport(
+                id=file_id,
                 author_name=author_name,
                 department=department,
-                department_id=report.department_id,
+                person_id=person_id,
+                department_id=department_id,
                 week_start=week_start,
                 week_end=week_end,
+                content=content,
+                file_path=file_path,
+                original_filename=original_filename,
+                status="submitted",
+                report_type=report_type,
+                week_diff=week_diff,
+                submit_time=bj_now(),
             )
-            if agg:
-                aggregate_data = {
-                    "report_score": float(agg.report_score) if agg.report_score is not None else None,
-                    "attendance_score": float(agg.attendance_score) if agg.attendance_score is not None else None,
-                    "chat_score": float(agg.chat_score) if agg.chat_score is not None else None,
-                    "composite_score": float(agg.composite_score) if agg.composite_score is not None else None,
-                }
-        except Exception as e:
-            logger.warning(f"周报上传后自动聚合失败: {e}")
+            db.add(report)
+            await db.commit()
+            await db.refresh(report)
+
+            score_result = None
+            scoring_error = None
+            try:
+                score_result = await trigger_scoring(report.id, db)
+            except AIScoringError as e:
+                scoring_error = str(e)
+            except Exception as e:
+                scoring_error = f"评分失败：{str(e)}"
+
+            # 评分完成后读取完整 score 信息（含 ai_comment / ai_suggestion）
+            dimension_scores = []
+            ai_comment = ""
+            ai_suggestion = ""
+            if score_result and not scoring_error:
+                try:
+                    detail_q = select(ReportScore).where(ReportScore.report_id == report.id)
+                    detail_r = await db.execute(detail_q)
+                    score_row = detail_r.scalar_one_or_none()
+                    if score_row:
+                        dimension_scores = score_row.dimension_scores or []
+                        ai_comment = score_row.ai_comment or ""
+                        ai_suggestion = score_row.ai_suggestion or ""
+                except Exception as e:
+                    logger.warning(f"读取评分详情失败: {e}")
+
+            # 触发周评自动聚合（综合三项分数）
+            aggregate_data = None
+            try:
+                from app.services.aggregator import auto_aggregate
+                agg = await auto_aggregate(
+                    db,
+                    person_id=report.person_id,
+                    author_name=author_name,
+                    department=department,
+                    department_id=report.department_id,
+                    week_start=week_start,
+                    week_end=week_end,
+                )
+                if agg:
+                    aggregate_data = {
+                        "report_score": float(agg.report_score) if agg.report_score is not None else None,
+                        "attendance_score": float(agg.attendance_score) if agg.attendance_score is not None else None,
+                        "chat_score": float(agg.chat_score) if agg.chat_score is not None else None,
+                        "composite_score": float(agg.composite_score) if agg.composite_score is not None else None,
+                    }
+            except Exception as e:
+                logger.warning(f"周报上传后自动聚合失败: {e}")
 
         result = {
             "message": "上传成功",

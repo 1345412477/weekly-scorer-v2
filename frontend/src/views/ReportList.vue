@@ -100,7 +100,7 @@
               :title="'双击修改考勤分'">
               {{ Math.round(Number(data.attendance_score)) }}
             </span>
-            <span v-else class="text-muted">-</span>
+            <span v-else class="text-muted">/</span>
           </template>
         </Column>
 
@@ -114,7 +114,7 @@
               :title="'双击修改周报分'">
               {{ Math.round(Number(data.report_score)) }}
             </span>
-            <span v-else class="text-muted">-</span>
+            <span v-else class="text-muted">/</span>
           </template>
         </Column>
 
@@ -128,7 +128,7 @@
               :title="'双击修改沟通分'">
               {{ Math.round(Number(data.chat_score)) }}
             </span>
-            <span v-else class="text-muted">-</span>
+            <span v-else class="text-muted">/</span>
           </template>
         </Column>
 

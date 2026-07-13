@@ -18,7 +18,7 @@ from app.database import get_db
 from app.models.models import ChatRecord, Person, DataUploadLog
 from app.core.auth import require_admin
 from app.services.wechat_parser import parse_chat_excel
-from app.utils.time_utils import bj_now
+from app.utils.time_utils import bj_now, bj_today
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/chat", tags=["聊天记录"])
@@ -31,7 +31,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def _get_current_week_range(today: Optional[date] = None):
     """返回 (week_start, week_end) —— 本周周一~周日。"""
-    today = today or date.today()
+    today = today or bj_today()
     offset = today.weekday()
     week_start = today - timedelta(days=offset)
     week_end = week_start + timedelta(days=6)
@@ -280,7 +280,7 @@ async def get_chat_status(
     return {
         "current_week_start": week_start.isoformat(),
         "current_week_end": week_end.isoformat(),
-        "uploaded_this_week": bool(logs) or records_count > 0,
+        "uploaded_this_week": bool(logs),
         "records_count": records_count,
         "matched_records_count": records_count - unmatched_records_count,
         "unmatched_records_count": unmatched_records_count,

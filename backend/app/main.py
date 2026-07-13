@@ -1,4 +1,4 @@
-"""周报评分系统 v2 - FastAPI 主入口"""
+"""智友辰评分系统 - FastAPI 主入口"""
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -24,7 +24,7 @@ def get_cors_origins():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log_info("启动周报评分系统 v2...")
+    log_info("启动智友辰评分系统...")
     await init_db()
     await seed_default_data()
     # 启动后台定时聚合评分调度器
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="周报评分系统 v2",
+    title="智友辰评分系统",
     version=settings.APP_VERSION,
     lifespan=lifespan,
 )

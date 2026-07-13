@@ -5,6 +5,8 @@ import logging
 from datetime import date, timedelta
 from typing import Optional
 
+from app.utils.time_utils import bj_today
+
 import openpyxl
 
 logger = logging.getLogger(__name__)
@@ -124,6 +126,8 @@ def _extract_dates_from_filename(file_path: str) -> tuple[Optional[date], Option
     支持格式：
       - 张三-2026年6月第2周周报20260614.xlsx  → 从 YYYYMMDD 提取
       - 张三-2026年7月第3周周报20260719.xlsx
+
+    逻辑：YYYYMMDD 为提交日期（通常为周日），周报覆盖该日所在周（周一~周日）。
     """
     stem = os.path.splitext(os.path.basename(file_path))[0]
     # 匹配 YYYYMMDD 8位数字
@@ -131,9 +135,9 @@ def _extract_dates_from_filename(file_path: str) -> tuple[Optional[date], Option
     if m:
         try:
             d = date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
-            # 从该日期推算所在周的周一和周日
-            monday = d - timedelta(days=d.weekday())
-            sunday = monday + timedelta(days=6)
+            # 提交日期视为周报结束日（周日），周报周期为前6天到该日
+            sunday = d
+            monday = d - timedelta(days=6)
             return monday, sunday
         except ValueError:
             pass
@@ -142,7 +146,7 @@ def _extract_dates_from_filename(file_path: str) -> tuple[Optional[date], Option
 
 def get_current_week(today: date = None) -> tuple[date, date]:
     if today is None:
-        today = date.today()
+        today = bj_today()
     monday = today - timedelta(days=today.weekday())
     sunday = monday + timedelta(days=6)
     return monday, sunday
@@ -151,7 +155,7 @@ def get_current_week(today: date = None) -> tuple[date, date]:
 def classify_report_week(
     week_start: Optional[date], week_end: Optional[date]
 ) -> dict:
-    today = date.today()
+    today = bj_today()
     current_monday, current_sunday = get_current_week(today)
 
     result = {
@@ -317,7 +321,7 @@ def _parse_excel(file_path: str) -> dict:
 
 def _extract_dates_from_excel(file_path: str) -> tuple[Optional[date], Optional[date]]:
     """从 Excel 文件中提取周报日期范围。
-    扫描前 20 行（而非原来的 10 行），查找包含"上周"或"本周"的标题行。
+    扫描前 20 行，查找包含"上周"或"本周"的标题行。
     优先使用"上周工作内容"中的日期（更可靠），其次使用"本周工作计划"中的日期。
     """
     wb = _safe_load_workbook(file_path)
@@ -348,6 +352,126 @@ def _extract_dates_from_excel(file_path: str) -> tuple[Optional[date], Optional[
         return last_week_dates
     if this_week_dates:
         return this_week_dates
+    return None, None
+
+
+def parse_multi_week_excel(file_path: str) -> list[dict]:
+    """解析包含多周数据的Excel文件。
+    
+    返回：
+        list[dict]: 每个元素包含一周的数据，格式为：
+        {
+            "week_start": date,
+            "week_end": date,
+            "last_week_work": [...],
+            "this_week_plan": [...],
+            "raw_content": "...",
+            "metadata": {...}
+        }
+    """
+    wb = _safe_load_workbook(file_path)
+    ws = wb.active
+    
+    weeks_data = []
+    current_week = None
+    current_section = None
+    headers = []
+    metadata = {}
+    
+    for row in ws.iter_rows(min_row=1, max_row=ws.max_row, max_col=ws.max_column, values_only=False):
+        first_cell = row[0]
+        row_values = [str(cell.value).strip() if cell.value is not None else "" for cell in row]
+        
+        if first_cell.value is None:
+            continue
+        
+        cell_value = str(first_cell.value).strip()
+        
+        # 检测周次标题行（包含日期范围）
+        is_week_header = ("上周工作" in cell_value or "本周工作" in cell_value) and ("." in cell_value or "-" in cell_value or "/" in cell_value)
+        
+        if is_week_header:
+            # 提取日期范围
+            week_dates = _dates_from_text(cell_value)
+            if not week_dates[0] or not week_dates[1]:
+                continue
+            
+            # 如果是"上周工作内容"，开始新的一周数据
+            if "上周工作" in cell_value:
+                # 保存上一周数据（如果有）
+                if current_week and (current_week["last_week_work"] or current_week["this_week_plan"]):
+                    current_week["raw_content"] = _build_text_content(current_week)
+                    current_week["metadata"] = metadata.copy()
+                    weeks_data.append(current_week)
+                
+                # 开始新的一周
+                current_week = {
+                    "week_start": week_dates[0],
+                    "week_end": week_dates[1],
+                    "last_week_work": [],
+                    "this_week_plan": [],
+                }
+                current_section = "last_week"
+                headers = []
+            elif "本周工作" in cell_value and current_week:
+                # 切换到本周计划
+                current_section = "this_week"
+                headers = []
+            continue
+        
+        if current_week is None:
+            # 在第一个周次标题前的行可能是元数据
+            if "汇报人" in cell_value or "部门" in cell_value:
+                meta = _scan_metadata_from_rows([row_values])
+                metadata.update(meta)
+            continue
+        
+        # 检测表头行
+        if cell_value == "序号" or (len(row_values) > 1 and row_values[1] in ["客户/项目", "项目"]):
+            headers = row_values
+            continue
+        
+        if not headers:
+            continue
+        
+        # 解析数据行
+        try:
+            int(cell_value)
+        except ValueError:
+            continue
+        
+        item = {}
+        for i, h in enumerate(headers):
+            if i < len(row_values):
+                item[h] = row_values[i]
+        
+        if current_section == "last_week":
+            current_week["last_week_work"].append(item)
+        elif current_section == "this_week":
+            current_week["this_week_plan"].append(item)
+    
+    # 保存最后一周数据
+    if current_week and (current_week["last_week_work"] or current_week["this_week_plan"]):
+        current_week["raw_content"] = _build_text_content(current_week)
+        current_week["metadata"] = metadata.copy()
+        weeks_data.append(current_week)
+    
+    wb.close()
+    return weeks_data
+
+
+def extract_week_dates_from_content(content: str) -> tuple[Optional[date], Optional[date]]:
+    """从周报文本内容中提取日期范围。
+    支持格式：
+      - "上周工作内容（2026.7.6-2026.7.12）"
+      - "本周工作计划（2026.7.13-2026.7.17）"
+      - "2026.7.6-2026.7.12"
+      - "2026-7-6 ~ 2026-7-12"
+    """
+    # 尝试从内容中提取日期
+    d1, d2 = _dates_from_text(content)
+    if d1 and d2:
+        return d1, d2
     return None, None
 
 

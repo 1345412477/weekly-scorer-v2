@@ -22,7 +22,7 @@ from app.database import get_db
 from app.models.models import AttendanceRecord, Person, DataUploadLog
 from app.core.auth import require_admin
 from app.services.wechat_parser import parse_attendance_excel
-from app.utils.time_utils import bj_now
+from app.utils.time_utils import bj_now, bj_today
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/attendance", tags=["考勤打卡"])
@@ -35,7 +35,7 @@ os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 def _get_current_week_range(today: Optional[date] = None):
     """返回 (week_start, week_end) —— 本周周一~周日。"""
-    today = today or date.today()
+    today = today or bj_today()
     # weekday(): 周一=0, 周日=6
     offset = today.weekday()
     week_start = today - timedelta(days=offset)
@@ -263,7 +263,7 @@ async def get_attendance_status(
     return {
         "current_week_start": week_start.isoformat(),
         "current_week_end": week_end.isoformat(),
-        "uploaded_this_week": bool(logs) or records_count > 0,
+        "uploaded_this_week": bool(logs),
         "records_count": records_count,
         "employees_count": employees_count,
         "last_upload": last_upload,

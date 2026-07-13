@@ -5,7 +5,7 @@
         <div class="logo">
           <span class="logo-icon"><i class="pi pi-chart-line"></i></span>
           <div>
-            <span class="logo-text">周报评分</span>
+            <span class="logo-text">智友辰评分</span>
             <span class="logo-subtitle">Admin Console</span>
           </div>
         </div>

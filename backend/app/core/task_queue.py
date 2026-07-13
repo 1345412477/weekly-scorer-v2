@@ -13,7 +13,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, Dict, Any
 
 from app.utils.logger import log_info, log_error, log_warning
-from app.utils.time_utils import bj_now
+from app.utils.time_utils import bj_now, bj_today
 
 # --- 任务状态内存记录（小量够用，重启不丢失评分结果本身在 DB）---
 _running_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> {type, ref, status, started_at}
@@ -49,9 +49,35 @@ def submit_report_scoring(report_id: str) -> str:
                                         "status": "running", "started_at": bj_now().isoformat()}
             from app.services.scoring import trigger_scoring
             from app.database import async_session
+            from app.models.models import WeeklyReport
+            from sqlalchemy import select
             async with async_session() as db:
                 result = await trigger_scoring(report_id, db)
             log_info(f"[task] 周报评分完成 report_id={report_id}, total={result.get('total_score')}")
+
+            # 评分完成后触发聚合更新（同步周报分到聚合表）
+            try:
+                from app.services.aggregator import auto_aggregate
+                async with async_session() as db:
+                    # 读取报告信息
+                    rep_result = await db.execute(select(WeeklyReport).where(WeeklyReport.id == report_id))
+                    report = rep_result.scalar_one_or_none()
+                    if report:
+                        await auto_aggregate(
+                            db,
+                            person_id=report.person_id,
+                            author_name=report.author_name,
+                            department=report.department,
+                            department_id=report.department_id,
+                            week_start=report.week_start,
+                            week_end=report.week_end,
+                            preserve_manual=True,
+                            force=False,
+                        )
+                        log_info(f"[task] 聚合更新完成 author_name={report.author_name}")
+            except Exception as e:
+                log_warning(f"[task] 聚合更新失败 report_id={report_id}: {e}")
+
             _running_tasks[task_id]["status"] = "done"
         except Exception as e:
             log_error(f"[task] 周报评分失败 report_id={report_id}: {e}")
@@ -333,7 +359,7 @@ async def _aggregate_worker_coro():
     _aggregate_status["processed"] = 0
     _aggregate_status["last_result"] = None
     _aggregate_status["last_message"] = ""
-    week_start, week_end = _get_week_range_for_date(date.today())
+    week_start, week_end = _get_week_range_for_date(bj_today())
 
     try:
         async with async_session() as db:

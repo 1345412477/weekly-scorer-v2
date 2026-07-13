@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select, and_, func, tuple_
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.utils.time_utils import bj_now
+from app.utils.time_utils import bj_now, bj_today
 from app.models.models import (
     WeeklyAggregate,
     WeeklyReport,
@@ -109,8 +109,8 @@ async def _get_report_score(db: AsyncSession, author_name: str,
         best_id_r = await db.execute(best_id_q)
         best_id = best_id_r.scalar_one_or_none()
         if not best_id:
-            logger.info(f"[聚合] {author_name} 该周无周报 → 周报分=0")
-            return 0.0, None
+            logger.info(f"[聚合] {author_name} 该周无周报 → 周报分=None")
+            return None, None
 
         # 读取报告对象
         rep_r = await db.execute(select(WeeklyReport).where(WeeklyReport.id == best_id))
@@ -120,16 +120,16 @@ async def _get_report_score(db: AsyncSession, author_name: str,
         sr = await db.execute(select(ReportScore).where(ReportScore.report_id == best_id).limit(1))
         score_row = sr.scalar_one_or_none()
         if score_row is None or score_row.total_score is None:
-            logger.info(f"[聚合] {author_name} 该周周报尚未评分 → 周报分=0")
-            return 0.0, report
+            logger.info(f"[聚合] {author_name} 该周周报尚未评分 → 周报分=None")
+            return None, report
         return float(score_row.total_score), report
     except Exception as e:
         logger.warning(f"[聚合] 获取周报分数异常 {author_name}: {e}")
-        return 0.0, None
+        return None, None
 
 
-async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> float:
-    """考勤分：无考勤记录 → 0；有记录 → AI 评分（0-100），无 API key 时 fallback 到规则评分。"""
+async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> Optional[float]:
+    """考勤分：无考勤记录 → None；有记录 → AI 评分（0-100），无 API key 时 fallback 到规则评分。"""
     try:
         q = select(AttendanceRecord).where(
             AttendanceRecord.author_name == author_name,
@@ -138,8 +138,8 @@ async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: 
         result = await db.execute(q)
         records = list(result.scalars().all())
         if not records:
-            logger.info(f"[聚合] {author_name} 该周无考勤记录 → 考勤分=0")
-            return 0.0
+            logger.info(f"[聚合] {author_name} 该周无考勤记录 → 考勤分=None")
+            return None
 
         rec_dicts = [
             {
@@ -165,7 +165,7 @@ async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: 
             return _rule_based_attendance_score(rec_dicts)
     except Exception as e:
         logger.warning(f"[聚合] 考勤分异常 {author_name}: {e}")
-        return 0.0
+        return None
 
 
 def _rule_based_attendance_score(rec_dicts: list) -> float:
@@ -188,8 +188,8 @@ def _rule_based_attendance_score(rec_dicts: list) -> float:
     return max(0.0, min(100.0, score))
 
 
-async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> float:
-    """沟通分：无聊天记录+无一周小结 → 返回 0；有数据 → AI 评分（0-100）"""
+async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> Optional[float]:
+    """沟通分：无聊天记录+无一周小结 → 返回 None；有数据 → AI 评分（0-100）"""
     try:
         cr = await db.execute(
             select(ChatRecord).where(
@@ -208,8 +208,8 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
         summaries = list(sr.scalars().all())
 
         if not chat_records and not summaries:
-            logger.info(f"[聚合] {author_name} 该周无聊天+无一周小结 → 沟通分=0")
-            return 0.0
+            logger.info(f"[聚合] {author_name} 该周无聊天+无一周小结 → 沟通分=None")
+            return None
 
         chat_dicts = [
             {
@@ -238,10 +238,10 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
         return max(0.0, min(100.0, score))
     except AIScoringError as e:
         logger.warning(f"[聚合] 沟通 AI 评分失败 {author_name}: {e}")
-        return 0.0
+        return None
     except Exception as e:
         logger.warning(f"[聚合] 沟通分异常 {author_name}: {e}")
-        return 0.0
+        return None
 
 
 # ============================================================
@@ -263,13 +263,13 @@ async def auto_aggregate(
     聚合某员工某周的三项得分。
     - 每周只评一次：若已存在 WeeklyAggregate 且 status="done"/"manual" → 直接返回不再评分
     - force=True：忽略 status 保护，强制重新评分（管理员恢复 AI 时使用）
-    - 空数据=0分：任一维度无数据 → 0 分
+    - 缺失数据=None：无数据的维度返回 None（前端显示 /），总分按 0 参与计算
     """
     if not author_name:
         return None
 
     if week_start is None or week_end is None:
-        today = date.today()
+        today = bj_today()
         week_start = today - timedelta(days=today.weekday())
         week_end = week_start + timedelta(days=6)
     else:
@@ -309,21 +309,25 @@ async def auto_aggregate(
             old_report_score_val = float(agg.report_score) if agg.report_score is not None else None
             needs_update = False
 
-            if abs((old_report_score_val or 0) - new_report_score) > 0.1:
+            # 比较新旧周报分（None 视为未评分）
+            if new_report_score is not None and abs((old_report_score_val or 0) - new_report_score) > 0.1:
                 agg.report_score = Decimal(str(round(new_report_score, 1)))
                 needs_update = True
+            elif new_report_score is None and old_report_score_val is not None:
+                # 保持原有分数不变（异步评分中）
+                pass
             if new_report_score_id and agg.report_score_id != new_report_score_id:
                 agg.report_score_id = new_report_score_id
                 needs_update = True
 
             if needs_update:
-                # 重新计算综合分（考勤分/沟通分不变）
-                composite = (
+                # 重新计算总分（考勤分/沟通分不变，缺失项按 0 计算）
+                total = (
                     float(agg.report_score or 0)
                     + float(agg.attendance_score or 0)
                     + float(agg.chat_score or 0)
                 )
-                agg.composite_score = Decimal(str(round(composite, 2)))
+                agg.composite_score = Decimal(str(round(total, 2)))
 
             agg.updated_at = bj_now()
             await db.commit()
@@ -364,11 +368,11 @@ async def auto_aggregate(
     else:
         chat_score = await _get_chat_score(db, author_name, week_start, week_end, chat_prompt)
 
-    # === 综合分（三项相加，默认权重均为 1）===
-    composite = (
-        report_score * weights["report"]
-        + attendance_score * weights["attendance"]
-        + chat_score * weights["chat"]
+    # === 总分（三项相加，缺失项按 0 计算）===
+    total = (
+        (report_score or 0) * weights["report"]
+        + (attendance_score or 0) * weights["attendance"]
+        + (chat_score or 0) * weights["chat"]
     )
 
     # === 写入 / 更新 WeeklyAggregate ===
@@ -377,10 +381,14 @@ async def auto_aggregate(
         agg.person_id = person_id or agg.person_id
         agg.department = department or agg.department or ""
         agg.department_id = department_id or agg.department_id
-        agg.report_score = Decimal(str(round(report_score, 1)))
-        agg.attendance_score = Decimal(str(round(attendance_score, 1)))
-        agg.chat_score = Decimal(str(round(chat_score, 1)))
-        agg.composite_score = Decimal(str(round(composite, 2)))
+        # 单项分数：None 保持 None（前端显示 /），非 None 才更新
+        if report_score is not None:
+            agg.report_score = Decimal(str(round(report_score, 1)))
+        if attendance_score is not None:
+            agg.attendance_score = Decimal(str(round(attendance_score, 1)))
+        if chat_score is not None:
+            agg.chat_score = Decimal(str(round(chat_score, 1)))
+        agg.composite_score = Decimal(str(round(total, 2)))
         if new_report_score_id:
             agg.report_score_id = new_report_score_id
         # 只有当尚未被手动覆盖时才标记 done；如果原本是 manual，则保留 manual
@@ -395,10 +403,10 @@ async def auto_aggregate(
             department_id=department_id,
             week_start=week_start,
             week_end=week_end,
-            report_score=Decimal(str(round(report_score, 1))),
-            attendance_score=Decimal(str(round(attendance_score, 1))),
-            chat_score=Decimal(str(round(chat_score, 1))),
-            composite_score=Decimal(str(round(composite, 2))),
+            report_score=Decimal(str(round(report_score, 1))) if report_score is not None else None,
+            attendance_score=Decimal(str(round(attendance_score, 1))) if attendance_score is not None else None,
+            chat_score=Decimal(str(round(chat_score, 1))) if chat_score is not None else None,
+            composite_score=Decimal(str(round(total, 2))),
             report_score_id=new_report_score_id,
             manual_override={},
             status="done",
@@ -407,7 +415,7 @@ async def auto_aggregate(
 
     logger.info(
         f"[聚合] {author_name} {week_start}~{week_end} -> "
-        f"周报={report_score}, 考勤={attendance_score}, 沟通={chat_score}, 综合={composite}"
+        f"周报={report_score}, 考勤={attendance_score}, 沟通={chat_score}, 总分={total}"
     )
     await db.commit()
     await db.refresh(agg)
@@ -425,7 +433,7 @@ async def auto_aggregate_for_latest_week(db: AsyncSession) -> int:
     - 空数据=0分也会写入（保证每人每周一条完整记录）
     - 返回处理的人数
     """
-    week_start, week_end = _get_week_range_for_date(date.today())
+    week_start, week_end = _get_week_range_for_date(bj_today())
 
     # 获取所有启用员工
     result = await db.execute(select(Person).where(Person.is_active == True))

@@ -2,7 +2,7 @@
 .git
 .gitignore
 
-# 环境文件
+# Environment files (secrets)
 .env
 .env.local
 .env.production
@@ -10,69 +10,43 @@
 # Node
 node_modules
 npm-debug.log
-yarn-debug.log
-yarn-error.log
+frontend/dist
 
 # Python
 __pycache__
 *.py[cod]
-*$py.class
 *.so
-.Python
-env/
 venv/
 ENV/
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
-*.egg
+.pytest_cache/
 
 # IDE
 .vscode
 .idea
 *.swp
 *.swo
-*~
 
-# 测试
-coverage/
-.coverage
-htmlcov/
-.pytest_cache/
-.tox/
-
-# 日志
-*.log
-logs/
-
-# 数据库
+# Database & uploads (mounted as volumes)
 *.db
 *.sqlite
 *.sqlite3
 backups/
-
-# 上传文件
 uploads/
+data/
 
-# Docker
-docker-compose*.yml
-!Dockerfile
-
-# 文档
+# Docs & scripts
+docs/
+scripts/
 *.md
-!README.md
+DEPLOY.md
 
-# 临时文件
+# Test files
+test/
+coverage/
+htmlcov/
+
+# Temp
 .DS_Store
 Thumbs.db
+*.log

@@ -2,7 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router'
 import { isAdminLoggedIn } from '../utils/auth'
 
 const routes = [
-  { path: '/', name: 'Home', component: () => import('../views/PublicHome.vue'), meta: { title: '周报评分系统', public: true, noLayout: true } },
+  { path: '/', name: 'Home', component: () => import('../views/PublicHome.vue'), meta: { title: '智友辰评分系统', public: true, noLayout: true } },
   { path: '/admin/login', name: 'AdminLogin', component: () => import('../views/AdminLogin.vue'), meta: { title: '管理员登录', public: true, noLayout: true } },
   { path: '/admin', redirect: '/admin/dashboard', meta: { requiresAdmin: true } },
   { path: '/admin/dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '仪表盘', requiresAdmin: true } },

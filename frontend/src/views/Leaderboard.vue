@@ -1,7 +1,7 @@
 <template>
   <div class="leaderboard page-content" :class="{ 'public-page': isPublicMode, 'embedded-mode': embedded }">
     <div v-if="isPublicMode && !embedded" class="public-nav">
-      <router-link to="/" class="brand">周报评分</router-link>
+      <router-link to="/" class="brand">智友辰评分</router-link>
       <div class="public-links">
         <router-link to="/write">提交周报</router-link>
         <router-link to="/leaderboard">排行榜</router-link>
@@ -12,7 +12,7 @@
       <div>
         <span v-if="embedded" class="embedded-kicker">排行榜分析</span>
         <h1>{{ embedded ? '评分结果' : '排行榜' }}</h1>
-        <p class="page-subtitle">{{ embedded ? '按周期查看团队评分排名与趋势。' : '周报评分排名与可视化分析' }}</p>
+        <p class="page-subtitle">{{ embedded ? '按周期查看团队评分排名与趋势。' : '评分排名与可视化分析' }}</p>
       </div>
     </div>
 
@@ -72,6 +72,12 @@
               <Column field="avg_score" header="平均分" sortable style="min-width:80px">
                 <template #body="{ data }">
                   <span v-if="data.avg_score != null">{{ Math.round(Number(data.avg_score)) }}</span>
+                  <span v-else class="text-muted">-</span>
+                </template>
+              </Column>
+              <Column field="chat_score" header="沟通分" sortable style="min-width:80px">
+                <template #body="{ data }">
+                  <span v-if="data.chat_score != null" class="chat-score">{{ Number(data.chat_score).toFixed(1) }}</span>
                   <span v-else class="text-muted">-</span>
                 </template>
               </Column>

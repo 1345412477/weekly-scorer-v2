@@ -17,8 +17,10 @@ settings = get_settings()
 _IS_POSTGRES = settings.DATABASE_URL.startswith("postgresql")
 _IS_SQLITE = settings.DATABASE_URL.startswith("sqlite")
 
-DB_PATH = os.path.join(os.path.dirname(os.path.dirname(__file__)), "weekly_scorer.db")
-BACKUP_DIR = os.path.join(os.path.dirname(os.path.dirname(__file__)), "backups")
+# Docker 环境中数据库在 /app/data/，开发环境在 backend/ 目录
+_DATA_DIR = os.environ.get("DATA_DIR", os.path.dirname(os.path.dirname(__file__)))
+DB_PATH = os.path.join(_DATA_DIR, "weekly_scorer.db")
+BACKUP_DIR = os.path.join(_DATA_DIR, "backups")
 
 
 def backup_database():

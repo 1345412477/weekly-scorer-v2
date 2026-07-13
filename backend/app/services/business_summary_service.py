@@ -11,7 +11,7 @@ from app.models.models import (
     DepartmentSummary, Department, WeeklyReport, Person, ScoringConfig
 )
 from app.utils.logger import log_info, log_error, log_warning
-from app.utils.time_utils import bj_now
+from app.utils.time_utils import bj_now, bj_today
 
 
 # 默认业务盘总结提示词
@@ -119,7 +119,7 @@ DEFAULT_BUSINESS_SUMMARY_PROMPT = """你是一位资深的项目管理分析师�
 def _get_week_range(target_date: Optional[date] = None) -> tuple[date, date]:
     """获取指定日期所在周的周一和周日"""
     if target_date is None:
-        target_date = date.today()
+        target_date = bj_today()
     weekday = target_date.weekday()
     week_start = target_date - timedelta(days=weekday)
     week_end = week_start + timedelta(days=6)
@@ -584,14 +584,22 @@ async def generate_all_department_summaries(
     week_end: date,
 ) -> list[dict]:
     """生成所有部门的总结"""
-    # 查询所有部门
+    # 查询所有部门（过滤掉名称为空的部门）
     result = await db.execute(
-        select(Department).order_by(Department.name)
+        select(Department)
+        .where(Department.name.isnot(None))
+        .where(Department.name != '')
+        .order_by(Department.name)
     )
     departments = result.scalars().all()
     
     results = []
     for dept in departments:
+        # 安全检查：确保部门名称有效
+        if not dept.name:
+            log_warning(f"跳过无效部门记录: ID={dept.id}")
+            continue
+        
         result = await generate_department_summary(
             db, dept.id, dept.name, week_start, week_end
         )

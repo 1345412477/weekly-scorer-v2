@@ -5,6 +5,7 @@ import uuid
 from io import BytesIO
 from typing import Optional, Dict, Any, List
 from datetime import date, datetime
+from app.utils.time_utils import bj_today
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, StreamingResponse
@@ -313,7 +314,7 @@ async def export_aggregates(
     )
     await db.commit()
 
-    fname = f"周报打包_{len(report_files)}份_{date.today().isoformat()}.zip"
+    fname = f"周报打包_{len(report_files)}份_{bj_today().isoformat()}.zip"
     fname_encoded = urllib.parse.quote(fname)
     return StreamingResponse(
         iter([zip_buffer.getvalue()]),
@@ -414,7 +415,7 @@ async def get_schedule(
         recurrence = runtime_cfg.get("recurrence", recurrence_db)
         weekdays = runtime_cfg.get("weekdays", weekdays_db)
         return {
-            "enabled": runtime_cfg.get("enabled", cfg.enabled),
+            "enabled": cfg.enabled,
             "hour": runtime_cfg.get("hour", cfg.hour),
             "minute": runtime_cfg.get("minute", cfg.minute),
             "recurrence": recurrence,

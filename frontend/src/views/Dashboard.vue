@@ -306,8 +306,8 @@ async function loadData() {
 
     const overview = overviewRes.data
     notSubmitted.value = overview.not_submitted || []
-    lowScorers.value = overview.low_scorers || []
-    topImprovers.value = overview.top_improvers || []
+    lowScorers.value = (overview.low_scorers || []).slice(0, 5)
+    topImprovers.value = (overview.top_improvers || []).slice(0, 5)
     totalPersons.value = overview.total_persons || 0
     submittedCount.value = overview.submitted_count || 0
 

@@ -96,65 +96,76 @@
       </div>
     </section>
 
-    <!-- 三项 Prompt 模板 -->
+    <!-- 提示词设置 -->
     <section class="panel-card collapsible" :class="{ collapsed: !expanded.prompts }">
       <header class="panel-header clickable" @click="toggle('prompts')">
         <div class="header-left">
-          <h3>三项评分 Prompt 模板</h3>
-          <p class="panel-desc">分别用于周报、考勤和沟通（含一周小结）评分；评分标准与分数范围由 Prompt 决定，系统不做硬性限制</p>
+          <h3>提示词设置</h3>
+          <p class="panel-desc">配置各项 AI 评分和总结的提示词模板，评分标准与分数范围由提示词决定</p>
         </div>
         <div class="header-right">
-          <Button label="全部生成默认" icon="pi pi-magic" text size="small" @click.stop="generateAllPrompts" />
           <i :class="['chevron', 'pi', expanded.prompts ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
         </div>
       </header>
       <div class="panel-body" v-show="expanded.prompts">
-        <div class="prompt-grid">
+        <!-- 周报评分提示词 -->
+        <div class="prompt-sub-section">
+          <div class="prompt-sub-header">
+            <span class="prompt-sub-title">周报评分提示词</span>
+            <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetReportPrompt" />
+          </div>
           <div class="prompt-block">
             <div class="prompt-block-head">
-              <span class="prompt-field-label">周报评分 · 权重</span>
+              <span class="prompt-field-label">权重</span>
               <InputNumber v-model.number="weights.report" :min="0" :step="1" size="small" :showButtons="false" class="weight-input" />
             </div>
             <Textarea v-model="reportPrompt" rows="6" class="prompt-area" placeholder="请输入周报评分提示词...（建议包含评分维度、标准与分数范围）" autoResize />
           </div>
+        </div>
 
+        <!-- 考勤评分提示词 -->
+        <div class="prompt-sub-section">
+          <div class="prompt-sub-header">
+            <span class="prompt-sub-title">考勤评分提示词</span>
+            <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetAttendancePrompt" />
+          </div>
           <div class="prompt-block">
             <div class="prompt-block-head">
-              <span class="prompt-field-label">考勤评分 · 权重</span>
+              <span class="prompt-field-label">权重</span>
               <InputNumber v-model.number="weights.attendance" :min="0" :step="1" size="small" :showButtons="false" class="weight-input" />
             </div>
             <Textarea v-model="attendancePrompt" rows="6" class="prompt-area" placeholder="请输入考勤评分提示词...（例如工作时长、迟到、异常、加班等标准）" autoResize />
           </div>
+        </div>
 
+        <!-- 沟通/一周小结评分提示词 -->
+        <div class="prompt-sub-section">
+          <div class="prompt-sub-header">
+            <span class="prompt-sub-title">沟通/一周小结评分提示词</span>
+            <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetChatPrompt" />
+          </div>
           <div class="prompt-block">
             <div class="prompt-block-head">
-              <span class="prompt-field-label">沟通/一周小结 · 权重</span>
+              <span class="prompt-field-label">权重</span>
               <InputNumber v-model.number="weights.chat" :min="0" :step="1" size="small" :showButtons="false" class="weight-input" />
             </div>
             <Textarea v-model="chatPrompt" rows="6" class="prompt-area" placeholder="请输入沟通/一周小结评分提示词...（如工作会话次数、响应效率、沟通质量）" autoResize />
           </div>
         </div>
 
+        <!-- 业务盘总结提示词 -->
+        <div class="prompt-sub-section">
+          <div class="prompt-sub-header">
+            <span class="prompt-sub-title">业务盘总结提示词</span>
+            <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetBusinessPrompt" />
+          </div>
+          <p class="prompt-sub-desc">用于 AI 总结各部门每周工作事项，支持变量：{department}（部门名称）、{week_label}（周次）、{reports}（周报内容汇总）</p>
+          <Textarea v-model="businessSummaryPrompt" rows="12" class="prompt-area" placeholder="请输入业务盘总结提示词..." autoResize />
+        </div>
+
         <div class="weights-sum-row">
           <span class="weights-label">综合得分 = 周报分 × {{ weights.report }} + 考勤分 × {{ weights.attendance }} + 沟通分 × {{ weights.chat }}</span>
         </div>
-      </div>
-    </section>
-
-    <!-- 业务盘总结 Prompt -->
-    <section class="panel-card collapsible" :class="{ collapsed: !expanded.businessPrompt }">
-      <header class="panel-header clickable" @click="toggle('businessPrompt')">
-        <div class="header-left">
-          <h3>业务盘总结 Prompt</h3>
-          <p class="panel-desc">用于 AI 总结各部门每周工作事项，支持变量：{department}（部门名称）、{week_label}（周次）、{reports}（周报内容汇总）</p>
-        </div>
-        <div class="header-right">
-          <Button label="生成默认" icon="pi pi-magic" text size="small" @click.stop="generateBusinessPrompt" />
-          <i :class="['chevron', 'pi', expanded.businessPrompt ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
-        </div>
-      </header>
-      <div class="panel-body" v-show="expanded.businessPrompt">
-        <Textarea v-model="businessSummaryPrompt" rows="12" class="prompt-area" placeholder="请输入业务盘总结提示词..." autoResize />
       </div>
     </section>
 
@@ -267,10 +278,6 @@
               系统会在每周 {{ formatWeekdayHint() }} {{ String(schedule.hour).padStart(2, '0') }}:{{ String(schedule.minute).padStart(2, '0') }} 自动聚合本周的考勤与沟通数据
             </template>
           </span>
-        </div>
-
-        <div class="schedule-actions">
-          <Button label="保存定时设置" icon="pi pi-check" :loading="scheduleSaving" @click="saveSchedule" severity="success" />
         </div>
 
         <div v-if="scheduleMsg" class="schedule-msg" :class="scheduleMsg.type">
@@ -411,7 +418,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted, watch } from 'vue'
 import { configAPI, departmentAPI, personAPI, reportAPI, aggregateAPI, aiModelAPI } from '../api'
 import { useDataRefresh, getConfigEvents } from '../composables/useDataRefresh'
 import { useDataOperation } from '../composables/useDataOperation'
@@ -558,6 +565,26 @@ function resetConfig() {
   toast.add({ severity: 'info', summary: '已重置为默认配置', life: 2000 })
 }
 
+function resetReportPrompt() {
+  reportPrompt.value = ''
+  toast.add({ severity: 'info', summary: '已重置周报评分提示词', life: 2000 })
+}
+
+function resetAttendancePrompt() {
+  attendancePrompt.value = ''
+  toast.add({ severity: 'info', summary: '已重置考勤评分提示词', life: 2000 })
+}
+
+function resetChatPrompt() {
+  chatPrompt.value = ''
+  toast.add({ severity: 'info', summary: '已重置沟通评分提示词', life: 2000 })
+}
+
+function resetBusinessPrompt() {
+  businessSummaryPrompt.value = ''
+  toast.add({ severity: 'info', summary: '已重置业务盘总结提示词', life: 2000 })
+}
+
 async function loadConfig() {
   try {
     const res = await configAPI.get()
@@ -593,6 +620,7 @@ async function saveConfig() {
   }
   saving.value = true
   try {
+    // 保存配置
     await configAPI.save({
       dimensions: dimensions.value,
       grade_thresholds: gradeThresholds.value,
@@ -607,6 +635,16 @@ async function saveConfig() {
         chat: Number(weights.value.chat ?? 1),
       },
     })
+    
+    // 同时保存定时设置
+    await configAPI.saveSchedule({
+      enabled: schedule.value.enabled,
+      hour: schedule.value.hour,
+      minute: schedule.value.minute,
+      recurrence: schedule.value.recurrence,
+      weekdays: schedule.value.weekdays,
+    })
+    
     emitDataChanged(DataEventType.CONFIG_CHANGED, { source: 'saveConfig' })
     toast.add({ severity: 'success', summary: '配置保存成功', life: 2000 })
   } catch (e) {
@@ -783,7 +821,7 @@ function generateDefaultPrompt() {
     .map(([k, v]) => `${k}(≥${v})`)
     .join('、')
 
-  promptTemplate.value = `# 周报评分系统提示词\n\n## 角色设定\n你是一位专业、客观的工作报告评审专家。请根据以下评分维度对员工周报进行综合评估。\n\n## 评分原则\n1. 客观公正：基于周报内容进行评价，避免主观臆断\n2. 鼓励量化：对有数据支撑、可量化成果的内容给予更高评价\n3. 关注闭环：重视"计划→执行→结果"的完整闭环\n4. 提供建设性：评语和建议应具体、可操作\n\n## 评分维度\n${dims || '（请先配置评分维度）'}\n\n## 评分标准\n- 每个维度独立打分，不超过该维度满分\n- 综合评分 = 各维度分数直接相加（${totalFullScore.value}分制）\n- 等级划分：${gradeText}\n\n## 输出要求\n请以 JSON 格式返回评分结果，包含：\n- dimension_scores: 各维度得分及评语（含name、score、max、comment）\n- total_score: 综合得分\n- grade: 等级（优/良/一般/差）\n- comment: 总体评语（100字以内）\n- suggestion: 改进建议（具体可执行）\n\n## 周报内容\n{content}`
+  promptTemplate.value = `# 智友辰评分系统提示词\n\n## 角色设定\n你是一位专业、客观的工作报告评审专家。请根据以下评分维度对员工周报进行综合评估。\n\n## 评分原则\n1. 客观公正：基于周报内容进行评价，避免主观臆断\n2. 鼓励量化：对有数据支撑、可量化成果的内容给予更高评价\n3. 关注闭环：重视"计划→执行→结果"的完整闭环\n4. 提供建设性：评语和建议应具体、可操作\n\n## 评分维度\n${dims || '（请先配置评分维度）'}\n\n## 评分标准\n- 每个维度独立打分，不超过该维度满分\n- 综合评分 = 各维度分数直接相加（${totalFullScore.value}分制）\n- 等级划分：${gradeText}\n\n## 输出要求\n请以 JSON 格式返回评分结果，包含：\n- dimension_scores: 各维度得分及评语（含name、score、max、comment）\n- total_score: 综合得分\n- grade: 等级（优/良/一般/差）\n- comment: 总体评语（100字以内）\n- suggestion: 改进建议（具体可执行）\n\n## 周报内容\n{content}`
 
   toast.add({ severity: 'success', summary: '已生成默认模板', life: 2000 })
 }
@@ -1200,6 +1238,22 @@ onMounted(() => {
   loadSchedule()
   loadAiModels()
 })
+
+// 监听定时评分开关变化，自动保存
+let scheduleLoaded = false
+watch(
+  () => schedule.value.enabled,
+  (newVal, oldVal) => {
+    // 页面刚加载时 loadSchedule 会设置 enabled 值，跳过首次
+    if (!scheduleLoaded) {
+      scheduleLoaded = true
+      return
+    }
+    if (newVal !== oldVal) {
+      saveSchedule()
+    }
+  }
+)
 
 useDataRefresh({
   loadFn: loadManagementData,

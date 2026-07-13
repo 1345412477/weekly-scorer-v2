@@ -1,4 +1,5 @@
 """AI 评分引擎 - 支持数据库自定义模型 + .env 配置"""
+import asyncio
 import json
 import logging
 from typing import Optional
@@ -10,6 +11,10 @@ logger = logging.getLogger("weekly_scorer")
 settings = get_settings()
 _client: Optional[AsyncOpenAI] = None
 _db_model_cache: Optional[dict] = None  # 缓存数据库中的活跃模型配置
+
+# 重试配置
+MAX_RETRY_ATTEMPTS = 3  # 最大重试次数
+RETRY_DELAY_SECONDS = 2  # 重试间隔（秒）
 
 
 def _mask_key(key: str) -> str:
@@ -135,12 +140,81 @@ def _safe_get_content(response) -> str:
     return response.choices[0].message.content or ""
 
 
+def _is_retryable_error(error_msg: str) -> bool:
+    """判断错误是否可重试（超时、网络、频率限制等）"""
+    retryable_keywords = ["timeout", "timed out", "rate", "limit", "connection", "network", "temporarily", "busy"]
+    error_lower = error_msg.lower()
+    return any(kw in error_lower for kw in retryable_keywords)
+
+
+async def _retry_on_failure(func, *args, **kwargs):
+    """带重试机制的异步函数包装器，失败/超时时自动重试直至成功或达到最大次数"""
+    last_error = None
+    for attempt in range(MAX_RETRY_ATTEMPTS + 1):
+        try:
+            return await func(*args, **kwargs)
+        except AIScoringError as e:
+            last_error = e
+            error_msg = str(e)
+            # 认证错误、模型错误等不重试
+            if any(kw in error_msg.lower() for kw in ["认证失败", "api key", "模型不可用", "not found"]):
+                logger.error(f"[AI] 不可重试错误: {error_msg}")
+                raise
+            # 可重试错误
+            if attempt < MAX_RETRY_ATTEMPTS:
+                delay = RETRY_DELAY_SECONDS * (2 ** attempt)  # 指数退避
+                logger.warning(f"[AI] 第 {attempt + 1} 次失败，{delay}秒后重试: {error_msg}")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"[AI] 已达最大重试次数 {MAX_RETRY_ATTEMPTS}，放弃重试")
+                raise
+        except Exception as e:
+            last_error = e
+            error_msg = str(e)
+            if not _is_retryable_error(error_msg):
+                logger.error(f"[AI] 不可重试错误: {error_msg}")
+                raise AIScoringError(f"AI 评分失败: {error_msg}") from e
+            if attempt < MAX_RETRY_ATTEMPTS:
+                delay = RETRY_DELAY_SECONDS * (2 ** attempt)
+                logger.warning(f"[AI] 第 {attempt + 1} 次失败，{delay}秒后重试: {error_msg}")
+                await asyncio.sleep(delay)
+            else:
+                logger.error(f"[AI] 已达最大重试次数 {MAX_RETRY_ATTEMPTS}，放弃重试")
+                raise AIScoringError(f"AI 评分失败（已重试 {MAX_RETRY_ATTEMPTS} 次）: {error_msg}") from e
+    raise last_error or AIScoringError("AI 评分失败")
+
+
 async def _get_scoring_config(db=None) -> tuple[str, Optional[dict]]:
     """获取评分配置：返回 (model_id, db_model_config)"""
     db_model = await _get_active_model_from_db(db)
     if db_model:
         return db_model["model_id"], db_model
     return settings.SCORING_MODEL, None
+
+
+async def _call_score_report_api(
+    system_prompt: str,
+    user_prompt: str,
+    dimensions: list,
+    db=None,
+) -> dict:
+    """实际调用 AI API 进行评分（内部函数，供重试包装器使用）"""
+    model_id, db_model = await _get_scoring_config(db)
+    c = get_client(
+        api_key=db_model["api_key"] if db_model else None,
+        base_url=db_model["base_url"] if db_model else None,
+    )
+    response = await c.chat.completions.create(
+        model=model_id,
+        messages=[
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_prompt},
+        ],
+        temperature=settings.SCORING_TEMPERATURE,
+    )
+    raw = _safe_get_content(response)
+    result = _extract_json(raw)
+    return normalize_result(result, dimensions)
 
 
 async def score_report(
@@ -154,7 +228,7 @@ async def score_report(
 ) -> dict:
     # 计算总满分
     total_full_score = sum(d.get("full_score", 0) for d in dimensions)
-    
+
     def _dim_line(d):
         parts = [f"- {d['name']}（满分{d['full_score']}分"]
         if d.get('highest_score') is not None:
@@ -201,37 +275,29 @@ async def score_report(
     )
 
     try:
-        model_id, db_model = await _get_scoring_config(db)
-        c = get_client(
-            api_key=db_model["api_key"] if db_model else None,
-            base_url=db_model["base_url"] if db_model else None,
+        # 使用重试机制调用 API
+        return await _retry_on_failure(
+            _call_score_report_api,
+            system_prompt,
+            user_prompt,
+            dimensions,
+            db=db,
         )
-        response = await c.chat.completions.create(
-            model=model_id,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=settings.SCORING_TEMPERATURE,
-        )
-        raw = _safe_get_content(response)
-        result = _extract_json(raw)
-        return normalize_result(result, dimensions)
-    except Exception as e:
+    except AIScoringError as e:
         error_msg = str(e)
         if "api_key" in error_msg.lower() or "authentication" in error_msg.lower() or "auth" in error_msg.lower():
             user_message = "AI 服务认证失败：请检查 API Key 是否正确配置。"
         elif "rate" in error_msg.lower() or "limit" in error_msg.lower():
             user_message = "AI 服务请求频率超限：请稍后再试，或联系管理员检查配额。"
         elif "timeout" in error_msg.lower() or "timed out" in error_msg.lower():
-            user_message = "AI 服务响应超时：请稍后再试，或检查网络连接。"
+            user_message = "AI 服务响应超时：已自动重试多次，请稍后再试或检查网络连接。"
         elif "connection" in error_msg.lower() or "network" in error_msg.lower():
-            user_message = "AI 服务连接失败：请检查网络连接，或确认 AI 服务地址是否正确。"
+            user_message = "AI 服务连接失败：已自动重试多次，请检查网络连接或确认 AI 服务地址是否正确。"
         elif "model" in error_msg.lower() or "not found" in error_msg.lower():
             user_message = "AI 模型不可用：请检查模型名称是否正确，或联系管理员。"
         else:
             user_message = f"AI 评分失败：{error_msg}"
-        
+
         raise AIScoringError(user_message) from e
 
 

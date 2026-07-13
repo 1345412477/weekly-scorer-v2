@@ -8,6 +8,7 @@ import base64
 import mimetypes
 from typing import Optional, Tuple
 from datetime import datetime, date
+from app.utils.time_utils import bj_today
 
 from app.services.ai_scorer import get_client, AIScoringError
 from app.config import get_settings
@@ -154,7 +155,7 @@ def _safe_load_json(text: str) -> dict:
 
 def infer_week_range(target_date: Optional[date] = None) -> Tuple[date, date]:
     """推断本周的周一-周日范围（默认今天所在周）"""
-    today = target_date or date.today()
+    today = target_date or bj_today()
     monday = today - _timedelta(days=today.weekday())
     sunday = monday + _timedelta(days=6)
     return monday, sunday

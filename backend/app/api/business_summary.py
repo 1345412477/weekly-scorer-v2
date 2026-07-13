@@ -9,7 +9,8 @@ import uuid
 from app.database import get_db
 from app.models.models import DepartmentSummary, Department, AdminUser
 from app.core.auth import require_admin, write_operation_log
-from app.utils.time_utils import bj_now
+from app.utils.time_utils import bj_now, bj_today
+from app.utils.response import success_response, error_response
 
 router = APIRouter(prefix="/api/v1/business-dashboard", tags=["业务盘"])
 
@@ -17,7 +18,7 @@ router = APIRouter(prefix="/api/v1/business-dashboard", tags=["业务盘"])
 def _get_week_range(target_date: Optional[date] = None) -> tuple[date, date]:
     """获取指定日期所在周的周一和周日"""
     if target_date is None:
-        target_date = date.today()
+        target_date = bj_today()
     weekday = target_date.weekday()  # 0=Monday, 6=Sunday
     week_start = target_date - timedelta(days=weekday)
     week_end = week_start + timedelta(days=6)
@@ -38,7 +39,7 @@ async def list_summaries(
         except ValueError:
             raise HTTPException(status_code=400, detail="日期格式错误，请使用 YYYY-MM-DD 格式")
     else:
-        target_date = date.today()
+        target_date = bj_today()
     
     ws, we = _get_week_range(target_date)
     
@@ -94,11 +95,15 @@ async def list_summaries(
                 "generated_at": None,
             })
     
-    return {
+    return success_response(data={
         "week_start": ws.isoformat(),
         "week_end": we.isoformat(),
         "items": items,
-    }
+        "has_data": any(
+            (item.get("last_week_projects") or []) or (item.get("this_week_projects") or [])
+            for item in items
+        ),
+    })
 
 
 @router.get("/{dept_id}")
@@ -115,7 +120,7 @@ async def get_summary(
         except ValueError:
             raise HTTPException(status_code=400, detail="日期格式错误")
     else:
-        target_date = date.today()
+        target_date = bj_today()
     
     ws, we = _get_week_range(target_date)
     
@@ -136,7 +141,7 @@ async def get_summary(
         if not dept:
             raise HTTPException(status_code=404, detail="部门不存在")
         
-        return {
+        return success_response(data={
             "id": None,
             "department_id": dept_id,
             "department_name": dept.name,
@@ -151,7 +156,7 @@ async def get_summary(
             "error_message": None,
             "generated_at": None,
             "persons": [],
-        }
+        })
     
     # 查询部门人员
     from app.models.models import Person
@@ -163,7 +168,7 @@ async def get_summary(
     )
     persons = person_result.scalars().all()
     
-    return {
+    return success_response(data={
         "id": summary.id,
         "department_id": summary.department_id,
         "department_name": summary.department_name,
@@ -181,7 +186,7 @@ async def get_summary(
             {"name": p.name, "position": p.position or ""}
             for p in persons
         ],
-    }
+    })
 
 
 @router.post("/generate")
@@ -197,7 +202,7 @@ async def generate_all(
         except ValueError:
             raise HTTPException(status_code=400, detail="日期格式错误")
     else:
-        target_date = date.today()
+        target_date = bj_today()
     
     ws, we = _get_week_range(target_date)
     
@@ -210,12 +215,12 @@ async def generate_all(
         detail={"week_start": ws.isoformat(), "results": result}
     )
     
-    return {
+    return success_response(data={
         "message": "生成完成",
         "week_start": ws.isoformat(),
         "week_end": we.isoformat(),
         "results": result,
-    }
+    })
 
 
 @router.post("/{dept_id}/generate")
@@ -232,7 +237,7 @@ async def generate_dept(
         except ValueError:
             raise HTTPException(status_code=400, detail="日期格式错误")
     else:
-        target_date = date.today()
+        target_date = bj_today()
     
     ws, we = _get_week_range(target_date)
     
@@ -253,12 +258,12 @@ async def generate_dept(
         detail={"week_start": ws.isoformat(), "result": result}
     )
     
-    return {
+    return success_response(data={
         "message": "生成完成",
         "department_id": dept_id,
         "department_name": dept.name,
         "result": result,
-    }
+    })
 
 
 @router.patch("/{dept_id}/highlight")
@@ -276,7 +281,7 @@ async def update_highlight(
         except ValueError:
             raise HTTPException(status_code=400, detail="日期格式错误")
     else:
-        target_date = date.today()
+        target_date = bj_today()
     
     ws, we = _get_week_range(target_date)
     
@@ -343,4 +348,4 @@ async def update_highlight(
     summary.updated_at = bj_now()
     await db.commit()
     
-    return {"message": "更新成功"}
+    return success_response(data={"message": "更新成功"})

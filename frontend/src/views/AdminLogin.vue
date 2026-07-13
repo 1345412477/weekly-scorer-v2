@@ -188,6 +188,16 @@ async function login() {
   margin-top: 8px;
 }
 
+/* PrimeVue Password 组件输入框撑满宽度 */
+.field :deep(.p-password-input) {
+  width: 100%;
+}
+
+.field :deep(input[type="text"]),
+.field :deep(input[type="password"]) {
+  width: 100%;
+}
+
 .login-error {
   display: flex;
   align-items: center;

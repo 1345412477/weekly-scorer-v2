@@ -6,13 +6,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
 from app.database import get_db
-from app.models.models import WeeklyReport, ReportScore, Person
+from app.models.models import WeeklyReport, ReportScore, Person, WeeklyAggregate
+from app.utils.time_utils import bj_today
 
 router = APIRouter(prefix="/api/v1/leaderboard", tags=["排行榜"])
 
 
 def get_current_week():
-    today = date.today()
+    today = bj_today()
     monday = today - timedelta(days=today.weekday())
     sunday = monday + timedelta(days=6)
     return monday, sunday
@@ -25,7 +26,7 @@ def get_previous_week(current_monday, current_sunday):
 
 
 def get_current_month():
-    today = date.today()
+    today = bj_today()
     first = today.replace(day=1)
     if today.month == 12:
         last = today.replace(year=today.year + 1, month=1, day=1) - timedelta(days=1)
@@ -121,6 +122,28 @@ async def get_leaderboard(
     latest_grade = func.max(ReportScore.grade).label("latest_grade")
     latest_report_id = func.max(first_cte.c.id).label("latest_report_id")
 
+    # 子查询：获取每位员工在周期内的平均 chat_score（从 weekly_aggregates 表）
+    chat_subq = (
+        select(
+            WeeklyAggregate.author_name,
+            func.coalesce(func.avg(WeeklyAggregate.chat_score), 0).label("avg_chat_score"),
+        )
+        .where(WeeklyAggregate.author_name.isnot(None))
+    )
+    if period == "week":
+        current_monday, current_sunday = _resolve_week_range(week_start)
+        chat_subq = chat_subq.where(
+            WeeklyAggregate.week_start >= current_monday,
+            WeeklyAggregate.week_end <= current_sunday,
+        )
+    elif period == "month":
+        first, last = get_current_month()
+        chat_subq = chat_subq.where(
+            WeeklyAggregate.week_start >= first,
+            WeeklyAggregate.week_end <= last,
+        )
+    chat_subq = chat_subq.group_by(WeeklyAggregate.author_name).subquery("chat_scores")
+
     query = (
         select(
             first_cte.c.author_name,
@@ -130,10 +153,12 @@ async def get_leaderboard(
             report_count,
             latest_grade,
             latest_report_id,
+            chat_subq.c.avg_chat_score,
         )
         .select_from(first_cte)
         .join(ReportScore, ReportScore.report_id == first_cte.c.id, isouter=True)
-        .group_by(first_cte.c.author_name, first_cte.c.department)
+        .outerjoin(chat_subq, chat_subq.c.author_name == first_cte.c.author_name)
+        .group_by(first_cte.c.author_name, first_cte.c.department, chat_subq.c.avg_chat_score)
     )
 
     sort_column = {
@@ -201,6 +226,7 @@ async def get_leaderboard(
             "avg_score": cur_avg,
             "report_count": int(row.report_count or 0),
             "latest_grade": row.latest_grade or "",
+            "chat_score": round(float(row.avg_chat_score or 0), 1) if row.avg_chat_score is not None else None,
             "trend": trend,
         })
 
