@@ -737,7 +737,7 @@ function resetConfig() {
 
 {reports}
 
-è¯·è¾åº JSON æ ¼å¼çé¡¹ç®æ»ç»ï¼åå½å¹¶ï¼åè¾åºï¼ï¼`''
+è¯·è¾åº JSON æ ¼å¼çé¡¹ç®æ»ç»ï¼åå½å¹¶ï¼åè¾åºï¼ï¼`
   weights.value = { report: 1, attendance: 1, chat: 1 }
   toast.add({ severity: 'info', summary: '已重置为默认配置', life: 2000 })
 }
