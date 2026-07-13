@@ -8,6 +8,28 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791)
 ![License](https://img.shields.io/badge/License-Private-red)
 
+## 界面预览
+
+### 首页仪表盘
+
+![首页](https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=A%20modern%20web%20dashboard%20interface%20for%20a%20smart%20weekly%20report%20scoring%20system%2C%20showing%20charts%2C%20statistics%2C%20employee%20list%2C%20clean%20UI%20design%2C%20blue%20theme%2C%20professional%20look&image_size=landscape_16_9)
+
+### 周报操作指引
+
+![周报操作](example/weekly_paper.png)
+
+1. **选择周报模板** - 上传或在线填写周报内容
+
+![步骤一](example/weekly_settle_1.jpg)
+
+2. **AI 智能评分** - 系统自动从多个维度对周报进行评分
+
+![步骤二](example/weekly_settle_2.jpg)
+
+3. **查看评分结果** - 查看综合得分、等级和详细评语
+
+![步骤三](example/weekly_settle_3.jpg)
+
 ## 功能概览
 
 | 模块 | 功能 |

@@ -37,6 +37,13 @@ echo "=========================================="
 echo ""
 echo "[0/6] 拉取最新代码..."
 if [ -d "$PROJECT_DIR/.git" ]; then
+    # 修复 remote URL（去掉用户名避免每次输密码，公开仓库无需认证）
+    CURRENT_URL=$(git remote get-url origin 2>/dev/null)
+    if echo "$CURRENT_URL" | grep -q "@gitee.com"; then
+        FIXED_URL=$(echo "$CURRENT_URL" | sed 's/[^/]*@gitee.com/gitee.com/')
+        git remote set-url origin "$FIXED_URL"
+        echo "✓ 已修复 remote URL，去掉用户名认证"
+    fi
     git pull origin master || echo "警告: 拉取代码失败，使用当前代码继续部署"
 else
     echo "当前目录不是 Git 仓库，跳过拉取"
