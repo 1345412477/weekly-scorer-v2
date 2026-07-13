@@ -101,7 +101,7 @@ echo "[6/6] 等待服务启动..."
 MAX_WAIT=60
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
-    if curl -sf http://localhost/health > /dev/null 2>&1; then
+    if curl -sf http://localhost:8081/health > /dev/null 2>&1; then
         echo "✓ 服务已就绪"
         break
     fi

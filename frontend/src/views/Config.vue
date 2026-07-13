@@ -637,7 +637,7 @@ async function saveConfig() {
     })
     
     // 同时保存定时设置
-    await configAPI.saveSchedule({
+    await aggregateAPI.saveSchedule({
       enabled: schedule.value.enabled,
       hour: schedule.value.hour,
       minute: schedule.value.minute,
