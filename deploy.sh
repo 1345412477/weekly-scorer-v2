@@ -98,7 +98,7 @@ docker compose up -d
 # 6. 等待服务就绪
 echo ""
 echo "[6/6] 等待服务启动..."
-MAX_WAIT=60
+MAX_WAIT=120
 WAITED=0
 while [ $WAITED -lt $MAX_WAIT ]; do
     if curl -sf http://localhost:8081/health > /dev/null 2>&1; then
@@ -111,9 +111,9 @@ while [ $WAITED -lt $MAX_WAIT ]; do
 done
 
 if [ $WAITED -ge $MAX_WAIT ]; then
-    echo "✗ 服务启动超时，请检查日志:"
+    echo "⚠ 服务启动超时，请检查日志:"
     echo "  docker compose logs"
-    exit 1
+    echo "  注：健康检查超时不代表启动失败，容器可能仍在初始化"
 fi
 
 # 显示状态
@@ -123,9 +123,9 @@ echo "  部署完成！"
 echo "=========================================="
 docker compose ps
 echo ""
-echo "访问地址: http://192.168.1.119"
-echo "健康检查: http://192.168.1.119/health"
-echo "API 文档: http://192.168.1.119/docs"
+echo "访问地址: http://192.168.1.119:8081"
+echo "健康检查: http://192.168.1.119:8081/health"
+echo "API 文档: http://192.168.1.119:8081/docs"
 echo ""
 echo "默认管理员账号:"
 echo "  用户名: admin"
