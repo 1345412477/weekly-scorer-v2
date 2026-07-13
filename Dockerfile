@@ -22,10 +22,8 @@ COPY backend/ ./
 # 复制前端构建产物到后端期望的路径（backend/../frontend/dist → /frontend/dist）
 COPY --from=frontend-builder /app/frontend/dist /frontend/dist
 
-RUN mkdir -p /app/data /app/uploads /app/uploads/chat
+RUN mkdir -p /app/uploads /app/uploads/chat
 
-ENV DATABASE_URL=sqlite+aiosqlite:////app/data/weekly_scorer.db
-ENV DATA_DIR=/app/data
 ENV TZ=Asia/Shanghai
 
 EXPOSE 8000
