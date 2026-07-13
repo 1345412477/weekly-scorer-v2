@@ -4,7 +4,7 @@ services:
     container_name: weekly-scorer
     restart: unless-stopped
     ports:
-      - "80:8000"
+      - "8081:8000"
     volumes:
       - ./uploads:/app/uploads
     env_file:
