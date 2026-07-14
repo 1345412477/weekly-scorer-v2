@@ -20,6 +20,8 @@
               <h2>操作指南</h2>
               <p class="section-desc">按照以下步骤完成周报和一周小结的提交</p>
             </div>
+            <Button label="下载周报模板" icon="pi pi-download" severity="info" outlined
+              :loading="downloading" @click="downloadTemplate" />
           </div>
 
           <!-- 周报上传说明 -->
@@ -30,9 +32,9 @@
               <li>在右侧上传区点击或拖拽周报文件</li>
               <li>系统自动识别提交人姓名并匹配部门</li>
             </ol>
-            <div class="screenshot-placeholder">
-              <i class="pi pi-image placeholder-icon"></i>
-              <span>周报操作截图</span>
+            <div class="screenshot-wrapper" @click="openLightbox('/example/weekly_paper.png')">
+              <img src="/example/weekly_paper.png" alt="周报操作截图" class="screenshot-img" />
+              <span class="zoom-hint"><i class="pi pi-search"></i></span>
             </div>
           </div>
 
@@ -45,17 +47,17 @@
               <li>在右侧上传区点击或拖拽截图文件</li>
             </ol>
             <div class="screenshot-grid">
-              <div class="screenshot-placeholder">
-                <i class="pi pi-image placeholder-icon"></i>
-                <span>步骤一截图</span>
+              <div class="screenshot-wrapper" @click="openLightbox('/example/weekly_settle_1.jpg')">
+                <img src="/example/weekly_settle_1.jpg" alt="步骤一截图" class="screenshot-img" />
+                <span class="zoom-hint"><i class="pi pi-search"></i></span>
               </div>
-              <div class="screenshot-placeholder">
-                <i class="pi pi-image placeholder-icon"></i>
-                <span>步骤二截图</span>
+              <div class="screenshot-wrapper" @click="openLightbox('/example/weekly_settle_2.jpg')">
+                <img src="/example/weekly_settle_2.jpg" alt="步骤二截图" class="screenshot-img" />
+                <span class="zoom-hint"><i class="pi pi-search"></i></span>
               </div>
-              <div class="screenshot-placeholder">
-                <i class="pi pi-image placeholder-icon"></i>
-                <span>步骤三截图</span>
+              <div class="screenshot-wrapper" @click="openLightbox('/example/weekly_settle_3.jpg')">
+                <img src="/example/weekly_settle_3.jpg" alt="步骤三截图" class="screenshot-img" />
+                <span class="zoom-hint"><i class="pi pi-search"></i></span>
               </div>
             </div>
           </div>
@@ -175,17 +177,27 @@
         </div>
       </div>
     </Dialog>
+
+    <!-- 图片放大查看 -->
+    <div v-if="lightboxSrc" class="lightbox-overlay" @click.self="closeLightbox">
+      <div class="lightbox-content">
+        <button class="lightbox-close" @click="closeLightbox"><i class="pi pi-times"></i></button>
+        <img :src="lightboxSrc" alt="放大查看" class="lightbox-img" />
+      </div>
+    </div>
   </div>
 </template>
 
 <script setup>
-import { ref } from 'vue'
-import { unifiedUploadAPI } from '../api'
+import { ref, onMounted, onUnmounted } from 'vue'
+import { reportAPI, unifiedUploadAPI } from '../api'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
+
+const downloading = ref(false)
 
 // 周报上传
 const reportInput = ref(null)
@@ -202,12 +214,49 @@ const uploading = ref(false)
 const showResult = ref(false)
 const resultData = ref(null)
 
+// 图片放大
+const lightboxSrc = ref(null)
+function openLightbox(src) { lightboxSrc.value = src }
+function closeLightbox() { lightboxSrc.value = null }
+
+onMounted(() => {
+  document.addEventListener('keydown', handleKeydown)
+})
+onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
+})
+function handleKeydown(e) {
+  if (e.key === 'Escape') closeLightbox()
+}
+
 const year = new Date().getFullYear()
 
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB'
   return (bytes / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+async function downloadTemplate() {
+  downloading.value = true
+  try {
+    const res = await reportAPI.downloadTemplate()
+    const url = window.URL.createObjectURL(new Blob([res.data]))
+    const a = document.createElement('a')
+    a.href = url
+    const now = new Date()
+    const ds = `${now.getFullYear()}${String(now.getMonth()+1).padStart(2,'0')}${String(now.getDate()).padStart(2,'0')}`
+    a.download = `周报模板_${ds}.xlsx`
+    document.body.appendChild(a)
+    a.click()
+    window.URL.revokeObjectURL(url)
+    document.body.removeChild(a)
+    toast.add({ severity: 'success', summary: '模板下载成功', life: 2000 })
+  } catch (e) {
+    toast.add({ severity: 'error', summary: '模板下载失败', life: 2000 })
+  } finally {
+    downloading.value = false
+  }
 }
 
 // 周报相关
@@ -631,36 +680,146 @@ h2 {
   font-weight: 600;
 }
 
-.screenshot-placeholder {
-  border: 2px dashed #d8e0f4;
-  border-radius: 12px;
-  background: #f8faff;
-  padding: 32px 20px;
+.screenshot-wrapper {
+  border: 1px solid #eef1f9;
+  border-radius: 10px;
+  background: #fff;
+  overflow: hidden;
   display: flex;
-  flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 8px;
-  color: #7a819a;
-  font-size: 14px;
-  min-height: 160px;
-  flex: 1;
+  padding: 8px;
+  transition: border-color 0.25s ease, box-shadow 0.25s ease;
 }
 
-.placeholder-icon {
-  font-size: 28px;
-  color: #a6adc4;
+.screenshot-wrapper:hover {
+  border-color: #c8d4fa;
+  box-shadow: 0 4px 16px rgba(79, 107, 255, 0.10);
 }
 
+/* 周报操作截图 — 宽屏图，限制宽度 */
+.guide-block:nth-child(2) .screenshot-wrapper {
+  max-width: 560px;
+}
+
+/* 一周小结三步截图 — 手机竖屏截图 */
 .screenshot-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
-  gap: 12px;
+  gap: 14px;
 }
 
-.screenshot-grid .screenshot-placeholder {
-  min-height: 100px;
-  padding: 20px 12px;
+.screenshot-grid .screenshot-wrapper {
+  min-height: 180px;
+}
+
+.screenshot-img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+  border-radius: 6px;
+}
+
+/* 周报截图 — 宽屏图按宽度缩放 */
+.guide-block:nth-child(2) .screenshot-img {
+  max-width: 560px;
+  max-height: 280px;
+}
+
+/* 一周小结截图 — 手机竖屏图按高度缩放 */
+.screenshot-grid .screenshot-img {
+  max-height: 320px;
+}
+
+/* 放大镜提示 */
+.screenshot-wrapper {
+  cursor: zoom-in;
+  position: relative;
+}
+
+.zoom-hint {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(79, 107, 255, 0.85);
+  color: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  opacity: 0;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
+}
+
+.screenshot-wrapper:hover .zoom-hint {
+  opacity: 1;
+}
+
+/* Lightbox 放大查看 */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: fadeIn 0.2s ease;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+.lightbox-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  animation: zoomIn 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes zoomIn {
+  from { transform: scale(0.85); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+}
+
+.lightbox-close {
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: #fff;
+  color: #333;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, background 0.2s ease;
+  z-index: 1;
+}
+
+.lightbox-close:hover {
+  transform: scale(1.1);
+  background: #f5f5f5;
 }
 
 /* Footer */
