@@ -12,8 +12,14 @@ import openpyxl
 logger = logging.getLogger(__name__)
 
 
+from app.config import get_settings
+
+# 模板文件放在 backend/templates/ 下，由 config.TEMPLATE_DIR 配置路径
+# 默认 "./templates"，相对于 backend/ 目录
+_template_rel = get_settings().TEMPLATE_DIR.lstrip("./\\")
 TEMPLATE_PATH = os.path.join(
-    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+    os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+    _template_rel,
     "周报模板.xlsx",
 )
 
