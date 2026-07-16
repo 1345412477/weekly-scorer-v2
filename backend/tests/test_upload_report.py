@@ -39,8 +39,8 @@ class TestFileFormatValidation:
             assert resp.status_code == 200
             data = resp.json()
             assert data["report_id"]
-            assert data["total_score"] is not None
-            assert data["grade"] in ["S", "A", "B", "C", "D"]
+            assert data["total_score"] is None  # 异步评分，响应时还未完成
+            assert data["scoring_status"] == "pending"
         finally:
             os.unlink(f.name)
 
@@ -418,7 +418,7 @@ class TestEdgeCases:
                 )
             assert resp.status_code == 200
             data = resp.json()
-            assert data["total_score"] is not None
+            assert data["total_score"] is None  # 异步评分
         finally:
             os.unlink(f.name)
 
@@ -465,7 +465,7 @@ class TestEdgeCases:
             assert detail["id"] == report_id
             assert detail["author_name"] == "持久化测试"
             assert detail["department"] == "测试部"
-            assert detail["status"] == "scored"
+            assert detail["status"] == "submitted"  # 异步评分，初始状态为 submitted
             assert detail["content"]
             assert detail["submit_time"]
 
@@ -539,14 +539,17 @@ class TestAIScoringIntegration:
                 )
             assert resp.status_code == 200
             data = resp.json()
-            assert data["total_score"] is not None
-            assert data["grade"] in ["S", "A", "B", "C", "D"]
-            assert 0 <= data["total_score"] <= 100
+            assert data["total_score"] is None  # 异步评分
+            assert data["scoring_status"] == "pending"
         finally:
             os.unlink(f.name)
 
     async def test_scoring_dimensions_in_detail(self, client, admin_headers, seed_scoring_config, seed_ai_model):
-        """评分详情包含各维度分数"""
+        """评分详情包含各维度分数（异步评分后查询）"""
+        # 上传后手动触发评分（因为后台异步任务使用真实DB，测试中直接调用）
+        from app.services.scoring import trigger_scoring
+        from tests.conftest import TestSessionLocal
+
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
 
@@ -557,6 +560,10 @@ class TestAIScoringIntegration:
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                 )
             report_id = resp.json()["report_id"]
+
+            # 手动触发评分
+            async with TestSessionLocal() as db:
+                await trigger_scoring(report_id, db)
 
             detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             detail = detail_resp.json()
@@ -572,6 +579,9 @@ class TestAIScoringIntegration:
 
     async def test_report_status_after_upload(self, client, admin_headers, seed_scoring_config, seed_ai_model):
         """上传并评分后状态为 scored"""
+        from app.services.scoring import trigger_scoring
+        from tests.conftest import TestSessionLocal
+
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
 
@@ -582,6 +592,10 @@ class TestAIScoringIntegration:
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                 )
             report_id = resp.json()["report_id"]
+
+            # 手动触发评分
+            async with TestSessionLocal() as db:
+                await trigger_scoring(report_id, db)
 
             detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             assert detail_resp.json()["status"] == "scored"

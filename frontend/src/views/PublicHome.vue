@@ -196,6 +196,13 @@ import Dialog from 'primevue/dialog'
 import { useToast } from 'primevue/usetoast'
 
 const toast = useToast()
+const lastToastMsg = ref('')
+
+function showToast(severity, summary, life = 3000) {
+  if (summary === lastToastMsg.value) return
+  lastToastMsg.value = summary
+  toast.add({ severity, summary, life })
+}
 
 const downloading = ref(false)
 
@@ -251,9 +258,9 @@ async function downloadTemplate() {
     a.click()
     window.URL.revokeObjectURL(url)
     document.body.removeChild(a)
-    toast.add({ severity: 'success', summary: '模板下载成功', life: 2000 })
+    showToast('success', '模板下载成功', 2000)
   } catch (e) {
-    toast.add({ severity: 'error', summary: '模板下载失败', life: 2000 })
+    showToast('error', '模板下载失败', 2000)
   } finally {
     downloading.value = false
   }
@@ -272,7 +279,7 @@ function onReportDrop(e) {
     if (/\.xlsx$/i.test(f.name)) {
       selectedReport.value = f
     } else {
-      toast.add({ severity: 'warn', summary: '周报仅支持 .xlsx 格式', life: 2500 })
+      showToast('warn', '周报仅支持 .xlsx 格式', 2500)
     }
   }
 }
@@ -294,7 +301,7 @@ function onSummaryDrop(e) {
     if (/\.(png|jpg|jpeg)$/i.test(f.name)) {
       summaryFile.value = f
     } else {
-      toast.add({ severity: 'warn', summary: '一周小结仅支持 .png/.jpg/.jpeg 图片', life: 2500 })
+      showToast('warn', '一周小结仅支持 .png/.jpg/.jpeg 图片', 2500)
     }
   }
 }
@@ -316,10 +323,10 @@ async function uploadAll() {
       week_end: data.week_end,
     }
     showResult.value = true
-    toast.add({ severity: 'success', summary: '材料提交成功', life: 3000 })
+    showToast('success', '材料提交成功', 3000)
   } catch (e) {
     const msg = e.response?.data?.detail || '提交失败，请重试'
-    toast.add({ severity: 'error', summary: msg, life: 4000 })
+    showToast('error', msg, 4000)
   } finally {
     uploading.value = false
     clearReport()
@@ -397,7 +404,7 @@ async function uploadAll() {
 /* Header */
 .public-header {
   width: 100%;
-  padding: 16px 28px;
+  padding: 10px 24px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -421,8 +428,8 @@ async function uploadAll() {
   display: flex;
   gap: 20px;
   width: 100%;
-  margin: 16px auto 0;
-  padding: 16px 24px;
+  margin: 2px auto 0;
+  padding: 10px 20px;
   align-items: stretch;
   position: relative;
   z-index: 1;
@@ -454,7 +461,7 @@ async function uploadAll() {
 .section-inner {
   background: #ffffff;
   border-radius: 20px;
-  padding: 28px;
+  padding: 14px 20px 14px;
   box-shadow: 0 4px 28px rgba(79, 107, 255, 0.08);
   border: 1px solid #eef1f9;
   transition: transform 0.35s cubic-bezier(0.22, 1, 0.36, 1),
@@ -481,7 +488,7 @@ async function uploadAll() {
   display: flex;
   justify-content: space-between;
   align-items: flex-start;
-  margin-bottom: 20px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
   gap: 14px;
 }
@@ -511,13 +518,13 @@ h2 {
 .upload-card {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 12px;
 }
 
 .drop-zone {
   border: 2px dashed #d8e0f4;
   border-radius: 16px;
-  padding: 48px 16px;
+  padding: 28px 14px;
   text-align: center;
   cursor: pointer;
   transition: all 0.28s cubic-bezier(0.22, 1, 0.36, 1);
@@ -551,7 +558,7 @@ h2 {
 }
 
 .drop-icon {
-  font-size: 42px;
+  font-size: 32px;
   color: #4f6bff;
   margin-bottom: 12px;
   transition: transform 0.3s ease;
@@ -563,7 +570,7 @@ h2 {
 
 .drop-zone h3 {
   margin: 0 0 6px;
-  font-size: 17px;
+  font-size: 15px;
   color: #1e2335;
 }
 
@@ -633,7 +640,7 @@ h2 {
 
 /* Guide section */
 .guide-block {
-  margin-bottom: 24px;
+  margin-bottom: 16px;
   display: flex;
   flex-direction: column;
 }
@@ -650,7 +657,7 @@ h2 {
   font-size: 18px;
   font-weight: 700;
   color: #1e2335;
-  margin: 0 0 14px;
+  margin: 0 0 10px;
 }
 
 .guide-icon-excel {
@@ -664,7 +671,7 @@ h2 {
 }
 
 .guide-steps {
-  margin: 0 0 16px;
+  margin: 0 0 10px;
   padding-left: 20px;
   color: #5a6481;
   font-size: 14px;
@@ -710,7 +717,7 @@ h2 {
 }
 
 .screenshot-grid .screenshot-wrapper {
-  min-height: 180px;
+  min-height: 120px;
 }
 
 .screenshot-img {
@@ -724,12 +731,12 @@ h2 {
 /* 周报截图 — 宽屏图按宽度缩放 */
 .guide-block:nth-child(2) .screenshot-img {
   max-width: 560px;
-  max-height: 280px;
+  max-height: 180px;
 }
 
 /* 一周小结截图 — 手机竖屏图按高度缩放 */
 .screenshot-grid .screenshot-img {
-  max-height: 320px;
+  max-height: 200px;
 }
 
 /* 放大镜提示 */
@@ -826,7 +833,7 @@ h2 {
 .public-footer {
   width: 100%;
   margin-top: auto;
-  padding: 20px 28px 32px;
+  padding: 10px 24px 13px;
   text-align: center;
   color: #7a819a;
   font-size: 13px;

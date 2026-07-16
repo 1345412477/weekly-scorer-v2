@@ -201,86 +201,84 @@ async def get_chat_status(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    """返回聊天记录上传状态：本周是否已上传 + 最近一次上传信息。"""
-    week_start, week_end = _get_current_week_range()
+    """返回聊天记录上传状态：基于最近一次上传的实际周范围统计。"""
+    current_week_start, current_week_end = _get_current_week_range()
 
-    # 用 created_at 判断是否在本周内上传过（而非 week_start，避免上周上传的数据跨周误判）
+    # 查询最近一次聊天记录上传日志
     q = select(DataUploadLog).where(
-        and_(
-            DataUploadLog.data_type == "chat",
-            DataUploadLog.created_at >= datetime.combine(week_start, datetime.min.time()),
-            DataUploadLog.created_at <= datetime.combine(week_end, datetime.max.time()),
-        )
-    ).order_by(DataUploadLog.created_at.desc())
-
+        DataUploadLog.data_type == "chat"
+    ).order_by(DataUploadLog.created_at.desc()).limit(1)
     result = await db.execute(q)
-    logs = result.scalars().all()
+    last = result.scalar_one_or_none()
 
     last_upload = None
-    if logs:
-        last = logs[0]
-        # 用 last_upload 的周范围来查询实际消息数（而非当前周，避免跨周数据查不到）
+    uploaded_this_week = False
+    records_count = 0
+    employees_count = 0
+    unmatched_employees_count = 0
+    unmatched_records_count = 0
+
+    if last:
+        # 判断上传数据是否覆盖当前周（按上传日志的周范围匹配）
+        uploaded_this_week = (
+            last.week_start <= current_week_start
+            and last.week_end >= current_week_start
+        )
+
+        # 用上传日志中存储的实际周范围查询统计数据
         upload_week_start = last.week_start
         upload_week_end = last.week_end
-        total_messages_q = select(func.sum(ChatRecord.message_count)).where(
+
+        count_q = select(func.count()).select_from(ChatRecord).where(
             and_(
                 ChatRecord.week_start >= upload_week_start,
                 ChatRecord.week_start <= upload_week_end,
             )
         )
-        total_messages = (await db.execute(total_messages_q)).scalar() or 0
-        
+        records_count = (await db.execute(count_q)).scalar() or 0
+
+        emp_q = select(func.count(func.distinct(ChatRecord.author_name))).where(
+            and_(
+                ChatRecord.week_start >= upload_week_start,
+                ChatRecord.week_start <= upload_week_end,
+                ChatRecord.person_id.isnot(None),
+            )
+        )
+        employees_count = (await db.execute(emp_q)).scalar() or 0
+
+        unmatched_emp_q = select(func.count(func.distinct(ChatRecord.author_name))).where(
+            and_(
+                ChatRecord.week_start >= upload_week_start,
+                ChatRecord.week_start <= upload_week_end,
+                ChatRecord.person_id.is_(None),
+            )
+        )
+        unmatched_employees_count = (await db.execute(unmatched_emp_q)).scalar() or 0
+
+        unmatched_rec_q = select(func.count()).select_from(ChatRecord).where(
+            and_(
+                ChatRecord.week_start >= upload_week_start,
+                ChatRecord.week_start <= upload_week_end,
+                ChatRecord.person_id.is_(None),
+            )
+        )
+        unmatched_records_count = (await db.execute(unmatched_rec_q)).scalar() or 0
+
         last_upload = {
             "week_start": last.week_start.isoformat(),
             "week_end": last.week_end.isoformat(),
             "filename": last.filename,
-            "record_count": total_messages if total_messages > 0 else last.record_count,
+            "record_count": last.record_count,
             "employees_matched": last.employees_matched,
             "mode": last.mode,
             "uploaded_at": last.created_at.isoformat() if last.created_at else None,
             "uploaded_by": last.uploaded_by,
         }
 
-    count_q = select(func.count()).select_from(ChatRecord).where(
-        and_(
-            ChatRecord.week_start >= week_start,
-            ChatRecord.week_start <= week_end,
-        )
-    )
-    records_count = (await db.execute(count_q)).scalar() or 0
-
-    # 匹配员工（person_id 非空）和未匹配（person_id 为空）的人员数/记录数
-    emp_q = select(func.count(func.distinct(ChatRecord.author_name))).where(
-        and_(
-            ChatRecord.week_start >= week_start,
-            ChatRecord.week_start <= week_end,
-            ChatRecord.person_id.isnot(None),
-        )
-    )
-    employees_count = (await db.execute(emp_q)).scalar() or 0
-
-    unmatched_emp_q = select(func.count(func.distinct(ChatRecord.author_name))).where(
-        and_(
-            ChatRecord.week_start >= week_start,
-            ChatRecord.week_start <= week_end,
-            ChatRecord.person_id.is_(None),
-        )
-    )
-    unmatched_employees_count = (await db.execute(unmatched_emp_q)).scalar() or 0
-
-    unmatched_rec_q = select(func.count()).select_from(ChatRecord).where(
-        and_(
-            ChatRecord.week_start >= week_start,
-            ChatRecord.week_start <= week_end,
-            ChatRecord.person_id.is_(None),
-        )
-    )
-    unmatched_records_count = (await db.execute(unmatched_rec_q)).scalar() or 0
-
     return {
-        "current_week_start": week_start.isoformat(),
-        "current_week_end": week_end.isoformat(),
-        "uploaded_this_week": bool(logs),
+        "current_week_start": current_week_start.isoformat(),
+        "current_week_end": current_week_end.isoformat(),
+        "uploaded_this_week": uploaded_this_week,
         "records_count": records_count,
         "matched_records_count": records_count - unmatched_records_count,
         "unmatched_records_count": unmatched_records_count,
@@ -295,40 +293,45 @@ async def cancel_chat_upload(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    """取消本周聊天记录上传——删除本周的聊天记录和上传日志。"""
-    week_start, week_end = _get_current_week_range()
+    """取消最近一次聊天记录上传——删除该次上传的聊天记录和上传日志。"""
+    # 查找最近一次聊天记录上传日志
+    q = select(DataUploadLog).where(
+        DataUploadLog.data_type == "chat"
+    ).order_by(DataUploadLog.created_at.desc()).limit(1)
+    result = await db.execute(q)
+    last = result.scalar_one_or_none()
 
-    # 删除本周聊天记录
+    if not last:
+        raise HTTPException(status_code=400, detail="没有找到聊天记录上传记录，无法取消")
+
+    # 用上传日志中存储的实际周范围删除聊天记录
+    upload_week_start = last.week_start
+    upload_week_end = last.week_end
+
     del_records = delete(ChatRecord).where(
         and_(
-            ChatRecord.week_start >= week_start,
-            ChatRecord.week_start <= week_end,
+            ChatRecord.week_start >= upload_week_start,
+            ChatRecord.week_start <= upload_week_end,
         )
     )
     r1 = await db.execute(del_records)
     deleted_records = int(r1.rowcount or 0)
 
-    # 删除本周上传日志
-    del_logs = delete(DataUploadLog).where(
-        and_(
-            DataUploadLog.data_type == "chat",
-            DataUploadLog.week_start >= week_start - timedelta(days=1),
-            DataUploadLog.week_start <= week_end + timedelta(days=1),
-        )
-    )
+    # 删除该次上传日志（按 id 精确删除）
+    del_logs = delete(DataUploadLog).where(DataUploadLog.id == last.id)
     r2 = await db.execute(del_logs)
     deleted_logs = int(r2.rowcount or 0)
 
     await db.commit()
     logger.info(
-        f"[chat cancel] 本周聊天记录已取消：删除 {deleted_records} 条记录 + {deleted_logs} 条日志"
-        f"（周范围: {week_start}~{week_end}）"
+        f"[chat cancel] 聊天记录上传已取消：删除 {deleted_records} 条记录 + {deleted_logs} 条日志"
+        f"（上传周范围: {upload_week_start}~{upload_week_end}，文件名: {last.filename}）"
     )
 
     return {
-        "message": "本周聊天记录上传已取消",
-        "week_start": week_start.isoformat(),
-        "week_end": week_end.isoformat(),
+        "message": "聊天记录上传已取消",
+        "week_start": upload_week_start.isoformat(),
+        "week_end": upload_week_end.isoformat(),
         "deleted_records": deleted_records,
         "deleted_logs": deleted_logs,
     }

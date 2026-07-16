@@ -3,6 +3,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 from datetime import date, timedelta
 from typing import Optional
+import asyncio
 import json
 import re
 import uuid
@@ -12,6 +13,9 @@ from app.models.models import (
 )
 from app.utils.logger import log_info, log_error, log_warning
 from app.utils.time_utils import bj_now, bj_today
+
+# 全局锁，防止并发生成
+_generation_lock = asyncio.Lock()
 
 
 # 默认业务盘总结提示词
@@ -478,7 +482,51 @@ async def generate_department_summary(
     week_end: date,
 ) -> dict:
     """生成单个部门的总结"""
+    if _generation_lock.locked():
+        log_warning(f"生成任务进行中，跳过: {department_name}")
+        return {
+            "success": False,
+            "department_id": department_id,
+            "department_name": department_name,
+            "status": "skipped",
+            "error": "上一轮生成尚未完成，请勿重复点击",
+        }
+    async with _generation_lock:
+        return await _do_generate_department_summary(
+            db, department_id, department_name, week_start, week_end
+        )
+
+
+async def _do_generate_department_summary(
+    db: AsyncSession,
+    department_id: str,
+    department_name: str,
+    week_start: date,
+    week_end: date,
+) -> dict:
+    """生成单个部门的总结（内部实现，由锁保护）"""
     log_info(f"开始生成部门总结: {department_name} ({week_start})")
+    
+    # 检查本周是否有该部门的周报数据
+    report_count_result = await db.execute(
+        select(WeeklyReport.id).where(
+            WeeklyReport.department_id == department_id,
+            WeeklyReport.week_start >= week_start,
+            WeeklyReport.week_start <= week_end,
+            WeeklyReport.status == "scored",
+        )
+    )
+    has_reports = report_count_result.first() is not None
+    
+    if not has_reports:
+        log_info(f"[业务盘] 部门本周无周报数据，跳过生成: {department_name} ({week_start})")
+        return {
+            "success": True,
+            "department_id": department_id,
+            "department_name": department_name,
+            "status": "skipped",
+            "error": None,
+        }
     
     # 查找或创建总结记录
     result = await db.execute(
@@ -583,7 +631,55 @@ async def generate_all_department_summaries(
     week_start: date,
     week_end: date,
 ) -> list[dict]:
-    """生成所有部门的总结"""
+    """生成所有部门的总结（带并发锁保护）"""
+    log_info(f"[业务盘] 尝试获取生成锁...")
+    try:
+        await asyncio.wait_for(_generation_lock.acquire(), timeout=300)
+    except asyncio.TimeoutError:
+        log_warning("生成任务超时，拒绝新的全量生成请求")
+        return [{
+            "success": False,
+            "department_id": None,
+            "department_name": "ALL",
+            "status": "skipped",
+            "error": "上一轮生成尚未完成，请勿重复点击",
+        }]
+    
+    log_info(f"[业务盘] 已获取生成锁，开始生成...")
+    try:
+        result = await _do_generate_all_department_summaries(db, week_start, week_end)
+        return result
+    finally:
+        _generation_lock.release()
+        log_info(f"[业务盘] 已释放生成锁")
+
+
+async def _do_generate_all_department_summaries(
+    db: AsyncSession,
+    week_start: date,
+    week_end: date,
+) -> list[dict]:
+    """生成所有部门的总结（内部实现，由锁保护）"""
+    # 检查本周是否有周报数据
+    report_count_result = await db.execute(
+        select(WeeklyReport.id).where(
+            WeeklyReport.week_start >= week_start,
+            WeeklyReport.week_start <= week_end,
+            WeeklyReport.status == "scored",
+        )
+    )
+    has_reports = report_count_result.first() is not None
+    
+    if not has_reports:
+        log_info(f"[业务盘] 本周无周报数据，跳过生成: {week_start}~{week_end}")
+        return [{
+            "success": True,
+            "department_id": None,
+            "department_name": "ALL",
+            "status": "skipped",
+            "error": None,
+        }]
+    
     # 查询所有部门（过滤掉名称为空的部门）
     result = await db.execute(
         select(Department)
@@ -592,17 +688,17 @@ async def generate_all_department_summaries(
         .order_by(Department.name)
     )
     departments = result.scalars().all()
-    
+
     results = []
     for dept in departments:
         # 安全检查：确保部门名称有效
         if not dept.name:
             log_warning(f"跳过无效部门记录: ID={dept.id}")
             continue
-        
-        result = await generate_department_summary(
+
+        result = await _do_generate_department_summary(
             db, dept.id, dept.name, week_start, week_end
         )
         results.append(result)
-    
+
     return results

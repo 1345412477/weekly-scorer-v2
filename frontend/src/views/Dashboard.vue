@@ -569,6 +569,21 @@ if (typeof window !== 'undefined') {
   display: flex;
   flex-direction: column;
   gap: 8px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.list-items::-webkit-scrollbar {
+  width: 4px;
+}
+
+.list-items::-webkit-scrollbar-thumb {
+  background: #d0d5e8;
+  border-radius: 4px;
+}
+
+.list-items::-webkit-scrollbar-track {
+  background: transparent;
 }
 
 .list-item {

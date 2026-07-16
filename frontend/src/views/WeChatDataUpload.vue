@@ -150,9 +150,9 @@
             severity="primary"
           />
           <Button
-            label="取消本周上传"
+            label="取消上传"
             icon="pi pi-trash"
-            :disabled="!attendanceStatus?.uploaded_this_week"
+            :disabled="!attendanceStatus?.last_upload"
             :loading="attendanceCancelling"
             @click="cancelAttendance"
             class="submit-btn cancel-btn"
@@ -161,8 +161,8 @@
           />
         </div>
         <p class="btn-hint">
-          <template v-if="attendanceStatus?.uploaded_this_week">
-            <i class="pi pi-info-circle"></i> 本周考勤数据已上传。如需修改请重新上传文件覆盖，如需清除请点击"取消本周上传"。
+          <template v-if="attendanceStatus?.last_upload">
+            <i class="pi pi-info-circle"></i> 考勤数据已上传。如需修改请重新上传文件覆盖，如需清除请点击"取消上传"。
           </template>
           <template v-else>
             <i class="pi pi-info-circle"></i> 选择考勤 Excel 文件并点击"上传考勤文件"即可。
@@ -240,9 +240,9 @@
             severity="primary"
           />
           <Button
-            label="取消本周上传"
+            label="取消上传"
             icon="pi pi-trash"
-            :disabled="!chatStatus?.uploaded_this_week"
+            :disabled="!chatStatus?.last_upload"
             :loading="chatCancelling"
             @click="cancelChat"
             class="submit-btn cancel-btn"
@@ -251,8 +251,8 @@
           />
         </div>
         <p class="btn-hint">
-          <template v-if="chatStatus?.uploaded_this_week">
-            <i class="pi pi-info-circle"></i> 本周聊天记录已上传。如需修改请重新上传文件覆盖，如需清除请点击"取消本周上传"。
+          <template v-if="chatStatus?.last_upload">
+            <i class="pi pi-info-circle"></i> 聊天记录已上传。如需修改请重新上传文件覆盖，如需清除请点击"取消上传"。
           </template>
           <template v-else>
             <i class="pi pi-info-circle"></i> 选择聊天记录 Excel 文件并点击"上传聊天记录文件"即可。
@@ -419,7 +419,7 @@ async function cancelAttendance() {
     const res = await attendanceAPI.cancel()
     toast.add({
       severity: 'info',
-      summary: `本周考勤上传已取消（共清除 ${res.data.deleted_records} 条记录）`,
+      summary: `考勤上传已取消（共清除 ${res.data.deleted_records} 条记录）`,
       life: 3000,
     })
     attendanceResult.value = null
@@ -488,7 +488,7 @@ async function cancelChat() {
     const res = await chatAPI.cancel()
     toast.add({
       severity: 'info',
-      summary: `本周聊天记录已取消（共清除 ${res.data.deleted_records} 条记录）`,
+      summary: `聊天记录上传已取消（共清除 ${res.data.deleted_records} 条记录）`,
       life: 3000,
     })
     chatResult.value = null

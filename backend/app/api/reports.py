@@ -122,26 +122,12 @@ async def _upload_multi_week_report(
         await db.commit()
         await db.refresh(report)
         
-        # 触发评分
+        # 异步触发评分（不阻塞提交）
         try:
-            await trigger_scoring(report.id, db)
+            from app.core.task_queue import submit_report_scoring
+            submit_report_scoring(report.id)
         except Exception as e:
-            logger.warning(f"评分失败: {e}")
-        
-        # 触发聚合
-        try:
-            from app.services.aggregator import auto_aggregate
-            await auto_aggregate(
-                db,
-                person_id=person_id,
-                author_name=author_name,
-                department=department,
-                department_id=department_id,
-                week_start=week_start,
-                week_end=week_end,
-            )
-        except Exception as e:
-            logger.warning(f"聚合失败: {e}")
+            logger.warning(f"提交评分任务失败: {e}")
         
         created_reports.append({
             "report_id": report_id,
@@ -456,53 +442,19 @@ async def upload_report(
             await db.commit()
             await db.refresh(report)
 
+            # 异步触发评分（不阻塞上传）
+            try:
+                from app.core.task_queue import submit_report_scoring
+                submit_report_scoring(report.id)
+            except Exception as e:
+                logger.warning(f"提交评分任务失败: {e}")
+
             score_result = None
             scoring_error = None
-            try:
-                score_result = await trigger_scoring(report.id, db)
-            except AIScoringError as e:
-                scoring_error = str(e)
-            except Exception as e:
-                scoring_error = f"评分失败：{str(e)}"
-
-            # 评分完成后读取完整 score 信息（含 ai_comment / ai_suggestion）
             dimension_scores = []
             ai_comment = ""
             ai_suggestion = ""
-            if score_result and not scoring_error:
-                try:
-                    detail_q = select(ReportScore).where(ReportScore.report_id == report.id)
-                    detail_r = await db.execute(detail_q)
-                    score_row = detail_r.scalar_one_or_none()
-                    if score_row:
-                        dimension_scores = score_row.dimension_scores or []
-                        ai_comment = score_row.ai_comment or ""
-                        ai_suggestion = score_row.ai_suggestion or ""
-                except Exception as e:
-                    logger.warning(f"读取评分详情失败: {e}")
-
-            # 触发周评自动聚合（综合三项分数）
             aggregate_data = None
-            try:
-                from app.services.aggregator import auto_aggregate
-                agg = await auto_aggregate(
-                    db,
-                    person_id=report.person_id,
-                    author_name=author_name,
-                    department=department,
-                    department_id=report.department_id,
-                    week_start=week_start,
-                    week_end=week_end,
-                )
-                if agg:
-                    aggregate_data = {
-                        "report_score": float(agg.report_score) if agg.report_score is not None else None,
-                        "attendance_score": float(agg.attendance_score) if agg.attendance_score is not None else None,
-                        "chat_score": float(agg.chat_score) if agg.chat_score is not None else None,
-                        "composite_score": float(agg.composite_score) if agg.composite_score is not None else None,
-                    }
-            except Exception as e:
-                logger.warning(f"周报上传后自动聚合失败: {e}")
 
         result = {
             "message": "上传成功",
@@ -517,27 +469,23 @@ async def upload_report(
             "department": department,
             "auto_detected": auto_detected,
             "content_preview": (content[:300] + "…") if content and len(content) > 300 else (content or ""),
-            "total_score": score_result["total_score"] if score_result else None,
-            "grade": score_result["grade"] if score_result else None,
-            "dimension_scores": dimension_scores,
-            "ai_comment": ai_comment,
-            "ai_suggestion": ai_suggestion,
-            "scoring_error": scoring_error,
-            "aggregate": aggregate_data,
+            "total_score": None,
+            "grade": None,
+            "dimension_scores": [],
+            "ai_comment": "",
+            "ai_suggestion": "",
+            "scoring_error": None,
+            "scoring_status": "pending",
+            "aggregate": None,
         }
 
-        if scoring_error:
-            result["message"] = f"上传成功，但评分失败：{scoring_error}"
-        elif report_type == "catch_up":
-            result["message"] = f"补周报上传成功（{week_diff}周前）"
+        if report_type == "catch_up":
+            result["message"] = f"补周报上传成功（{week_diff}周前），评分将在后台异步完成"
         elif report_type == "normal":
-            result["message"] = "本周周报上传成功"
+            result["message"] = "本周周报上传成功，评分将在后台异步完成"
 
         if classification["needs_confirmation"]:
-            if scoring_error:
-                result["message"] = f"上传成功，但未能自动识别周报时间，且评分失败：{scoring_error}"
-            else:
-                result["message"] = "上传成功，但未能自动识别周报时间，请确认"
+            result["message"] += "，但未能自动识别周报时间，请确认"
 
         return result
 
@@ -971,56 +919,20 @@ async def submit_report(report_id: str, db: AsyncSession = Depends(get_db)):
     report.submit_time = bj_now()
     await db.commit()
 
-    scoring_error = None
-    score_result = None
+    # 异步触发评分（不阻塞提交）
     try:
-        score_result = await trigger_scoring(report_id, db)
-    except AIScoringError as e:
-        scoring_error = str(e)
+        from app.core.task_queue import submit_report_scoring
+        submit_report_scoring(report_id)
     except Exception as e:
-        scoring_error = f"评分失败：{str(e)}"
-
-    # 触发周评自动聚合（同步到 WeeklyAggregate，周评列表可见）
-    aggregate = None
-    try:
-        from app.services.aggregator import auto_aggregate
-        aggregate = await auto_aggregate(
-            db,
-            person_id=report.person_id,
-            author_name=report.author_name,
-            department=report.department,
-            department_id=report.department_id,
-            week_start=report.week_start,
-            week_end=report.week_end,
-        )
-    except Exception as e:
-        logger.warning(f"提交周报后自动聚合失败 report_id={report_id}: {e}")
-
-    aggregate_data = None
-    if aggregate:
-        aggregate_data = {
-            "report_score": float(aggregate.report_score) if aggregate.report_score is not None else None,
-            "attendance_score": float(aggregate.attendance_score) if aggregate.attendance_score is not None else None,
-            "chat_score": float(aggregate.chat_score) if aggregate.chat_score is not None else None,
-            "composite_score": float(aggregate.composite_score) if aggregate.composite_score is not None else None,
-        }
-
-    if scoring_error:
-        return {
-            "message": f"提交成功，但{scoring_error}",
-            "report_id": report_id,
-            "total_score": None,
-            "grade": None,
-            "scoring_error": scoring_error,
-            "aggregate": aggregate_data,
-        }
+        logger.warning(f"提交评分任务失败: {e}")
 
     return {
-        "message": "提交并评分成功",
+        "message": "提交成功，评分将在后台异步完成",
         "report_id": report_id,
-        "total_score": score_result["total_score"] if score_result else None,
-        "grade": score_result["grade"] if score_result else None,
-        "aggregate": aggregate_data,
+        "total_score": None,
+        "grade": None,
+        "scoring_status": "pending",
+        "aggregate": None,
     }
 
 

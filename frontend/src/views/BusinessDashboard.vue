@@ -118,16 +118,6 @@
                   <span class="project-name" :class="{ 'project-name-bold': project.highlight }">
                     {{ project.name }}
                   </span>
-                  <div class="project-progress-wrapper">
-                    <div class="progress-bar-bg">
-                      <div
-                        class="progress-bar-fill"
-                        :style="{ width: project.progress + '%' }"
-                        :class="getProgressColor(project.progress)"
-                      ></div>
-                    </div>
-                    <span class="progress-text">{{ project.progress }}%</span>
-                  </div>
                 </div>
               </div>
               <div v-if="!dept.this_week_projects?.length" class="empty-text">
@@ -400,7 +390,7 @@ const weekDisplayText = computed(() => {
 /** 过滤有数据的部门（必须有项目） */
 const departmentsWithData = computed(() => {
   return departments.value.filter(dept => {
-    // 有上周或本周项目才算有数据，无数据的部门不显示
+    // 有上周或本周项目才算有数据
     const hasProjects = (dept.last_week_projects?.length || 0) > 0 || 
                         (dept.this_week_projects?.length || 0) > 0
     return hasProjects
@@ -456,21 +446,37 @@ const startPolling = () => {
       const res = await businessAPI.list({ week_start: weekStart })
       const respData = res.data.data || res.data
       departments.value = respData.items || []
+      const genInProgress = respData.generation_in_progress || false
 
       // 检查是否所有部门都生成完成
       const allDone = departments.value.every(
         dept => dept.status === 'done' || dept.status === 'failed'
       )
 
-      if (allDone && departments.value.length > 0) {
+      // 检查是否所有部门都是 pending（无数据场景）
+      const allPending = departments.value.every(
+        dept => dept.status === 'pending'
+      )
+
+      // 生成任务已完成（锁已释放）时停止轮询
+      if (!genInProgress && (allDone || allPending)) {
         stopPolling()
         generating.value = false
-        toast.add({
-          severity: 'success',
-          summary: '生成完成',
-          detail: '所有部门总结已生成',
-          life: 3000,
-        })
+        if (allDone && departments.value.length > 0) {
+          toast.add({
+            severity: 'success',
+            summary: '生成完成',
+            detail: '所有部门总结已生成',
+            life: 3000,
+          })
+        } else {
+          toast.add({
+            severity: 'info',
+            summary: '本周暂无数据',
+            detail: '请先上传本周周报数据',
+            life: 3000,
+          })
+        }
       }
     } catch (error) {
       console.error('轮询失败:', error)
@@ -495,33 +501,37 @@ const generateAll = async () => {
     life: 5000,
   })
 
-  try {
-    const weekStart = formatDate(selectedWeek.value)
-    // 异步调用，不等待完成
-    businessAPI.generateAll({ week_start: weekStart }).catch(error => {
-      console.error('生成任务启动失败:', error)
-      generating.value = false
-      stopPolling()
+  // 立即启动轮询（不等待 API 返回）
+  startPolling()
+
+  // 异步发送生成请求，不阻塞轮询
+  businessAPI.generateAll({ week_start: formatDate(selectedWeek.value) }).catch(error => {
+    console.error('生成任务失败:', error)
+    // 409 表示上一轮还在进行中，不显示错误（轮询会继续）
+    if (error.response?.status !== 409) {
+      const errorMsg = error.response?.data?.detail || error.message || '生成任务异常'
       toast.add({
         severity: 'error',
         summary: '生成失败',
-        detail: error.message || '无法启动生成任务',
+        detail: errorMsg,
         life: 3000,
       })
-    })
+    }
+  })
 
-    // 立即开始轮询状态
-    startPolling()
-  } catch (error) {
-    console.error('生成失败:', error)
-    generating.value = false
-    toast.add({
-      severity: 'error',
-      summary: '生成失败',
-      detail: error.message || '无法生成部门总结',
-      life: 3000,
-    })
-  }
+  // 超时保护：60秒后如果轮询还没停止，强制停止
+  setTimeout(() => {
+    if (generating.value) {
+      stopPolling()
+      generating.value = false
+      toast.add({
+        severity: 'warning',
+        summary: '生成超时',
+        detail: '生成任务响应超时，请刷新页面重试',
+        life: 3000,
+      })
+    }
+  }, 60000)
 }
 
 const generateDept = async () => {
@@ -533,24 +543,63 @@ const generateDept = async () => {
       week_start: weekStart,
     })
     toast.add({
-      severity: 'success',
-      summary: '生成成功',
-      detail: '部门总结已重新生成',
-      life: 3000,
+      severity: 'info',
+      summary: '正在生成',
+      detail: '部门总结正在后台生成，请稍候...',
+      life: 5000,
     })
-    await loadDepartments()
-    // 更新抽屉中的数据
-    await loadDepartmentDetail(selectedDepartment.value.department_id)
+
+    // 轮询等待生成完成
+    let attempts = 0
+    const maxAttempts = 20 // 最多轮询 60 秒
+    const pollInterval = setInterval(async () => {
+      attempts++
+      try {
+        const res = await businessAPI.get(selectedDepartment.value.department_id, { week_start: weekStart })
+        const respData = res.data.data || res.data
+        const status = respData?.status
+        if (status === 'done' || status === 'failed' || attempts >= maxAttempts) {
+          clearInterval(pollInterval)
+          generatingDept.value = false
+          if (status === 'done') {
+            toast.add({
+              severity: 'success',
+              summary: '生成成功',
+              detail: '部门总结已重新生成',
+              life: 3000,
+            })
+          } else if (status === 'failed') {
+            toast.add({
+              severity: 'error',
+              summary: '生成失败',
+              detail: respData?.error_message || 'AI 生成失败',
+              life: 3000,
+            })
+          } else {
+            toast.add({
+              severity: 'warning',
+              summary: '生成超时',
+              detail: '生成任务响应超时，请刷新页面重试',
+              life: 3000,
+            })
+          }
+          await loadDepartments()
+          await loadDepartmentDetail(selectedDepartment.value.department_id)
+        }
+      } catch (e) {
+        console.error('轮询部门生成状态失败:', e)
+      }
+    }, 3000)
   } catch (error) {
     console.error('生成失败:', error)
+    generatingDept.value = false
+    const errorMsg = error.response?.data?.detail || error.message || '无法生成部门总结'
     toast.add({
       severity: 'error',
       summary: '生成失败',
-      detail: error.message || '无法生成部门总结',
+      detail: errorMsg,
       life: 3000,
     })
-  } finally {
-    generatingDept.value = false
   }
 }
 
@@ -656,11 +705,11 @@ onMounted(async () => {
   selectedWeek.value = currentMonday
   selectedYear.value = currentMonday.getFullYear()
   
-  // 获取当前周对应的 label
+  // 获取当前周对应的 value（Dropdown 需要绑定 optionValue，即日期字符串）
   const currentWeekOptions = generateWeekOptionsForYear(selectedYear.value)
   const currentWeekOpt = currentWeekOptions.find(opt => opt.value === formatDate(currentMonday))
   if (currentWeekOpt) {
-    selectedWeekLabel.value = currentWeekOpt.label
+    selectedWeekLabel.value = currentWeekOpt.value
   }
   
   // 加载当前周数据（不自动切换到上一周）

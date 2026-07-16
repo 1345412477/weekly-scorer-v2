@@ -1,4 +1,5 @@
 """业务盘 API - 部门工作事项汇总"""
+import asyncio
 from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
@@ -7,10 +8,11 @@ from typing import Optional
 import uuid
 
 from app.database import get_db
-from app.models.models import DepartmentSummary, Department, AdminUser
+from app.models.models import DepartmentSummary, Department, AdminUser, WeeklyReport
 from app.core.auth import require_admin, write_operation_log
 from app.utils.time_utils import bj_now, bj_today
 from app.utils.response import success_response, error_response
+from app.utils.logger import log_error
 
 router = APIRouter(prefix="/api/v1/business-dashboard", tags=["业务盘"])
 
@@ -43,6 +45,16 @@ async def list_summaries(
     
     ws, we = _get_week_range(target_date)
     
+    # 检查本周是否有实际周报数据
+    report_count_result = await db.execute(
+        select(WeeklyReport.id).where(
+            WeeklyReport.week_start >= ws,
+            WeeklyReport.week_start <= we,
+            WeeklyReport.status == "scored",
+        )
+    )
+    has_reports = report_count_result.first() is not None
+    
     # 查询所有部门的总结
     result = await db.execute(
         select(DepartmentSummary).where(
@@ -62,7 +74,8 @@ async def list_summaries(
     items = []
     for dept in departments:
         summary = summary_map.get(dept.id)
-        if summary:
+        # 如果总结已生成完成，直接返回数据（无论本周是否有周报）
+        if summary and summary.status == "done":
             items.append({
                 "id": summary.id,
                 "department_id": summary.department_id,
@@ -78,6 +91,41 @@ async def list_summaries(
                 "error_message": summary.error_message,
                 "generated_at": summary.generated_at.isoformat() if summary.generated_at else None,
             })
+        # 如果总结正在生成中，返回 generating 状态
+        elif summary and summary.status == "generating":
+            items.append({
+                "id": summary.id,
+                "department_id": summary.department_id,
+                "department_name": summary.department_name,
+                "week_start": summary.week_start.isoformat(),
+                "week_end": summary.week_end.isoformat(),
+                "last_week_summary": [],
+                "this_week_summary": [],
+                "last_week_projects": [],
+                "this_week_projects": [],
+                "is_department_highlight": False,
+                "status": "generating",
+                "error_message": None,
+                "generated_at": None,
+            })
+        # 本周有周报数据但未生成，返回 pending 状态
+        elif has_reports:
+            items.append({
+                "id": None,
+                "department_id": dept.id,
+                "department_name": dept.name,
+                "week_start": ws.isoformat(),
+                "week_end": we.isoformat(),
+                "last_week_summary": [],
+                "this_week_summary": [],
+                "last_week_projects": [],
+                "this_week_projects": [],
+                "is_department_highlight": False,
+                "status": "pending",
+                "error_message": None,
+                "generated_at": None,
+            })
+        # 本周无周报数据且无已生成总结，返回 pending 状态
         else:
             items.append({
                 "id": None,
@@ -95,6 +143,10 @@ async def list_summaries(
                 "generated_at": None,
             })
     
+    # 检查是否有后台生成任务正在进行
+    from app.services.business_summary_service import _generation_lock
+    generation_in_progress = _generation_lock.locked()
+    
     return success_response(data={
         "week_start": ws.isoformat(),
         "week_end": we.isoformat(),
@@ -103,6 +155,7 @@ async def list_summaries(
             (item.get("last_week_projects") or []) or (item.get("this_week_projects") or [])
             for item in items
         ),
+        "generation_in_progress": generation_in_progress,
     })
 
 
@@ -194,8 +247,9 @@ async def generate_all(
     week_start: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_admin),
+    request: Request = None,
 ):
-    """触发所有部门的 AI 总结"""
+    """触发所有部门的 AI 总结（后台异步执行）"""
     if week_start:
         try:
             target_date = date.fromisoformat(week_start)
@@ -203,23 +257,39 @@ async def generate_all(
             raise HTTPException(status_code=400, detail="日期格式错误")
     else:
         target_date = bj_today()
-    
+
     ws, we = _get_week_range(target_date)
-    
-    # 调用服务层生成总结
+
+    # 尝试快速获取锁，如果失败则拒绝
+    from app.services.business_summary_service import _generation_lock
+    if _generation_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="上一轮生成尚未完成，请勿重复点击"
+        )
+
+    # 在后台启动生成任务，立即返回
     from app.services.business_summary_service import generate_all_department_summaries
-    result = await generate_all_department_summaries(db, ws, we)
-    
-    await write_operation_log(
-        db, user, "generate", "business_dashboard", "",
-        detail={"week_start": ws.isoformat(), "results": result}
-    )
-    
+    from app.database import async_session
+
+    async def _run_generation():
+        async with async_session() as bg_db:
+            try:
+                result = await generate_all_department_summaries(bg_db, ws, we)
+                await write_operation_log(
+                    bg_db, user, "generate", "business_dashboard", "",
+                    detail={"week_start": ws.isoformat(), "results": result}
+                )
+                await bg_db.commit()
+            except Exception as e:
+                log_error(f"后台生成任务失败: {e}")
+
+    asyncio.create_task(_run_generation())
+
     return success_response(data={
-        "message": "生成完成",
+        "message": "生成任务已启动",
         "week_start": ws.isoformat(),
         "week_end": we.isoformat(),
-        "results": result,
     })
 
 
@@ -230,7 +300,7 @@ async def generate_dept(
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_admin),
 ):
-    """触发单个部门的 AI 重新总结"""
+    """触发单个部门的 AI 重新总结（后台异步执行）"""
     if week_start:
         try:
             target_date = date.fromisoformat(week_start)
@@ -240,7 +310,15 @@ async def generate_dept(
         target_date = bj_today()
     
     ws, we = _get_week_range(target_date)
-    
+
+    # 检查是否有生成任务正在进行
+    from app.services.business_summary_service import _generation_lock
+    if _generation_lock.locked():
+        raise HTTPException(
+            status_code=409,
+            detail="上一轮生成尚未完成，请勿重复点击"
+        )
+
     # 验证部门存在
     dept_result = await db.execute(
         select(Department).where(Department.id == dept_id)
@@ -248,21 +326,33 @@ async def generate_dept(
     dept = dept_result.scalar_one_or_none()
     if not dept:
         raise HTTPException(status_code=404, detail="部门不存在")
-    
-    # 调用服务层生成总结
+
+    # 在后台启动生成任务，立即返回
     from app.services.business_summary_service import generate_department_summary
-    result = await generate_department_summary(db, dept_id, dept.name, ws, we)
-    
-    await write_operation_log(
-        db, user, "generate", "business_dashboard", dept_id,
-        detail={"week_start": ws.isoformat(), "result": result}
-    )
+    from app.database import async_session
+
+    async def _run_generation():
+        async with async_session() as bg_db:
+            try:
+                result = await generate_department_summary(
+                    bg_db, dept_id, dept.name, ws, we
+                )
+                await write_operation_log(
+                    bg_db, user, "generate", "business_dashboard", dept_id,
+                    detail={"week_start": ws.isoformat(), "result": result}
+                )
+                await bg_db.commit()
+            except Exception as e:
+                log_error(f"后台生成任务失败: {e}")
+
+    asyncio.create_task(_run_generation())
     
     return success_response(data={
-        "message": "生成完成",
+        "message": "生成任务已启动",
         "department_id": dept_id,
         "department_name": dept.name,
-        "result": result,
+        "week_start": ws.isoformat(),
+        "week_end": we.isoformat(),
     })
 
 

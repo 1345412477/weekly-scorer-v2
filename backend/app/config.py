@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     AI_CONNECT_TIMEOUT: int = 10
 
     APP_TITLE: str = "智友辰评分系统"
-    APP_VERSION: str = "2.1.2"
+    APP_VERSION: str = "2.1.3"
     TEMPLATE_DIR: str = "./templates"
 
     # ⚠ 生产环境必须在 .env 中覆盖以下三项

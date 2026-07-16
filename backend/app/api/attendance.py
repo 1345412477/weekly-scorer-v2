@@ -213,57 +213,63 @@ async def get_attendance_status(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    """返回考勤数据上传状态：本周是否已上传 + 最近一次上传信息。"""
-    week_start, week_end = _get_current_week_range()
+    """返回考勤数据上传状态：基于最近一次上传的实际周范围统计。"""
+    current_week_start, current_week_end = _get_current_week_range()
 
-    # 用 created_at 判断是否在本周内上传过（而非 week_start，避免上周上传的数据跨周误判）
+    # 查询最近一次考勤上传日志
     q = select(DataUploadLog).where(
-        and_(
-            DataUploadLog.data_type == "attendance",
-            DataUploadLog.created_at >= datetime.combine(week_start, datetime.min.time()),
-            DataUploadLog.created_at <= datetime.combine(week_end, datetime.max.time()),
-        )
-    ).order_by(DataUploadLog.created_at.desc())
-
+        DataUploadLog.data_type == "attendance"
+    ).order_by(DataUploadLog.created_at.desc()).limit(1)
     result = await db.execute(q)
-    logs = result.scalars().all()
-
-    # 直接查考勤记录数，作为"是否真有数据"的兜底判断
-    count_q = select(func.count()).select_from(AttendanceRecord).where(
-        and_(
-            AttendanceRecord.week_start >= week_start,
-            AttendanceRecord.week_start <= week_end,
-        )
-    )
-    records_count = (await db.execute(count_q)).scalar() or 0
+    last = result.scalar_one_or_none()
 
     last_upload = None
-    if logs:
-        last = logs[0]
+    uploaded_this_week = False
+    records_count = 0
+    employees_count = 0
+
+    if last:
+        # 判断上传数据是否覆盖当前周（按上传日志的周范围匹配）
+        uploaded_this_week = (
+            last.week_start <= current_week_start
+            and last.week_end >= current_week_start
+        )
+
+        # 用上传日志中存储的实际周范围查询统计数据
+        upload_week_start = last.week_start
+        upload_week_end = last.week_end
+
+        count_q = select(func.count()).select_from(AttendanceRecord).where(
+            and_(
+                AttendanceRecord.week_start >= upload_week_start,
+                AttendanceRecord.week_start <= upload_week_end,
+            )
+        )
+        records_count = (await db.execute(count_q)).scalar() or 0
+
+        emp_q = select(func.count(func.distinct(AttendanceRecord.author_name))).where(
+            and_(
+                AttendanceRecord.week_start >= upload_week_start,
+                AttendanceRecord.week_start <= upload_week_end,
+            )
+        )
+        employees_count = (await db.execute(emp_q)).scalar() or 0
+
         last_upload = {
             "week_start": last.week_start.isoformat(),
             "week_end": last.week_end.isoformat(),
             "filename": last.filename,
-            "record_count": records_count if records_count > 0 else last.record_count,
+            "record_count": last.record_count,
             "employees_matched": last.employees_matched,
             "mode": last.mode,
             "uploaded_at": last.created_at.isoformat() if last.created_at else None,
             "uploaded_by": last.uploaded_by,
         }
 
-    # 覆盖的员工数
-    emp_q = select(func.count(func.distinct(AttendanceRecord.author_name))).where(
-        and_(
-            AttendanceRecord.week_start >= week_start,
-            AttendanceRecord.week_start <= week_end,
-        )
-    )
-    employees_count = (await db.execute(emp_q)).scalar() or 0
-
     return {
-        "current_week_start": week_start.isoformat(),
-        "current_week_end": week_end.isoformat(),
-        "uploaded_this_week": bool(logs),
+        "current_week_start": current_week_start.isoformat(),
+        "current_week_end": current_week_end.isoformat(),
+        "uploaded_this_week": uploaded_this_week,
         "records_count": records_count,
         "employees_count": employees_count,
         "last_upload": last_upload,
