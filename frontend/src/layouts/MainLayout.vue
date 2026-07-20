@@ -5,7 +5,7 @@
         <div class="logo">
           <span class="logo-icon"><i class="pi pi-chart-line"></i></span>
           <div>
-            <span class="logo-text">智友辰周任务汇总系统</span>
+            <span class="logo-text">智友辰周任务<br>汇总系统</span>
             <span class="logo-subtitle">Admin Console</span>
           </div>
         </div>
