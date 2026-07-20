@@ -189,7 +189,7 @@ def _rule_based_attendance_score(rec_dicts: list) -> float:
 
 
 async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> Optional[float]:
-    """沟通分：无聊天记录+无一周小结 → 返回 None；有数据 → AI 评分（0-100）"""
+    """沟通分：一周小结或聊天记录任意一项缺失 → 返回 None（显示"/"）；两者都有 → AI 评分（0-100）"""
     try:
         cr = await db.execute(
             select(ChatRecord).where(
@@ -207,8 +207,13 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
         )
         summaries = list(sr.scalars().all())
 
-        if not chat_records and not summaries:
-            logger.info(f"[聚合] {author_name} 该周无聊天+无一周小结 → 沟通分=None")
+        if not chat_records or not summaries:
+            missing = []
+            if not chat_records:
+                missing.append("聊天记录")
+            if not summaries:
+                missing.append("一周小结")
+            logger.info(f"[聚合] {author_name} 该周缺少{'、'.join(missing)} → 沟通分=None（显示/）")
             return None
 
         chat_dicts = [
