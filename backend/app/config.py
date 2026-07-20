@@ -38,7 +38,7 @@ class Settings(BaseSettings):
     AI_TIMEOUT: int = 60
     AI_CONNECT_TIMEOUT: int = 10
 
-    APP_TITLE: str = "智友辰评分系统"
+    APP_TITLE: str = "智友辰周任务汇总系统"
     APP_VERSION: str = "2.1.3"
     TEMPLATE_DIR: str = "./templates"
 

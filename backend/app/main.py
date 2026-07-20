@@ -1,4 +1,4 @@
-"""智友辰评分系统 - FastAPI 主入口"""
+"""智友辰周任务汇总系统 - FastAPI 主入口"""
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -44,7 +44,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="智友辰评分系统",
+    title="智友辰周任务汇总系统",
     version=settings.APP_VERSION,
     lifespan=lifespan,
 )

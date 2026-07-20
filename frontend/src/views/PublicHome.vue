@@ -4,7 +4,7 @@
     <header class="public-header fade-in-up" style="--delay: 0ms">
       <div class="brand">
         <span class="brand-icon"><i class="pi pi-chart-bar"></i></span>
-        <span class="brand-text">智友辰评分系统</span>
+        <span class="brand-text">智友辰周任务汇总系统</span>
       </div>
       <Button label="管理员登录" icon="pi pi-lock" outlined text severity="secondary"
         @click="$router.push('/admin/login')" />
@@ -126,7 +126,7 @@
 
             <div class="fade-in-up" style="--delay: 540ms">
               <Button label="提交材料" icon="pi pi-send" :loading="uploading"
-                :disabled="!selectedReport || !summaryFile" @click="uploadAll" class="submit-btn" />
+                :disabled="!selectedReport" @click="uploadAll" class="submit-btn" />
             </div>
 
             <p v-if="uploading" class="scoring-hint fade-in-up" style="--delay: 580ms">
@@ -139,7 +139,7 @@
     </section>
 
     <footer class="public-footer fade-in-up" style="--delay: 600ms">
-      <span>© {{ year }} 智友辰评分系统 · Powered by AI</span>
+      <span>© {{ year }} 智友辰周任务汇总系统 · Powered by AI</span>
     </footer>
 
     <!-- 提交结果弹窗 -->
@@ -311,7 +311,7 @@ function clearSummary() {
 }
 
 async function uploadAll() {
-  if (!selectedReport.value || !summaryFile.value) return
+  if (!selectedReport.value) return
   uploading.value = true
   try {
     const res = await unifiedUploadAPI.uploadUnified(selectedReport.value, summaryFile.value)

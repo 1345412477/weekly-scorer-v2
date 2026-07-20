@@ -10,6 +10,7 @@ import uuid
 import logging
 from datetime import datetime, date
 
+from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -45,34 +46,31 @@ ALLOWED_REPORT_EXT = {".xlsx"}
 @router.post("/unified")
 async def upload_unified(
     report: UploadFile = File(..., description="周报文件，仅支持 .xlsx"),
-    summary: UploadFile = File(..., description="一周小结图片，仅支持 .png / .jpg / .jpeg"),
+    summary: Optional[UploadFile] = File(None, description="一周小结图片（可选），仅支持 .png / .jpg / .jpeg"),
     db: AsyncSession = Depends(get_db),
 ):
     # 1. 文件格式校验
     if not report or not report.filename:
         raise HTTPException(status_code=400, detail="请上传周报文件")
-    if not summary or not summary.filename:
-        raise HTTPException(status_code=400, detail="请上传一周小结图片")
 
     report_ext = os.path.splitext(report.filename or "")[1].lower()
     if report_ext not in ALLOWED_REPORT_EXT:
         raise HTTPException(status_code=400, detail=f"周报仅支持 .xlsx 格式（当前文件：{report.filename}）")
 
-    summary_ext = os.path.splitext(summary.filename or "")[1].lower()
-    if summary_ext not in ALLOWED_IMAGE_EXT:
-        raise HTTPException(status_code=400, detail="一周小结仅支持 .png / .jpg / .jpeg 图片格式")
+    if summary and summary.filename:
+        summary_ext = os.path.splitext(summary.filename)[1].lower()
+        if summary_ext not in ALLOWED_IMAGE_EXT:
+            raise HTTPException(status_code=400, detail="一周小结仅支持 .png / .jpg / .jpeg 图片格式")
 
     # 2. 读取并保存文件
     try:
         report_bytes = await report.read()
-        summary_bytes = await summary.read()
+        summary_bytes = await summary.read() if summary and summary.filename else None
     except Exception as e:
         raise HTTPException(status_code=400, detail=f"读取文件失败: {e}")
 
     if not report_bytes:
         raise HTTPException(status_code=400, detail="上传的周报文件为空，请重新选择")
-    if not summary_bytes:
-        raise HTTPException(status_code=400, detail="上传的一周小结图片为空，请重新选择")
 
     report_file_id = str(uuid.uuid4())
     report_saved_name = f"{report_file_id}{report_ext}"
@@ -80,11 +78,15 @@ async def upload_unified(
     with open(report_path, "wb") as f:
         f.write(report_bytes)
 
-    summary_file_id = str(uuid.uuid4())
-    summary_saved_name = f"{summary_file_id}{summary_ext}"
-    summary_path = os.path.join(UPLOAD_DIR, summary_saved_name)
-    with open(summary_path, "wb") as f:
-        f.write(summary_bytes)
+    summary_file_id = None
+    summary_saved_name = None
+    summary_path = None
+    if summary_bytes:
+        summary_file_id = str(uuid.uuid4())
+        summary_saved_name = f"{summary_file_id}{summary_ext}"
+        summary_path = os.path.join(UPLOAD_DIR, summary_saved_name)
+        with open(summary_path, "wb") as f:
+            f.write(summary_bytes)
 
     # 3. 解析周报内容 / 周区间
     try:
@@ -140,7 +142,8 @@ async def upload_unified(
         # 清理已保存的文件（不会写入 DB 记录）
         try:
             os.remove(report_path)
-            os.remove(summary_path)
+            if summary_path:
+                os.remove(summary_path)
         except OSError:
             pass
         raise HTTPException(
@@ -176,50 +179,53 @@ async def upload_unified(
         logger.warning(f"[unified] 写入周报记录失败: {e}")
         raise HTTPException(status_code=400, detail=f"写入周报记录失败: {e}")
 
-    # 6. 写入一周小结记录（同样立即触发后台 OCR）
-    existing_sum = await db.execute(
-        select(WeeklySummary).where(
-            WeeklySummary.author_name == author_name,
-            WeeklySummary.week_start == week_start,
-            WeeklySummary.week_end == week_end,
-        ).limit(1)
-    )
-    existing_summary = existing_sum.scalar_one_or_none()
-
-    if existing_summary:
-        existing_summary.source_file = summary_saved_name
-        existing_summary.updated_at = bj_now()
-        summary_record = existing_summary
-    else:
-        summary_record = WeeklySummary(
-            id=summary_file_id,
-            person_id=person_id,
-            author_name=author_name,
-            department=department,
-            department_id=department_id,
-            week_start=week_start,
-            week_end=week_end,
-            source_file=summary_saved_name,
+    # 6. 写入一周小结记录（可选，有图片时才写入）
+    summary_record = None
+    if summary_saved_name:
+        existing_sum = await db.execute(
+            select(WeeklySummary).where(
+                WeeklySummary.author_name == author_name,
+                WeeklySummary.week_start == week_start,
+                WeeklySummary.week_end == week_end,
+            ).limit(1)
         )
-        db.add(summary_record)
+        existing_summary = existing_sum.scalar_one_or_none()
 
-    try:
-        await db.commit()
-        await db.refresh(summary_record)
-    except Exception as e:
-        logger.warning(f"[unified] 写入一周小结记录失败: {e}")
-        raise HTTPException(status_code=400, detail=f"写入一周小结记录失败: {e}")
+        if existing_summary:
+            existing_summary.source_file = summary_saved_name
+            existing_summary.updated_at = bj_now()
+            summary_record = existing_summary
+        else:
+            summary_record = WeeklySummary(
+                id=summary_file_id,
+                person_id=person_id,
+                author_name=author_name,
+                department=department,
+                department_id=department_id,
+                week_start=week_start,
+                week_end=week_end,
+                source_file=summary_saved_name,
+            )
+            db.add(summary_record)
+
+        try:
+            await db.commit()
+            await db.refresh(summary_record)
+        except Exception as e:
+            logger.warning(f"[unified] 写入一周小结记录失败: {e}")
+            raise HTTPException(status_code=400, detail=f"写入一周小结记录失败: {e}")
 
     # 7. 立即在后台触发异步周报 AI 评分 + 一周小结 OCR（不阻塞本次请求）
     from app.core.task_queue import submit_report_scoring, submit_summary_ocr
     try:
         submit_report_scoring(report_record.id)
-        submit_summary_ocr(summary_record.id)
-        logger.info(f"[unified] 已提交异步任务：report_id={report_record.id}, summary_id={summary_record.id}")
+        if summary_record:
+            submit_summary_ocr(summary_record.id)
+        logger.info(f"[unified] 已提交异步任务：report_id={report_record.id}, summary_id={summary_record.id if summary_record else 'None'}")
     except Exception as e:
         logger.warning(f"[unified] 提交异步任务失败（不影响提交）: {e}")
 
-    return {
+    result = {
         "message": "提交成功，AI 正在评分中",
         "report_id": report_record.id,
         "week_start": week_start.isoformat(),
@@ -229,10 +235,12 @@ async def upload_unified(
         "auto_detected": True,
         "report_type": classification.get("report_type"),
         "week_diff": classification.get("week_diff", 0),
-        "summary": {
+    }
+    if summary_record:
+        result["summary"] = {
             "id": summary_record.id,
             "author_name": summary_record.author_name,
             "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(),
-        },
-    }
+        }
+    return result
