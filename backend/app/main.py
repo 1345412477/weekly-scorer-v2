@@ -24,7 +24,7 @@ def get_cors_origins():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    log_info("启动智友辰评分系统...")
+    log_info("启动智友辰周任务汇总系统...")
     await init_db()
     await seed_default_data()
     # 启动后台定时聚合评分调度器

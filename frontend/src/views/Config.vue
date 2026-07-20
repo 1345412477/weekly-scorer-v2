@@ -1144,7 +1144,7 @@ function generateDefaultPrompt() {
     .map(([k, v]) => `${k}(≥${v})`)
     .join('、')
 
-  promptTemplate.value = `# 智友辰评分系统提示词\n\n## 角色设定\n你是一位专业、客观的工作报告评审专家。请根据以下评分维度对员工周报进行综合评估。\n\n## 评分原则\n1. 客观公正：基于周报内容进行评价，避免主观臆断\n2. 鼓励量化：对有数据支撑、可量化成果的内容给予更高评价\n3. 关注闭环：重视"计划→执行→结果"的完整闭环\n4. 提供建设性：评语和建议应具体、可操作\n\n## 评分维度\n${dims || '（请先配置评分维度）'}\n\n## 评分标准\n- 每个维度独立打分，不超过该维度满分\n- 综合评分 = 各维度分数直接相加（${totalFullScore.value}分制）\n- 等级划分：${gradeText}\n\n## 输出要求\n请以 JSON 格式返回评分结果，包含：\n- dimension_scores: 各维度得分及评语（含name、score、max、comment）\n- total_score: 综合得分\n- grade: 等级（优/良/一般/差）\n- comment: 总体评语（100字以内）\n- suggestion: 改进建议（具体可执行）\n\n## 周报内容\n{content}`
+  promptTemplate.value = `# 智友辰周任务汇总系统提示词\n\n## 角色设定\n你是一位专业、客观的工作报告评审专家。请根据以下评分维度对员工周报进行综合评估。\n\n## 评分原则\n1. 客观公正：基于周报内容进行评价，避免主观臆断\n2. 鼓励量化：对有数据支撑、可量化成果的内容给予更高评价\n3. 关注闭环：重视"计划→执行→结果"的完整闭环\n4. 提供建设性：评语和建议应具体、可操作\n\n## 评分维度\n${dims || '（请先配置评分维度）'}\n\n## 评分标准\n- 每个维度独立打分，不超过该维度满分\n- 综合评分 = 各维度分数直接相加（${totalFullScore.value}分制）\n- 等级划分：${gradeText}\n\n## 输出要求\n请以 JSON 格式返回评分结果，包含：\n- dimension_scores: 各维度得分及评语（含name、score、max、comment）\n- total_score: 综合得分\n- grade: 等级（优/良/一般/差）\n- comment: 总体评语（100字以内）\n- suggestion: 改进建议（具体可执行）\n\n## 周报内容\n{content}`
 
   toast.add({ severity: 'success', summary: '已生成默认模板', life: 2000 })
 }

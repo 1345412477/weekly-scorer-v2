@@ -1,7 +1,7 @@
 <template>
   <div class="leaderboard page-content" :class="{ 'public-page': isPublicMode, 'embedded-mode': embedded }">
     <div v-if="isPublicMode && !embedded" class="public-nav">
-      <router-link to="/" class="brand">智友辰评分</router-link>
+      <router-link to="/" class="brand">智友辰周任务汇总</router-link>
       <div class="public-links">
         <router-link to="/write">提交周报</router-link>
         <router-link to="/leaderboard">排行榜</router-link>

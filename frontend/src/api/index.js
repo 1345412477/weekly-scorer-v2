@@ -248,7 +248,9 @@ export const unifiedUploadAPI = {
   uploadUnified: (reportFile, summaryFile) => {
     const formData = new FormData()
     formData.append('report', reportFile)
-    formData.append('summary', summaryFile)
+    if (summaryFile) {
+      formData.append('summary', summaryFile)
+    }
     return uploadApi.post('/upload/unified', formData)
   },
 }
