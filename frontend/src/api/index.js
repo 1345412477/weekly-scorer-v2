@@ -245,11 +245,14 @@ export const weeklySummaryAPI = {
 
 // 员工首页：周报 + 一周小结 联合上传；统一用周报文件名识别员工
 export const unifiedUploadAPI = {
-  uploadUnified: (reportFile, summaryFile) => {
+  uploadUnified: (reportFile, summaryFile, forceSubmit = false) => {
     const formData = new FormData()
     formData.append('report', reportFile)
     if (summaryFile) {
       formData.append('summary', summaryFile)
+    }
+    if (forceSubmit) {
+      formData.append('force_submit', 'true')
     }
     return uploadApi.post('/upload/unified', formData)
   },

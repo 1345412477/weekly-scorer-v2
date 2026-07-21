@@ -11,7 +11,7 @@ import logging
 from datetime import datetime, date
 
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
@@ -19,6 +19,7 @@ from app.database import get_db
 from app.models.models import WeeklySummary, WeeklyReport
 from app.services.document_parser import (
     parse_report,
+    parse_multi_week_excel,
     extract_week_dates,
     classify_report_week,
     get_current_week,
@@ -47,6 +48,7 @@ ALLOWED_REPORT_EXT = {".xlsx"}
 async def upload_unified(
     report: UploadFile = File(..., description="周报文件，仅支持 .xlsx"),
     summary: Optional[UploadFile] = File(None, description="一周小结图片（可选），仅支持 .png / .jpg / .jpeg"),
+    force_submit: bool = Form(False, description="强制提交（跳过周次校验）"),
     db: AsyncSession = Depends(get_db),
 ):
     # 1. 文件格式校验
@@ -88,19 +90,44 @@ async def upload_unified(
         with open(summary_path, "wb") as f:
             f.write(summary_bytes)
 
-    # 3. 解析周报内容 / 周区间
+    # 3. 解析周报内容 / 周区间（支持多周续写文件，取最后一周）
     try:
-        report_parsed = parse_report(report_path)
-        week_start, week_end = extract_week_dates(report_path)
+        weeks_data = parse_multi_week_excel(report_path)
+        if not weeks_data:
+            raise HTTPException(status_code=400, detail="周报内容为空或格式不正确，无法解析")
+
+        # 取最后一周作为本次提交内容
+        latest_week = weeks_data[-1]
+        week_start = latest_week.get("week_start")
+        week_end = latest_week.get("week_end")
+        raw_content = latest_week.get("raw_content", "")
+
+        if not raw_content.strip():
+            raise HTTPException(status_code=400, detail="周报内容为空或格式不正确，无法解析")
+
         classification = classify_report_week(week_start, week_end)
         if classification.get("is_future"):
             raise HTTPException(status_code=400, detail=classification.get("message", "周报所属时间在未来"))
 
-        if not report_parsed or not (report_parsed.get("raw_content") or "").strip():
-            raise HTTPException(status_code=400, detail="周报内容为空或格式不正确，无法解析")
+        # 周次校验：检测到的周次是否为本周
+        current_monday, _ = get_current_week()
+        if week_start and week_start != current_monday and not force_submit:
+            detected_start = week_start.isoformat()
+            detected_end = week_end.isoformat() if week_end else ""
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "type": "week_mismatch",
+                    "message": f"检测到您提交的是 {detected_start} ~ {detected_end} 的周报，非本周周报，是否确认提交？",
+                    "week_start": detected_start,
+                    "week_end": detected_end,
+                },
+            )
 
         if week_start is None:
             week_start, week_end = get_current_week()
+
+        report_parsed = {"raw_content": raw_content}
     except HTTPException:
         raise
     except Exception as e:

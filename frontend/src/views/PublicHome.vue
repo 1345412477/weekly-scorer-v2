@@ -178,6 +178,27 @@
       </div>
     </Dialog>
 
+    <!-- 周次不匹配确认弹窗 -->
+    <Dialog v-model:visible="showWeekMismatch" header="周次确认" :closable="true" :dismissableMask="true"
+      :closeOnEscape="true" :style="{ width: '440px' }" class="result-dialog">
+      <div v-if="weekMismatchData" class="result-body">
+        <div class="success-info" style="background: #fff7e6;">
+          <i class="pi pi-exclamation-triangle" style="color: #f59e0b; font-size: 20px; margin-top: 2px;"></i>
+          <div>
+            <p class="success-title" style="color: #92400e;">检测到非本周周报</p>
+            <p class="success-desc" style="color: #78350f;">
+              您提交的是 <strong>{{ weekMismatchData.week_start }}</strong> ~ <strong>{{ weekMismatchData.week_end }}</strong> 的周报，非本周周报，是否确认提交？
+            </p>
+          </div>
+        </div>
+
+        <div class="result-footer">
+          <Button label="取消" icon="pi pi-times" severity="secondary" outlined @click="showWeekMismatch = false" />
+          <Button label="确认提交" icon="pi pi-check" @click="confirmWeekMismatch" />
+        </div>
+      </div>
+    </Dialog>
+
     <!-- 图片放大查看 -->
     <div v-if="lightboxSrc" class="lightbox-overlay" @click.self="closeLightbox">
       <div class="lightbox-content">
@@ -220,6 +241,10 @@ const uploading = ref(false)
 
 const showResult = ref(false)
 const resultData = ref(null)
+
+// 周次不匹配确认弹窗
+const showWeekMismatch = ref(false)
+const weekMismatchData = ref(null)
 
 // 图片放大
 const lightboxSrc = ref(null)
@@ -310,11 +335,11 @@ function clearSummary() {
   if (summaryInput.value) summaryInput.value.value = ''
 }
 
-async function uploadAll() {
+async function uploadAll(forceSubmit = false) {
   if (!selectedReport.value) return
   uploading.value = true
   try {
-    const res = await unifiedUploadAPI.uploadUnified(selectedReport.value, summaryFile.value)
+    const res = await unifiedUploadAPI.uploadUnified(selectedReport.value, summaryFile.value, forceSubmit)
     const data = res.data
     resultData.value = {
       author_name: data.author_name,
@@ -324,14 +349,30 @@ async function uploadAll() {
     }
     showResult.value = true
     showToast('success', '材料提交成功', 3000)
+    clearReport()
+    clearSummary()
   } catch (e) {
-    const msg = e.response?.data?.detail || '提交失败，请重试'
+    const status = e.response?.status
+    const detail = e.response?.data?.detail
+
+    // 周次不匹配：弹出确认对话框
+    if (status === 409 && detail?.type === 'week_mismatch') {
+      weekMismatchData.value = detail
+      showWeekMismatch.value = true
+      return
+    }
+
+    const msg = typeof detail === 'string' ? detail : (detail?.message || '提交失败，请重试')
     showToast('error', msg, 4000)
   } finally {
     uploading.value = false
-    clearReport()
-    clearSummary()
   }
+}
+
+// 确认提交非本周周报
+async function confirmWeekMismatch() {
+  showWeekMismatch.value = false
+  await uploadAll(true)
 }
 
 </script>
