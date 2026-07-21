@@ -84,10 +84,10 @@ async def match_person(db: AsyncSession, name: str) -> Optional[Person]:
 
 async def _get_report_score(db: AsyncSession, author_name: str,
                             week_start: date, week_end: date):
-    """返回 (score, report) 二元组。
+    """返回 (score, report, score_id) 三元组。
     - 优先选择：author_name + week_start 匹配 + 有 ReportScore 关联的报告
     - 同组内按 created_at 倒序，取最新提交的一份
-    - 无周报或未评分 → (0.0, None)
+    - 无周报或未评分 → (None, None, None)
     """
     try:
         # 先查询：作者+week_start 匹配，优先选有 ReportScore 的报告
@@ -110,7 +110,7 @@ async def _get_report_score(db: AsyncSession, author_name: str,
         best_id = best_id_r.scalar_one_or_none()
         if not best_id:
             logger.info(f"[聚合] {author_name} 该周无周报 → 周报分=None")
-            return None, None
+            return None, None, None
 
         # 读取报告对象
         rep_r = await db.execute(select(WeeklyReport).where(WeeklyReport.id == best_id))
@@ -121,11 +121,11 @@ async def _get_report_score(db: AsyncSession, author_name: str,
         score_row = sr.scalar_one_or_none()
         if score_row is None or score_row.total_score is None:
             logger.info(f"[聚合] {author_name} 该周周报尚未评分 → 周报分=None")
-            return None, report
-        return float(score_row.total_score), report
+            return None, report, None
+        return float(score_row.total_score), report, score_row.id
     except Exception as e:
         logger.warning(f"[聚合] 获取周报分数异常 {author_name}: {e}")
-        return None, None
+        return None, None, None
 
 
 async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> Optional[float]:
@@ -307,10 +307,10 @@ async def auto_aggregate(
     if agg and not force:
         status = getattr(agg, "status", "done") or "done"
         if status in ("done", "manual"):
-            new_report_score, new_report_obj = await _get_report_score(
+            new_report_score, new_report_obj, new_report_score_id = await _get_report_score(
                 db, author_name, week_start, week_end
             )
-            new_report_score_id = new_report_obj.id if new_report_obj else None
+            # 始终同步 report_score 和 report_score_id（即使分数相同，ID 也可能因删除重建而改变）
             old_report_score_val = float(agg.report_score) if agg.report_score is not None else None
             needs_update = False
 
@@ -321,8 +321,14 @@ async def auto_aggregate(
             elif new_report_score is None and old_report_score_val is not None:
                 # 保持原有分数不变（异步评分中）
                 pass
+            
+            # 关键修复：无条件同步 report_score_id，避免删除重建后 ID 不一致
             if new_report_score_id and agg.report_score_id != new_report_score_id:
                 agg.report_score_id = new_report_score_id
+                needs_update = True
+            elif not new_report_score_id and agg.report_score_id is not None:
+                # 报告被删除但 aggregate 仍保留 → 清空引用
+                agg.report_score_id = None
                 needs_update = True
 
             if needs_update:
@@ -356,10 +362,11 @@ async def auto_aggregate(
 
     # 周报分
     report_obj = None
+    report_score_id = None
     if preserve_manual and manual_override.get("report_score") and agg and agg.report_score is not None:
         report_score = float(agg.report_score)
     else:
-        report_score, report_obj = await _get_report_score(db, author_name, week_start, week_end)
+        report_score, report_obj, report_score_id = await _get_report_score(db, author_name, week_start, week_end)
 
     # 考勤分
     if preserve_manual and manual_override.get("attendance_score") and agg and agg.attendance_score is not None:
@@ -381,7 +388,6 @@ async def auto_aggregate(
     )
 
     # === 写入 / 更新 WeeklyAggregate ===
-    new_report_score_id = report_obj.id if report_obj else None
     if agg:
         agg.person_id = person_id or agg.person_id
         agg.department = department or agg.department or ""
@@ -394,8 +400,8 @@ async def auto_aggregate(
         if chat_score is not None:
             agg.chat_score = Decimal(str(round(chat_score, 1)))
         agg.composite_score = Decimal(str(round(total, 2)))
-        if new_report_score_id:
-            agg.report_score_id = new_report_score_id
+        if report_score_id:
+            agg.report_score_id = report_score_id
         # 只有当尚未被手动覆盖时才标记 done；如果原本是 manual，则保留 manual
         if getattr(agg, "status", None) != "manual":
             agg.status = "done"
@@ -412,7 +418,7 @@ async def auto_aggregate(
             attendance_score=Decimal(str(round(attendance_score, 1))) if attendance_score is not None else None,
             chat_score=Decimal(str(round(chat_score, 1))) if chat_score is not None else None,
             composite_score=Decimal(str(round(total, 2))),
-            report_score_id=new_report_score_id,
+            report_score_id=report_score_id,
             manual_override={},
             status="done",
         )
