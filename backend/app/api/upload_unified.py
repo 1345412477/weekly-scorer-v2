@@ -48,7 +48,7 @@ ALLOWED_REPORT_EXT = {".xlsx"}
 async def upload_unified(
     report: UploadFile = File(..., description="周报文件，仅支持 .xlsx"),
     summary: Optional[UploadFile] = File(None, description="一周小结图片（可选），仅支持 .png / .jpg / .jpeg"),
-    force_submit: bool = Form(False, description="强制提交（跳过周次校验）"),
+    force_submit: str = Form("false", description="强制提交（跳过周次校验）"),
     db: AsyncSession = Depends(get_db),
 ):
     # 1. 文件格式校验
@@ -109,9 +109,10 @@ async def upload_unified(
         if classification.get("is_future"):
             raise HTTPException(status_code=400, detail=classification.get("message", "周报所属时间在未来"))
 
-        # 周次校验：检测到的周次是否为本周
+        # 周次校验：检测到的周次是否为本周（在重复检查之前，确保非本周周报优先提示）
         current_monday, _ = get_current_week()
-        if week_start and week_start != current_monday and not force_submit:
+        is_force = force_submit.lower() == "true"
+        if week_start and week_start != current_monday and not is_force:
             detected_start = week_start.isoformat()
             detected_end = week_end.isoformat() if week_end else ""
             raise HTTPException(
@@ -159,7 +160,7 @@ async def upload_unified(
     person_id = detected_person_id
     department_id = detected_dept_id
 
-    # 4b. 同周重复提交检查（与 /reports/upload 保持一致）
+    # 4b. 同周重复提交检查（返回结构化错误，前端可识别）
     existing_q = select(WeeklyReport).where(
         WeeklyReport.author_name == author_name,
         WeeklyReport.week_start == week_start,
@@ -175,10 +176,10 @@ async def upload_unified(
             pass
         raise HTTPException(
             status_code=409,
-            detail=(
-                f"{author_name} 本周（{week_start.isoformat()}）已提交周报，"
-                f"如需重新提交，请先在周评列表中删除旧周报后再上传。"
-            ),
+            detail={
+                "type": "duplicate",
+                "message": f"{author_name} 本周（{week_start.isoformat()}）已提交周报，如需重新提交，请先在周评列表中删除旧周报后再上传。",
+            },
         )
 
     # 5. 写入周报记录（随后立即触发后台异步 AI 评分，不阻塞当前请求）
