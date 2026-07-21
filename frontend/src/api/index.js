@@ -110,7 +110,12 @@ function handleError(err) {
   } else if (status === 404) {
     msg = parseDetail(detail) || '资源不存在'
   } else if (status === 409) {
-    msg = parseDetail(detail) || '操作冲突，请刷新页面后重试'
+    // 保留结构化 detail（week_mismatch / duplicate），前端需要读取 type 字段
+    if (detail && typeof detail === 'object' && detail.type) {
+      msg = detail.message || parseDetail(detail)
+    } else {
+      msg = parseDetail(detail) || '操作冲突，请刷新页面后重试'
+    }
   } else if (status === 413) {
     msg = parseDetail(detail) || '文件过大，请压缩后重试'
   } else if (status === 503) {
@@ -147,7 +152,9 @@ function handleError(err) {
   })
 
   // 登录请求失败时不弹 toast，完全由页面内横幅提示
-  if (!isLoginRequest && typeof window !== 'undefined' && window.showToast) {
+  // 结构化 409 响应（week_mismatch / duplicate）不弹 toast，由组件自行处理
+  const isStructured409 = status === 409 && detail && typeof detail === 'object' && detail.type
+  if (!isLoginRequest && !isStructured409 && typeof window !== 'undefined' && window.showToast) {
     window.showToast(msg, 'error')
   }
 

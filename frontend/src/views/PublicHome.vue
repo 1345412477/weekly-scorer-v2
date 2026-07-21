@@ -178,16 +178,21 @@
       </div>
     </Dialog>
 
-    <!-- 周次不匹配确认弹窗 -->
-    <Dialog v-model:visible="showWeekMismatch" header="周次确认" :closable="true" :dismissableMask="true"
+    <!-- 周次不匹配/重复提交确认弹窗 -->
+    <Dialog v-model:visible="showWeekMismatch" :header="weekMismatchData?.type === 'duplicate' ? '重复提交确认' : '周次确认'" :closable="true" :dismissableMask="true"
       :closeOnEscape="true" :style="{ width: '440px' }" class="result-dialog">
       <div v-if="weekMismatchData" class="result-body">
         <div class="success-info" style="background: #fff7e6;">
           <i class="pi pi-exclamation-triangle" style="color: #f59e0b; font-size: 20px; margin-top: 2px;"></i>
           <div>
-            <p class="success-title" style="color: #92400e;">检测到非本周周报</p>
+            <p class="success-title" style="color: #92400e;">{{ weekMismatchData.type === 'duplicate' ? '检测到重复提交' : '检测到非本周周报' }}</p>
             <p class="success-desc" style="color: #78350f;">
-              您提交的是 <strong>{{ weekMismatchData.week_start }}</strong> ~ <strong>{{ weekMismatchData.week_end }}</strong> 的周报，非本周周报，是否确认提交？
+              <template v-if="weekMismatchData.type === 'week_mismatch'">
+                您提交的是 <strong>{{ weekMismatchData.week_start }}</strong> ~ <strong>{{ weekMismatchData.week_end }}</strong> 的周报，非本周周报，是否确认提交？
+              </template>
+              <template v-else>
+                {{ weekMismatchData.message }}
+              </template>
             </p>
           </div>
         </div>
@@ -356,8 +361,9 @@ async function uploadAll(forceSubmit = false) {
     // 从原始响应中读取 detail，避免被 handleError 拦截器转成字符串
     const rawDetail = e.response?.data?.detail
 
-    // 周次不匹配：弹出确认对话框
-    if (status === 409 && rawDetail && typeof rawDetail === 'object' && rawDetail.type === 'week_mismatch') {
+    // 周次不匹配或重复提交：弹出确认对话框
+    if (status === 409 && rawDetail && typeof rawDetail === 'object' && 
+        (rawDetail.type === 'week_mismatch' || rawDetail.type === 'duplicate')) {
       weekMismatchData.value = rawDetail
       showWeekMismatch.value = true
       return
