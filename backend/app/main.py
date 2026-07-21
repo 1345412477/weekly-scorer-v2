@@ -12,7 +12,7 @@ import time
 from app.database import init_db
 from app.config import get_settings
 from app.api import auth, config, templates, reports, leaderboard, departments, persons
-from app.api import weeklysummary, attendance, chat, weekly_aggregates, business_summary, ai_models
+from app.api import weeklysummary, attendance, chat, weekly_aggregates, business_summary, ai_models, assessment
 from app.utils.logger import log_api_request, log_info, log_error
 
 settings = get_settings()
@@ -137,6 +137,7 @@ app.include_router(chat.router)
 app.include_router(weekly_aggregates.router)
 app.include_router(business_summary.router)
 app.include_router(ai_models.router)
+app.include_router(assessment.router)
 
 # 员工端首页联合上传接口（周报 + 一周小结，统一使用周报识别姓名）
 from app.api.upload_unified import router as upload_unified_router

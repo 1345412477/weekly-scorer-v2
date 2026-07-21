@@ -350,4 +350,10 @@ export const aiModelAPI = {
   test: (data) => api.post('/ai-models/test', data),
 }
 
+// 内部考核 API
+export const assessmentAPI = {
+  list: (params) => api.get('/assessment/list', { params }),
+  getDetail: (personId, params) => api.get(`/assessment/${personId}`, { params }),
+}
+
 export default api

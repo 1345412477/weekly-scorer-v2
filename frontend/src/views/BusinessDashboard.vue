@@ -519,17 +519,11 @@ const generateAll = async () => {
     }
   })
 
-  // 超时保护：60秒后如果轮询还没停止，强制停止
+  // 超时保护：60秒后如果轮询还没停止，强制停止（静默）
   setTimeout(() => {
     if (generating.value) {
       stopPolling()
       generating.value = false
-      toast.add({
-        severity: 'warning',
-        summary: '生成超时',
-        detail: '生成任务响应超时，请刷新页面重试',
-        life: 3000,
-      })
     }
   }, 60000)
 }
@@ -573,13 +567,6 @@ const generateDept = async () => {
               severity: 'error',
               summary: '生成失败',
               detail: respData?.error_message || 'AI 生成失败',
-              life: 3000,
-            })
-          } else {
-            toast.add({
-              severity: 'warning',
-              summary: '生成超时',
-              detail: '生成任务响应超时，请刷新页面重试',
               life: 3000,
             })
           }
