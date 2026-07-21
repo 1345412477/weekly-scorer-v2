@@ -150,17 +150,19 @@ async def delete_aggregate(
     if not agg:
         raise HTTPException(status_code=404, detail="周评记录不存在")
 
-    # 清理关联的 ReportScore（若存在）
+    # 清理关联的 ReportScore 和 WeeklyReport（若存在）
     if agg.report_score_id:
-        await db.execute(ReportScore.__table__.delete().where(
-            ReportScore.report_id == agg.report_score_id
-        ))
-
-    # 清理关联的 WeeklyReport（若存在），否则重新提交时会因重复检查被拒绝
-    if agg.report_id:
-        await db.execute(WeeklyReport.__table__.delete().where(
-            WeeklyReport.id == agg.report_id
-        ))
+        rs = await db.execute(select(ReportScore).where(ReportScore.id == agg.report_score_id))
+        rs_obj = rs.scalar_one_or_none()
+        if rs_obj:
+            # 通过 ReportScore.report_id 找到关联的 WeeklyReport
+            if rs_obj.report_id:
+                await db.execute(WeeklyReport.__table__.delete().where(
+                    WeeklyReport.id == rs_obj.report_id
+                ))
+            await db.execute(ReportScore.__table__.delete().where(
+                ReportScore.id == agg.report_score_id
+            ))
 
     await db.delete(agg)
     await write_operation_log(db, admin, "delete", "weekly_aggregate", aggregate_id, request,
@@ -191,17 +193,18 @@ async def batch_delete_aggregates(
     if not aggs:
         raise HTTPException(status_code=404, detail="未找到所选周评记录")
 
+    # 清理关联的 ReportScore 和 WeeklyReport
     related_ids = [a.report_score_id for a in aggs if a.report_score_id]
     if related_ids:
+        rs_rows = await db.execute(select(ReportScore).where(ReportScore.id.in_(related_ids)))
+        rs_objects = rs_rows.scalars().all()
+        wr_ids = [rs.report_id for rs in rs_objects if rs.report_id]
+        if wr_ids:
+            await db.execute(WeeklyReport.__table__.delete().where(
+                WeeklyReport.id.in_(wr_ids)
+            ))
         await db.execute(ReportScore.__table__.delete().where(
-            ReportScore.report_id.in_(related_ids)
-        ))
-
-    # 清理关联的 WeeklyReport，否则重新提交时会因重复检查被拒绝
-    report_ids = [a.report_id for a in aggs if a.report_id]
-    if report_ids:
-        await db.execute(WeeklyReport.__table__.delete().where(
-            WeeklyReport.id.in_(report_ids)
+            ReportScore.id.in_(related_ids)
         ))
 
     for a in aggs:
