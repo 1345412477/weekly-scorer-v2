@@ -353,16 +353,18 @@ async function uploadAll(forceSubmit = false) {
     clearSummary()
   } catch (e) {
     const status = e.response?.status
-    const detail = e.response?.data?.detail
+    // 从原始响应中读取 detail，避免被 handleError 拦截器转成字符串
+    const rawDetail = e.response?.data?.detail
 
     // 周次不匹配：弹出确认对话框
-    if (status === 409 && detail?.type === 'week_mismatch') {
-      weekMismatchData.value = detail
+    if (status === 409 && rawDetail && typeof rawDetail === 'object' && rawDetail.type === 'week_mismatch') {
+      weekMismatchData.value = rawDetail
       showWeekMismatch.value = true
       return
     }
 
-    const msg = typeof detail === 'string' ? detail : (detail?.message || '提交失败，请重试')
+    // handleError 可能已将 detail 转为字符串，尝试从 userMessage 或原始 detail 获取
+    const msg = e.userMessage || (typeof rawDetail === 'string' ? rawDetail : (rawDetail?.message || '提交失败，请重试'))
     showToast('error', msg, 4000)
   } finally {
     uploading.value = false
