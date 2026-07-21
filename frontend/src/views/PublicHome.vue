@@ -126,7 +126,7 @@
 
             <div class="fade-in-up" style="--delay: 540ms">
               <Button label="提交材料" icon="pi pi-send" :loading="uploading"
-                :disabled="!selectedReport" @click="uploadAll" class="submit-btn" />
+                :disabled="!selectedReport" @click="uploadAll(false)" class="submit-btn" />
             </div>
 
             <p v-if="uploading" class="scoring-hint fade-in-up" style="--delay: 580ms">
