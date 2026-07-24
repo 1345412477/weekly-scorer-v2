@@ -222,7 +222,7 @@ function nextHistoryWeek() {
   if (historyWeekIndex.value < historyWeeks.value.length - 1) historyWeekIndex.value++
 }
 const totalPersons = ref(0)
-const submittedCount = ref(0)
+const submittedCount = computed(() => totalPersons.value - abnormalPersons.value.length)
 const stats = ref({ total_reports: 0, scored_reports: 0, avg_score: 0 })
 const weeklyTrend = ref([])
 const gradeDist = ref({})
@@ -331,7 +331,6 @@ async function loadData() {
     currentProjects.value = overview.current_projects || []
     historyWeeks.value = overview.history_weeks || []
     totalPersons.value = overview.total_persons || 0
-    submittedCount.value = overview.submitted_count || 0
     allPersons.value = overview.all_persons || []
 
     const sd = statsRes.data

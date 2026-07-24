@@ -342,14 +342,13 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
 
     for p in persons:
         if p.name not in submitted_names:
-            # 未提交：判断是否过了补交期限
-            if now >= late_deadline_time:
-                not_submitted.append({
-                    "name": p.name,
-                    "department": p.department_name or "",
-                    "position": p.position or "",
-                    "status": "未提交",
-                })
+            # 未提交：始终计入异常列表
+            not_submitted.append({
+                "name": p.name,
+                "department": p.department_name or "",
+                "position": p.position or "",
+                "status": "未提交",
+            })
         else:
             # 已提交：判断是否迟交
             st = submit_times.get(p.name)

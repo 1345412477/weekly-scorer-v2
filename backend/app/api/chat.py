@@ -38,6 +38,64 @@ def _get_current_week_range(today: Optional[date] = None):
     return week_start, week_end
 
 
+@router.post("/preview")
+async def preview_chat(
+    file: UploadFile = File(...),
+    admin=Depends(require_admin),
+):
+    """预览聊天记录文件覆盖的周范围，不保存数据。"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="文件名为空")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".xlsx", ".xlsm"):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx / .xlsm 格式")
+
+    saved_name = f"{uuid.uuid4()}{ext}"
+    saved_path = os.path.join(UPLOAD_DIR, saved_name)
+
+    try:
+        content = await file.read()
+        with open(saved_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存文件失败: {e}")
+
+    try:
+        records, employees = parse_chat_excel(saved_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"解析 Excel 失败: {e}")
+    finally:
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
+
+    if not records:
+        raise HTTPException(status_code=400, detail="未解析到任何聊天记录，请检查表头格式")
+
+    week_starts = [r.get("week_start") for r in records if r.get("week_start")]
+    if week_starts:
+        min_week_start = min(week_starts)
+        max_week_start = max(week_starts)
+    else:
+        min_week_start, _ = _get_current_week_range()
+        max_week_start = min_week_start
+
+    week_end_for_log = max_week_start + timedelta(days=6) if isinstance(max_week_start, date) else None
+
+    current_week_start, _ = _get_current_week_range()
+    is_current_week = min_week_start == current_week_start
+
+    return {
+        "week_start": min_week_start.isoformat(),
+        "week_end": (week_end_for_log or (max_week_start + timedelta(days=6))).isoformat(),
+        "is_current_week": is_current_week,
+        "total_records": len(records),
+        "filename": file.filename,
+    }
+
+
 @router.post("/upload")
 async def upload_chat(
     file: UploadFile = File(...),

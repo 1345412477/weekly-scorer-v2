@@ -325,8 +325,8 @@
         <p>是否继续上传？</p>
       </div>
       <template #footer>
-        <Button label="取消" icon="pi pi-times" text @click="showWeekConfirm = false" />
-        <Button label="继续上传" icon="pi pi-check" @click="confirmUpload" severity="primary" />
+        <Button label="取消" icon="pi pi-times" text @click="showWeekConfirm = false; pendingUploadFile = null" />
+        <Button label="继续上传" icon="pi pi-check" @click="confirmWeekUpload" severity="primary" />
       </template>
     </Dialog>
 
@@ -396,6 +396,7 @@ const showWeekConfirm = ref(false)
 const pendingUploadType = ref('') // 'attendance' or 'chat'
 const pendingUploadMode = ref('append')
 const pendingUploadWeek = ref('')
+const pendingUploadFile = ref(null)
 
 // 重新计算
 const showRecalculateBtn = computed(() => {
@@ -451,15 +452,30 @@ async function uploadAttendance(mode) {
   if (!attendanceFile.value) return
   attendanceUploading.value = true
   try {
-    const res = await attendanceAPI.upload(attendanceFile.value, mode)
-    const weekStart = res.data.week_start
+    // 先预览周范围
+    const previewRes = await attendanceAPI.preview(attendanceFile.value)
+    const weekStart = previewRes.data.week_start
     const currentWeekStart = attendanceStatus.value?.current_week_start
-    const isCurrentWeek = weekStart === currentWeekStart
+    const isCurrentWeek = previewRes.data.is_current_week
+
+    if (!isCurrentWeek) {
+      // 非本周数据，先弹窗确认再上传
+      pendingUploadType.value = 'attendance'
+      pendingUploadMode.value = mode
+      pendingUploadWeek.value = `${weekStart} ~ ${previewRes.data.week_end}`
+      pendingUploadFile.value = attendanceFile.value
+      showWeekConfirm.value = true
+      attendanceUploading.value = false
+      return
+    }
+
+    // 本周数据，直接上传
+    const res = await attendanceAPI.upload(attendanceFile.value, mode)
 
     attendanceResult.value = {
       message: res.data.message || '上传成功',
       mode: res.data.mode || mode,
-      week_start: weekStart,
+      week_start: res.data.week_start,
       week_end: res.data.week_end,
       total_records: res.data.total_records ?? '—',
       employees_matched: res.data.employees_matched ?? 0,
@@ -467,17 +483,11 @@ async function uploadAttendance(mode) {
       replaced_old_count: res.data.replaced_old_count ?? 0,
     }
 
-    if (!isCurrentWeek) {
-      // 非本周数据，弹窗提示
-      pendingUploadWeek.value = `${weekStart} ~ ${res.data.week_end}`
-      showWeekConfirm.value = true
-    } else {
-      toast.add({
-        severity: 'success',
-        summary: mode === 'replace' ? '考勤数据已覆盖' : '考勤数据上传成功',
-        life: 3000,
-      })
-    }
+    toast.add({
+      severity: 'success',
+      summary: mode === 'replace' ? '考勤数据已覆盖' : '考勤数据上传成功',
+      life: 3000,
+    })
 
     attendanceFile.value = null
     refreshStatus()
@@ -486,6 +496,72 @@ async function uploadAttendance(mode) {
     showError.value = true
   } finally {
     attendanceUploading.value = false
+  }
+}
+
+// 确认非本周数据上传
+async function confirmWeekUpload() {
+  showWeekConfirm.value = false
+  const type = pendingUploadType.value
+  const mode = pendingUploadMode.value
+  const file = pendingUploadFile.value
+
+  if (!file) return
+
+  if (type === 'attendance') {
+    attendanceUploading.value = true
+  } else {
+    chatUploading.value = true
+  }
+  try {
+    if (type === 'attendance') {
+      const res = await attendanceAPI.upload(file, mode)
+      attendanceResult.value = {
+        message: res.data.message || '上传成功',
+        mode: res.data.mode || mode,
+        week_start: res.data.week_start,
+        week_end: res.data.week_end,
+        total_records: res.data.total_records ?? '—',
+        employees_matched: res.data.employees_matched ?? 0,
+        employees_unmatched: res.data.employees_unmatched ?? [],
+        replaced_old_count: res.data.replaced_old_count ?? 0,
+      }
+      toast.add({
+        severity: 'success',
+        summary: '考勤数据上传成功',
+        life: 3000,
+      })
+      attendanceFile.value = null
+    } else {
+      const res = await chatAPI.upload(file, mode)
+      chatResult.value = {
+        message: res.data.message || '上传成功',
+        mode: res.data.mode || mode,
+        week_start: res.data.week_start,
+        week_end: res.data.week_end,
+        total_records: res.data.total_records ?? '—',
+        matched_records: res.data.matched_records ?? 0,
+        unmatched_records: res.data.unmatched_records ?? 0,
+        employees_matched: res.data.employees_matched ?? 0,
+        employees_unmatched_count: res.data.employees_unmatched_count ?? 0,
+        employees_unmatched: res.data.employees_unmatched ?? [],
+        replaced_old_count: res.data.replaced_old_count ?? 0,
+      }
+      toast.add({
+        severity: 'success',
+        summary: '聊天记录上传成功',
+        life: 3000,
+      })
+      chatFile.value = null
+    }
+    refreshStatus()
+  } catch (e) {
+    errorMessage.value = e.response?.data?.detail || '上传失败，请检查文件格式'
+    showError.value = true
+  } finally {
+    attendanceUploading.value = false
+    chatUploading.value = false
+    pendingUploadFile.value = null
   }
 }
 
@@ -531,15 +607,29 @@ async function uploadChat(mode) {
   if (!chatFile.value) return
   chatUploading.value = true
   try {
+    // 先预览周范围
+    const previewRes = await chatAPI.preview(chatFile.value)
+    const weekStart = previewRes.data.week_start
+    const isCurrentWeek = previewRes.data.is_current_week
+
+    if (!isCurrentWeek) {
+      // 非本周数据，先弹窗确认再上传
+      pendingUploadType.value = 'chat'
+      pendingUploadMode.value = mode
+      pendingUploadWeek.value = `${weekStart} ~ ${previewRes.data.week_end}`
+      pendingUploadFile.value = chatFile.value
+      showWeekConfirm.value = true
+      chatUploading.value = false
+      return
+    }
+
+    // 本周数据，直接上传
     const res = await chatAPI.upload(chatFile.value, mode)
-    const weekStart = res.data.week_start
-    const currentWeekStart = chatStatus.value?.current_week_start
-    const isCurrentWeek = weekStart === currentWeekStart
 
     chatResult.value = {
       message: res.data.message || '上传成功',
       mode: res.data.mode || mode,
-      week_start: weekStart,
+      week_start: res.data.week_start,
       week_end: res.data.week_end,
       total_records: res.data.total_records ?? '—',
       matched_records: res.data.matched_records ?? 0,
@@ -550,17 +640,11 @@ async function uploadChat(mode) {
       replaced_old_count: res.data.replaced_old_count ?? 0,
     }
 
-    if (!isCurrentWeek) {
-      // 非本周数据，弹窗提示
-      pendingUploadWeek.value = `${weekStart} ~ ${res.data.week_end}`
-      showWeekConfirm.value = true
-    } else {
-      toast.add({
-        severity: 'success',
-        summary: mode === 'replace' ? '聊天记录已覆盖' : '聊天记录上传成功',
-        life: 3000,
-      })
-    }
+    toast.add({
+      severity: 'success',
+      summary: mode === 'replace' ? '聊天记录已覆盖' : '聊天记录上传成功',
+      life: 3000,
+    })
 
     chatFile.value = null
     refreshStatus()
@@ -590,19 +674,6 @@ async function cancelChat() {
   } finally {
     chatCancelling.value = false
   }
-}
-
-// ---------- 非本周确认 ----------
-function confirmUpload() {
-  // 数据已经上传完成，弹窗只是提示用户
-  // 关闭弹窗并刷新状态
-  showWeekConfirm.value = false
-  refreshStatus()
-  toast.add({
-    severity: 'info',
-    summary: '非本周数据已上传，如需更新评分请点击"重新计算该周评分"按钮',
-    life: 5000,
-  })
 }
 
 // ---------- 重新计算 ----------

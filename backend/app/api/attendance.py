@@ -43,6 +43,65 @@ def _get_current_week_range(today: Optional[date] = None):
     return week_start, week_end
 
 
+@router.post("/preview")
+async def preview_attendance(
+    file: UploadFile = File(...),
+    admin=Depends(require_admin),
+):
+    """预览考勤文件覆盖的周范围，不保存数据。"""
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="文件名为空")
+
+    ext = os.path.splitext(file.filename)[1].lower()
+    if ext not in (".xlsx", ".xlsm"):
+        raise HTTPException(status_code=400, detail="仅支持 .xlsx / .xlsm 格式")
+
+    saved_name = f"{uuid.uuid4()}{ext}"
+    saved_path = os.path.join(UPLOAD_DIR, saved_name)
+
+    try:
+        content = await file.read()
+        with open(saved_path, "wb") as f:
+            f.write(content)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"保存文件失败: {e}")
+
+    try:
+        records, employees = parse_attendance_excel(saved_path)
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"解析 Excel 失败: {e}")
+    finally:
+        # 预览不保留文件
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
+
+    if not records:
+        raise HTTPException(status_code=400, detail="未解析到任何考勤记录，请检查表头格式")
+
+    week_starts = [r.get("week_start") for r in records if r.get("week_start")]
+    if week_starts:
+        min_week_start = min(week_starts)
+        max_week_start = max(week_starts)
+    else:
+        min_week_start, _ = _get_current_week_range()
+        max_week_start = min_week_start
+
+    week_end_for_log = max_week_start + timedelta(days=6) if isinstance(max_week_start, date) else None
+
+    current_week_start, _ = _get_current_week_range()
+    is_current_week = min_week_start == current_week_start
+
+    return {
+        "week_start": min_week_start.isoformat(),
+        "week_end": (week_end_for_log or (max_week_start + timedelta(days=6))).isoformat(),
+        "is_current_week": is_current_week,
+        "total_records": len(records),
+        "filename": file.filename,
+    }
+
+
 @router.post("/upload")
 async def upload_attendance(
     file: UploadFile = File(...),
@@ -282,40 +341,45 @@ async def cancel_attendance_upload(
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
-    """取消本周考勤上传——删除本周的考勤记录和上传日志。"""
-    week_start, week_end = _get_current_week_range()
+    """取消最近一次考勤上传——删除该次上传的考勤记录和上传日志。"""
+    # 查找最近一次考勤上传日志
+    q = select(DataUploadLog).where(
+        DataUploadLog.data_type == "attendance"
+    ).order_by(DataUploadLog.created_at.desc()).limit(1)
+    result = await db.execute(q)
+    last = result.scalar_one_or_none()
 
-    # 删除本周考勤记录
+    if not last:
+        raise HTTPException(status_code=400, detail="没有找到考勤上传记录，无法取消")
+
+    # 用上传日志中存储的实际周范围删除考勤记录
+    upload_week_start = last.week_start
+    upload_week_end = last.week_end
+
     del_records = delete(AttendanceRecord).where(
         and_(
-            AttendanceRecord.week_start >= week_start,
-            AttendanceRecord.week_start <= week_end,
+            AttendanceRecord.week_start >= upload_week_start,
+            AttendanceRecord.week_start <= upload_week_end,
         )
     )
     r1 = await db.execute(del_records)
     deleted_records = int(r1.rowcount or 0)
 
-    # 删除本周上传日志
-    del_logs = delete(DataUploadLog).where(
-        and_(
-            DataUploadLog.data_type == "attendance",
-            DataUploadLog.week_start >= week_start - timedelta(days=1),
-            DataUploadLog.week_start <= week_end + timedelta(days=1),
-        )
-    )
+    # 删除该次上传日志（按 id 精确删除）
+    del_logs = delete(DataUploadLog).where(DataUploadLog.id == last.id)
     r2 = await db.execute(del_logs)
     deleted_logs = int(r2.rowcount or 0)
 
     await db.commit()
     logger.info(
-        f"[attendance cancel] 本周考勤数据已取消：删除 {deleted_records} 条记录 + {deleted_logs} 条日志"
-        f"（周范围: {week_start}~{week_end}）"
+        f"[attendance cancel] 考勤上传已取消：删除 {deleted_records} 条记录 + {deleted_logs} 条日志"
+        f"（上传周范围: {upload_week_start}~{upload_week_end}，文件名: {last.filename}）"
     )
 
     return {
-        "message": "本周考勤上传已取消",
-        "week_start": week_start.isoformat(),
-        "week_end": week_end.isoformat(),
+        "message": "考勤上传已取消",
+        "week_start": upload_week_start.isoformat(),
+        "week_end": upload_week_end.isoformat(),
         "deleted_records": deleted_records,
         "deleted_logs": deleted_logs,
     }

@@ -270,6 +270,11 @@ export const unifiedUploadAPI = {
 
 // 管理员端：企业微信数据上传
 export const attendanceAPI = {
+  preview: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return uploadApi.post('/attendance/preview', formData)
+  },
   upload: (file, mode = 'append') => {
     const formData = new FormData()
     formData.append('file', file)
@@ -281,6 +286,11 @@ export const attendanceAPI = {
 }
 
 export const chatAPI = {
+  preview: (file) => {
+    const formData = new FormData()
+    formData.append('file', file)
+    return uploadApi.post('/chat/preview', formData)
+  },
   upload: (file, mode = 'append') => {
     const formData = new FormData()
     formData.append('file', file)
