@@ -10,8 +10,27 @@
         <InputText v-model="filters.department" placeholder="输入部门名称" class="filter-input" />
       </div>
       <div class="app-filter-item">
-        <label>周起始日期</label>
-        <Calendar v-model="filters.week_start" dateFormat="yy-mm-dd" placeholder="选择周一" :showIcon="true" class="filter-input" />
+        <label>选择周次</label>
+        <div class="week-selector">
+          <Dropdown
+            v-model="selectedYear"
+            :options="yearOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="年份"
+            class="year-dropdown"
+            @change="onYearChange"
+          />
+          <Dropdown
+            v-model="selectedWeekLabel"
+            :options="filteredWeekOptions"
+            optionLabel="label"
+            optionValue="value"
+            placeholder="选择周次"
+            class="week-dropdown"
+            @change="onWeekChange"
+          />
+        </div>
       </div>
       <div class="app-filter-item filter-action-group">
         <label>&nbsp;</label>
@@ -283,11 +302,11 @@ import { useRouter } from 'vue-router'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
 import InputNumber from 'primevue/inputnumber'
-import Calendar from 'primevue/calendar'
 import DataTable from 'primevue/datatable'
 import Column from 'primevue/column'
 import Tag from 'primevue/tag'
 import Dialog from 'primevue/dialog'
+import Dropdown from 'primevue/dropdown'
 import { useToast } from 'primevue/usetoast'
 
 import ResponsiveTableShell from '../components/ui/ResponsiveTableShell.vue'
@@ -311,8 +330,93 @@ const selectedRows = ref([])
 const filters = reactive({
   author_name: '',
   department: '',
-  week_start: null,
+  week_start: '',
 })
+
+// 周筛选
+const selectedYear = ref(new Date().getFullYear())
+const selectedWeekLabel = ref('')
+
+/** 获取ISO周数 */
+function getISOWeek(d) {
+  const date = new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))
+  const dayNum = date.getUTCDay() || 7
+  date.setUTCDate(date.getUTCDate() + 4 - dayNum)
+  const yearStart = new Date(Date.UTC(date.getUTCFullYear(), 0, 1))
+  return Math.ceil((((date - yearStart) / 86400000) + 1) / 7)
+}
+
+/** 获取周一日期 */
+function getMonday(d) {
+  const date = new Date(d)
+  const day = date.getDay()
+  const diff = date.getDate() - day + (day === 0 ? -6 : 1)
+  date.setDate(diff)
+  date.setHours(0, 0, 0, 0)
+  return date
+}
+
+/** 格式化日期 YYYY-MM-DD */
+function formatYMD(d) {
+  if (!d) return ''
+  const y = d.getFullYear()
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${y}-${m}-${day}`
+}
+
+/** 格式化日期 MM.DD */
+function formatShort(d) {
+  const m = String(d.getMonth() + 1).padStart(2, '0')
+  const day = String(d.getDate()).padStart(2, '0')
+  return `${m}.${day}`
+}
+
+/** 年份选项 */
+const yearOptions = computed(() => {
+  const currentYear = new Date().getFullYear()
+  return [
+    { label: `${currentYear}年`, value: currentYear },
+    { label: `${currentYear - 1}年`, value: currentYear - 1 },
+    { label: `${currentYear - 2}年`, value: currentYear - 2 },
+  ]
+})
+
+/** 生成指定年份的周选项 */
+function generateWeekOptionsForYear(year) {
+  const options = []
+  const jan4 = new Date(year, 0, 4)
+  const jan4Day = jan4.getDay() || 7
+  const firstMonday = new Date(jan4)
+  firstMonday.setDate(jan4.getDate() - (jan4Day - 1))
+  for (let week = 1; week <= 53; week++) {
+    const monday = new Date(firstMonday)
+    monday.setDate(firstMonday.getDate() + (week - 1) * 7)
+    const sunday = new Date(monday)
+    sunday.setDate(monday.getDate() + 6)
+    if (monday.getFullYear() === year || sunday.getFullYear() === year) {
+      const label = `第${week}周 ${formatShort(monday)}~${formatShort(sunday)}`
+      const value = formatYMD(monday)
+      options.push({ label, value })
+    }
+  }
+  return options
+}
+
+/** 根据选中年份过滤周选项 */
+const filteredWeekOptions = computed(() => {
+  return generateWeekOptionsForYear(selectedYear.value)
+})
+
+function onYearChange(event) {
+  selectedYear.value = event.value
+  selectedWeekLabel.value = ''
+  filters.week_start = ''
+}
+
+function onWeekChange(event) {
+  filters.week_start = event.value
+}
 
 const editDialog = reactive({
   show: false,
@@ -368,7 +472,7 @@ async function loadData() {
     if (filters.author_name) params.author_name = filters.author_name
     if (filters.department) params.department = filters.department
     if (filters.week_start) {
-      params.week_start = isDate(filters.week_start) ? toISODate(filters.week_start) : String(filters.week_start).slice(0, 10)
+      params.week_start = filters.week_start
     }
     const res = await aggregateAPI.list(params)
     aggregates.value = res.data.items || []
@@ -393,7 +497,15 @@ function isDate(v) { return v instanceof Date && !isNaN(v.valueOf()) }
 function resetFilters() {
   filters.author_name = ''
   filters.department = ''
-  filters.week_start = null
+  filters.week_start = ''
+  // 重置周筛选到当前周
+  const currentMonday = getMonday(new Date())
+  selectedYear.value = currentMonday.getFullYear()
+  const currentOpt = generateWeekOptionsForYear(selectedYear.value).find(
+    opt => opt.value === formatYMD(currentMonday)
+  )
+  selectedWeekLabel.value = currentOpt ? currentOpt.value : ''
+  if (selectedWeekLabel.value) filters.week_start = selectedWeekLabel.value
   page.value = 1
   loadData()
 }
@@ -531,6 +643,16 @@ async function onBatchExport() {
 }
 
 onMounted(() => {
+  // 初始化周筛选到当前周
+  const currentMonday = getMonday(new Date())
+  selectedYear.value = currentMonday.getFullYear()
+  const currentOpt = generateWeekOptionsForYear(selectedYear.value).find(
+    opt => opt.value === formatYMD(currentMonday)
+  )
+  if (currentOpt) {
+    selectedWeekLabel.value = currentOpt.value
+    filters.week_start = currentOpt.value
+  }
   loadData()
   startScoringPoll()
 })
@@ -621,6 +743,20 @@ onUnmounted(() => {
 }
 .filter-action-group {
   align-self: stretch;
+}
+
+.week-selector {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.week-selector .year-dropdown {
+  min-width: 110px;
+}
+
+.week-selector .week-dropdown {
+  min-width: 280px;
 }
 
 .filter-action-btn {

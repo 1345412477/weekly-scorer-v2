@@ -5,11 +5,11 @@
         <div class="filter-row">
           <div class="filter-item">
             <label>开始日期</label>
-            <DatePicker v-model="startDate" dateFormat="yy-mm-dd" showIcon />
+            <DatePicker v-model="startDate" dateFormat="yy年mm月dd日" showIcon />
           </div>
           <div class="filter-item">
             <label>结束日期</label>
-            <DatePicker v-model="endDate" dateFormat="yy-mm-dd" showIcon />
+            <DatePicker v-model="endDate" dateFormat="yy年mm月dd日" showIcon />
           </div>
           <div class="filter-item">
             <label>部门</label>
@@ -17,7 +17,7 @@
               v-model="selectedDepartment"
               :options="departments"
               optionLabel="name"
-              optionValue="id"
+              optionValue="name"
               placeholder="全部部门"
               showClear
               class="w-full"
@@ -130,7 +130,7 @@ onMounted(() => {
 const loadDepartments = async () => {
   try {
     const res = await departmentAPI.list()
-    departments.value = res.data.items || []
+    departments.value = res.data || []
   } catch (error) {
     console.error('加载部门列表失败:', error)
   }

@@ -5,14 +5,14 @@ const routes = [
   { path: '/', name: 'Home', component: () => import('../views/PublicHome.vue'), meta: { title: '智友辰周任务汇总系统', public: true, noLayout: true } },
   { path: '/admin/login', name: 'AdminLogin', component: () => import('../views/AdminLogin.vue'), meta: { title: '管理员登录', public: true, noLayout: true } },
   { path: '/admin', redirect: '/admin/dashboard', meta: { requiresAdmin: true } },
-  { path: '/admin/dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '仪表盘', requiresAdmin: true } },
-  { path: '/admin/business-dashboard', name: 'BusinessDashboard', component: () => import('../views/BusinessDashboard.vue'), meta: { title: '业务盘', requiresAdmin: true } },
+  { path: '/admin/dashboard', name: 'Dashboard', component: () => import('../views/Dashboard.vue'), meta: { title: '汇总首页', requiresAdmin: true } },
+  { path: '/admin/business-dashboard', name: 'BusinessDashboard', component: () => import('../views/BusinessDashboard.vue'), meta: { title: '周项目列表', requiresAdmin: true } },
   { path: '/admin/config', name: 'Config', component: () => import('../views/Config.vue'), meta: { title: '系统设置', requiresAdmin: true } },
-  { path: '/admin/reports', name: 'Reports', component: () => import('../views/ReportList.vue'), meta: { title: '周评列表', requiresAdmin: true } },
+  { path: '/admin/reports', name: 'Reports', component: () => import('../views/ReportList.vue'), meta: { title: '周评明细', requiresAdmin: true } },
   { path: '/admin/reports/:id', name: 'ReportDetail', component: () => import('../views/ReportDetail.vue'), meta: { title: '周报详情', requiresAdmin: true } },
-  { path: '/admin/assessment', name: 'AssessmentList', component: () => import('../views/AssessmentList.vue'), meta: { title: '内部考核', requiresAdmin: true } },
+  { path: '/admin/assessment', name: 'AssessmentList', component: () => import('../views/AssessmentList.vue'), meta: { title: '周评汇总', requiresAdmin: true } },
   { path: '/admin/assessment/:personId', name: 'AssessmentDetail', component: () => import('../views/AssessmentDetail.vue'), meta: { title: '考核详情', requiresAdmin: true } },
-  { path: '/admin/wechat', name: 'WeChatData', component: () => import('../views/WeChatDataUpload.vue'), meta: { title: '企业微信数据上传', requiresAdmin: true } },
+  { path: '/admin/wechat', name: 'WeChatData', component: () => import('../views/WeChatDataUpload.vue'), meta: { title: '企微数据上传', requiresAdmin: true } },
 ]
 
 const router = createRouter({
