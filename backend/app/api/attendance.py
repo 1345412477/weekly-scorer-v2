@@ -12,7 +12,7 @@ import os
 import uuid
 import logging
 from datetime import datetime, date, timedelta
-from typing import Optional, List
+from typing import Optional, List, Dict
 
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -254,6 +254,38 @@ async def upload_attendance(
 
     await db.commit()
 
+    # 统计异常人员：迟到、缺卡、早退、旷工
+    anomaly_keywords = {
+        "迟到": "late",
+        "缺卡": "miss",
+        "早退": "early",
+        "旷工": "absent",
+        "未打卡": "no_punch",
+    }
+    anomaly_map: Dict[str, Dict[str, int]] = {}
+    for r in records:
+        author = r.get("author_name", "")
+        if not author:
+            continue
+        status = r.get("attendance_status", "") or ""
+        if not status:
+            continue
+        for kw in anomaly_keywords:
+            if kw in status:
+                if author not in anomaly_map:
+                    anomaly_map[author] = {}
+                anomaly_map[author][kw] = anomaly_map[author].get(kw, 0) + 1
+
+    # 格式化为前端展示文本
+    anomaly_summary: List[str] = []
+    for kw, _key in anomaly_keywords.items():
+        persons_with_kw = []
+        for name, counts in anomaly_map.items():
+            if kw in counts:
+                persons_with_kw.append(f"{name} {counts[kw]}次")
+        if persons_with_kw:
+            anomaly_summary.append(f"{kw}：{'、'.join(persons_with_kw)}")
+
     return {
         "message": "考勤数据上传成功（覆盖模式）" if mode == "replace" else "考勤数据上传成功",
         "mode": mode,
@@ -264,6 +296,7 @@ async def upload_attendance(
         "employees_skipped": skipped_non_person,
         "employees_unmatched": sorted(unmatched_names),
         "replaced_old_count": deleted_count,
+        "anomaly_summary": anomaly_summary,
     }
 
 

@@ -184,6 +184,11 @@
           <div v-if="attendanceResult.employees_unmatched?.length" class="unmatched">
             未匹配：{{ attendanceResult.employees_unmatched.join('、') }}
           </div>
+          <div v-if="attendanceResult.anomaly_summary?.length" class="anomaly-info">
+            <div v-for="(line, idx) in attendanceResult.anomaly_summary" :key="idx">
+              {{ line }}
+            </div>
+          </div>
         </div>
       </div>
 
@@ -481,6 +486,7 @@ async function uploadAttendance(mode) {
       employees_matched: res.data.employees_matched ?? 0,
       employees_unmatched: res.data.employees_unmatched ?? [],
       replaced_old_count: res.data.replaced_old_count ?? 0,
+      anomaly_summary: res.data.anomaly_summary ?? [],
     }
 
     toast.add({
@@ -525,6 +531,7 @@ async function confirmWeekUpload() {
         employees_matched: res.data.employees_matched ?? 0,
         employees_unmatched: res.data.employees_unmatched ?? [],
         replaced_old_count: res.data.replaced_old_count ?? 0,
+        anomaly_summary: res.data.anomaly_summary ?? [],
       }
       toast.add({
         severity: 'success',
@@ -1062,6 +1069,7 @@ onMounted(() => {
 }
 
 .unmatched { color: #c6572c; }
+.anomaly-info { color: #d97706; font-weight: 500; margin-top: 4px; }
 
 /* ---- 重新计算区域 ---- */
 .recalculate-section {
