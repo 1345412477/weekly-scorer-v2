@@ -2,7 +2,7 @@
 import logging
 import os
 import shutil
-from datetime import datetime
+from datetime import datetime, date
 from sqlalchemy import text, inspect
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
 from sqlalchemy.orm import DeclarativeBase
@@ -129,6 +129,8 @@ async def _migrate_schema():
         "recurrence": "VARCHAR(16) DEFAULT 'daily'",
         "weekdays": "VARCHAR(32) DEFAULT ''",
         "last_run_date": "DATE",
+        "submission_deadline_hours": "INTEGER DEFAULT 168",
+        "late_deadline_hours": "INTEGER DEFAULT 336",
         "ai_connection_status": "BOOLEAN",
         "ai_connection_provider": "VARCHAR(50)",
         "ai_connection_model": "VARCHAR(100)",
@@ -206,12 +208,14 @@ async def _migrate_schema():
         except Exception as e:
             logger.warning(f"[migration] 创建/升级 scoring_schedule 失败: {e}")
 
-        # 4) scoring_configs 表：AI 连接状态缓存列
+        # 4) scoring_configs 表：提交期限列 + AI 连接状态缓存列
         try:
             sc_cols = await _get_existing_columns(conn, "scoring_configs")
         except Exception:
             sc_cols = set()
         sc_additions = [
+            ("submission_deadline_hours", "INTEGER DEFAULT 168"),
+            ("late_deadline_hours", "INTEGER DEFAULT 336"),
             ("ai_connection_status", "BOOLEAN"),
             ("ai_connection_provider", "VARCHAR(50)"),
             ("ai_connection_model", "VARCHAR(100)"),
