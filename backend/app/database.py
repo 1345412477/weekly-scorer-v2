@@ -232,3 +232,22 @@ async def _migrate_schema():
                 logger.info(f"[migration] scoring_configs 新增列 {col_name}")
             except Exception as e:
                 logger.warning(f"[migration] scoring_configs 新增 {col_name} 失败: {e}")
+
+        # 5) attendance_records 列类型变更（仅 PostgreSQL 需要显式 ALTER COLUMN）
+        if _IS_POSTGRES:
+            try:
+                at_cols = await _get_existing_columns(conn, "attendance_records")
+                if "attendance_status" in at_cols:
+                    # 获取当前列的数据类型
+                    r = await conn.execute(text(
+                        "SELECT data_type FROM information_schema.columns "
+                        "WHERE table_name='attendance_records' AND column_name='attendance_status'"
+                    ))
+                    row = r.fetchone()
+                    if row and row[0] and "character" in row[0]:
+                        await conn.execute(text(
+                            "ALTER TABLE attendance_records ALTER COLUMN attendance_status TYPE TEXT"
+                        ))
+                        logger.info("[migration] attendance_records.attendance_status 类型已改为 TEXT")
+            except Exception as e:
+                logger.warning(f"[migration] attendance_records 列类型变更失败: {e}")

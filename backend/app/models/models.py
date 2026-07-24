@@ -198,7 +198,7 @@ class AttendanceRecord(Base):
     check_in_location = Column(String(200), nullable=True)
     check_out_location = Column(String(200), nullable=True)
     work_duration_hours = Column(DECIMAL(5, 2), nullable=True)
-    attendance_status = Column(String(50), nullable=True)
+    attendance_status = Column(Text, nullable=True)
     notes = Column(Text, nullable=True)
     source_file = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=bj_now)
