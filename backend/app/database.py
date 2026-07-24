@@ -76,7 +76,13 @@ async def get_db():
 
 
 async def init_db():
-    backup_database()
+    # 异步执行备份，不阻塞启动（数据库大时同步复制会卡住事件循环导致 502）
+    import asyncio
+    loop = asyncio.get_event_loop()
+    try:
+        await loop.run_in_executor(None, backup_database)
+    except Exception as e:
+        logger.warning(f"[db] 启动备份失败（不影响服务）: {e}")
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     await _migrate_schema()
