@@ -2,20 +2,23 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install
+RUN npm install --registry=https://registry.npmmirror.com
 COPY frontend/ ./
 RUN npm run build
 
-# ── Stage 2: 运行后端（含前端静态文件） ──
+# ─ Stage 2: 运行后端（含前端静态文件） ──
 FROM python:3.11-slim
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
+# 换用阿里云镜像加速 apt 和 pip
+RUN sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list.d/debian.sources 2>/dev/null || \
+    sed -i 's|deb.debian.org|mirrors.aliyun.com|g; s|security.debian.org|mirrors.aliyun.com|g' /etc/apt/sources.list 2>/dev/null || true && \
+    apt-get update && apt-get install -y --no-install-recommends \
     gcc libffi-dev && \
     rm -rf /var/lib/apt/lists/*
 
 COPY backend/requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i https://mirrors.aliyun.com/pypi/simple/ --trusted-host mirrors.aliyun.com -r requirements.txt
 
 COPY backend/ ./
 
