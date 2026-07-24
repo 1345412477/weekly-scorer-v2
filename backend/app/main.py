@@ -8,6 +8,7 @@ from contextlib import asynccontextmanager
 from starlette.responses import JSONResponse
 import os
 import time
+import asyncio
 
 from app.database import init_db
 from app.config import get_settings
@@ -17,26 +18,42 @@ from app.utils.logger import log_api_request, log_info, log_error
 
 settings = get_settings()
 
+# 启动状态标记：后台初始化完成后设为 True
+_startup_ready = False
+
 
 def get_cors_origins():
     return [origin.strip() for origin in settings.CORS_ALLOW_ORIGINS.split(",") if origin.strip()]
 
 
+async def _run_background_init():
+    """后台执行所有初始化，不阻塞服务启动"""
+    global _startup_ready
+    try:
+        log_info("后台初始化开始...")
+        await init_db()
+        await seed_default_data()
+        try:
+            from app.core.task_queue import init_scheduler
+            await init_scheduler()
+            log_info("定时聚合评分调度器已就绪")
+        except Exception as e:
+            log_info(f"调度器初始化失败（不影响核心功能）: {e}")
+        _startup_ready = True
+        log_info("系统初始化完成")
+    except Exception as e:
+        log_error(f"后台初始化失败: {e}")
+        _startup_ready = True  # 标记为 ready，避免 health 一直返回初始化中
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     log_info("启动智友辰周任务汇总系统...")
-    await init_db()
-    await seed_default_data()
-    # 启动后台定时聚合评分调度器
-    try:
-        from app.core.task_queue import init_scheduler, shutdown_scheduler
-        await init_scheduler()
-        log_info("定时聚合评分调度器已就绪")
-    except Exception as e:
-        log_info(f"调度器初始化失败（不影响核心功能）: {e}")
-    log_info("系统初始化完成")
+    # 立即启动后台初始化，不阻塞 lifespan yield
+    asyncio.create_task(_run_background_init())
     yield
     try:
+        from app.core.task_queue import shutdown_scheduler
         await shutdown_scheduler()
     except Exception:
         pass
@@ -150,7 +167,7 @@ app.include_router(scoring_run_router)
 
 @app.get("/health")
 async def health():
-    return {"status": "ok", "version": settings.APP_VERSION}
+    return {"status": "ok", "version": settings.APP_VERSION, "ready": _startup_ready}
 
 
 # 静态文件 (前端构建产物)
