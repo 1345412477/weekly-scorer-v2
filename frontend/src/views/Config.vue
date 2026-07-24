@@ -287,6 +287,43 @@
       </div>
     </section>
 
+    <!-- 提交期限设置 -->
+    <section class="panel-card collapsible" :class="{ collapsed: !expanded.deadline }">
+      <header class="panel-header clickable" @click="toggle('deadline')">
+        <div class="header-left">
+          <h3>提交期限设置</h3>
+          <p class="panel-desc">设置每周周报提交的截止时间，超过迟交期限算迟交，超过补交期限算未提交</p>
+        </div>
+        <div class="header-right">
+          <i :class="['chevron', 'pi', expanded.deadline ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
+        </div>
+      </header>
+      <div class="panel-body" v-show="expanded.deadline">
+        <div class="deadline-grid">
+          <div class="deadline-item">
+            <label class="field-label">迟交期限</label>
+            <div class="deadline-input-row">
+              <InputNumber v-model.number="submissionDeadlineHours" :min="1" :step="1" :showButtons="false" size="large" class="deadline-num-input" />
+              <span class="deadline-unit">小时</span>
+            </div>
+            <span class="deadline-hint">从周一 00:00 起算，超过此时限未提交视为迟交（默认 168 小时 = 周日 00:00）</span>
+          </div>
+          <div class="deadline-item">
+            <label class="field-label">补交期限</label>
+            <div class="deadline-input-row">
+              <InputNumber v-model.number="lateDeadlineHours" :min="1" :step="1" :showButtons="false" size="large" class="deadline-num-input" />
+              <span class="deadline-unit">小时</span>
+            </div>
+            <span class="deadline-hint">从周一 00:00 起算，超过此时限仍未提交视为未提交（默认 336 小时 = 下周日 00:00）</span>
+          </div>
+        </div>
+        <div class="deadline-summary">
+          <i class="pi pi-info-circle"></i>
+          <span>迟交期限：{{ formatDeadlineHint(submissionDeadlineHours) }} | 补交期限：{{ formatDeadlineHint(lateDeadlineHours) }}</span>
+        </div>
+      </div>
+    </section>
+
     <!-- 人员与部门管理 -->
     <div class="grid-wrap">
       <section class="panel-card">
@@ -444,6 +481,7 @@ const expanded = reactive({
   businessPrompt: false,
   aiModels: false,
   schedule: false,
+  deadline: false,
 })
 function toggle(key) {
   if (key in expanded) expanded[key] = !expanded[key]
@@ -480,6 +518,22 @@ const scheduleMsg = ref(null)
 const testFile = ref(null)
 const testFileInput = ref(null)
 const testResult = ref(null)
+
+// 提交期限设置
+const submissionDeadlineHours = ref(168)  // 迟交期限：默认周日 00:00（168h）
+const lateDeadlineHours = ref(336)        // 补交期限：默认下周日 00:00（336h）
+
+function formatDeadlineHint(hours) {
+  const days = Math.floor(hours / 24)
+  const remainingHours = hours % 24
+  if (days === 0) {
+    return `${hours}小时`
+  } else if (remainingHours === 0) {
+    return `${days}天`
+  } else {
+    return `${days}天${remainingHours}小时`
+  }
+}
 
 // AI 模型管理
 const aiModels = ref([])
@@ -927,6 +981,9 @@ async function loadConfig() {
         chat: Number(d.weights.chat ?? 1),
       }
     }
+    // 提交期限设置
+    if (d.submission_deadline_hours != null) submissionDeadlineHours.value = Number(d.submission_deadline_hours)
+    if (d.late_deadline_hours != null) lateDeadlineHours.value = Number(d.late_deadline_hours)
   } catch (e) { console.error('[Config] 加载失败:', e) }
 }
 
@@ -957,6 +1014,8 @@ async function saveConfig() {
         attendance: Number(weights.value.attendance ?? 1),
         chat: Number(weights.value.chat ?? 1),
       },
+      submission_deadline_hours: Number(submissionDeadlineHours.value),
+      late_deadline_hours: Number(lateDeadlineHours.value),
     })
     
     // 同时保存定时设置
@@ -2544,6 +2603,67 @@ useDataRefresh({
 .schedule-msg.error {
   background: #fde8e8;
   color: #b42318;
+}
+
+/* 提交期限设置 */
+.deadline-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 20px;
+}
+
+.deadline-item {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.deadline-input-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.deadline-num-input :deep(.p-inputnumber-input) {
+  height: 42px;
+  font-size: 16px;
+  font-weight: 600;
+  width: 120px;
+}
+
+.deadline-unit {
+  font-size: 14px;
+  color: #5a6481;
+  font-weight: 500;
+}
+
+.deadline-hint {
+  font-size: 12px;
+  color: #8a92a8;
+  line-height: 1.5;
+}
+
+.deadline-summary {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  background: linear-gradient(135deg, rgba(79, 107, 255, 0.06), #fff);
+  border: 1px solid #dde5ff;
+  border-radius: 10px;
+  font-size: 13px;
+  color: #4f6bff;
+  font-weight: 500;
+}
+
+.deadline-summary i {
+  font-size: 16px;
+}
+
+@media (max-width: 768px) {
+  .deadline-grid {
+    grid-template-columns: 1fr;
+  }
 }
 
 /* AI 模型管理 */

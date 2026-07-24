@@ -66,6 +66,7 @@ const navItems = [
   { path: '/admin/business-dashboard', label: '业务盘', icon: 'pi pi-briefcase' },
   { path: '/admin/wechat', label: '企业微信数据上传', icon: 'pi pi-upload' },
   { path: '/admin/reports', label: '周评列表', icon: 'pi pi-list' },
+  { path: '/admin/assessment', label: '内部考核', icon: 'pi pi-users' },
   { path: '/admin/config', label: '系统设置', icon: 'pi pi-cog' },
 ]
 

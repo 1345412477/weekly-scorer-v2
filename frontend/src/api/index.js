@@ -252,7 +252,7 @@ export const weeklySummaryAPI = {
 
 // 员工首页：周报 + 一周小结 联合上传；统一用周报文件名识别员工
 export const unifiedUploadAPI = {
-  uploadUnified: (reportFile, summaryFile, forceSubmit = false) => {
+  uploadUnified: (reportFile, summaryFile, forceSubmit = false, overwriteSummary = false) => {
     const formData = new FormData()
     formData.append('report', reportFile)
     if (summaryFile) {
@@ -260,6 +260,9 @@ export const unifiedUploadAPI = {
     }
     if (forceSubmit) {
       formData.append('force_submit', 'true')
+    }
+    if (overwriteSummary) {
+      formData.append('overwrite_summary', 'true')
     }
     return uploadApi.post('/upload/unified', formData)
   },
@@ -306,6 +309,7 @@ export const aggregateAPI = {
   saveSchedule: (data) => api.post('/weekly-aggregates/schedule', data),
   scoringStatus: () => api.get('/weekly-aggregates/status'),
   triggerScoring: () => api.post('/weekly-aggregates/status/trigger'),
+  recalculate: (weekStart) => api.post('/weekly-aggregates/recalculate', { week_start: weekStart }),
 }
 
 export const leaderboardAPI = {

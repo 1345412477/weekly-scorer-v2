@@ -72,6 +72,8 @@ async def get_config(db: AsyncSession = Depends(get_db), user: AdminUser = Depen
         "business_summary_prompt": getattr(config, "business_summary_prompt", "") or "",
         "weights": weights,
         "min_content_length": config.min_content_length or 50,
+        "submission_deadline_hours": getattr(config, "submission_deadline_hours", 168) or 168,
+        "late_deadline_hours": getattr(config, "late_deadline_hours", 336) or 336,
     }
 
 
@@ -155,6 +157,33 @@ async def update_config(
             config.min_content_length = int(min_content_length)
         except Exception:
             raise HTTPException(status_code=400, detail="min_content_length 必须是整数")
+
+    # 提交期限设置
+    submission_deadline_hours = req.get("submission_deadline_hours")
+    if submission_deadline_hours is not None:
+        try:
+            val = int(submission_deadline_hours)
+            if val <= 0:
+                raise HTTPException(status_code=400, detail="迟交期限必须大于0")
+            config.submission_deadline_hours = val
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="迟交期限必须是整数")
+
+    late_deadline_hours = req.get("late_deadline_hours")
+    if late_deadline_hours is not None:
+        try:
+            val = int(late_deadline_hours)
+            if val <= 0:
+                raise HTTPException(status_code=400, detail="补交期限必须大于0")
+            if val <= config.submission_deadline_hours:
+                raise HTTPException(status_code=400, detail="补交期限必须大于迟交期限")
+            config.late_deadline_hours = val
+        except HTTPException:
+            raise
+        except Exception:
+            raise HTTPException(status_code=400, detail="补交期限必须是整数")
 
     config.updated_at = bj_now()
 

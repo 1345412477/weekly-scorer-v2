@@ -4,7 +4,7 @@ import os
 import uuid
 from io import BytesIO
 from typing import Optional, Dict, Any, List
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from app.utils.time_utils import bj_today
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -14,7 +14,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.models.models import WeeklyAggregate, WeeklyReport, ReportScore
+from app.models.models import WeeklyAggregate, WeeklyReport, ReportScore, Person
 from app.core.auth import require_admin, write_operation_log
 from app.services.aggregator import list_aggregates, update_aggregate_scores, restore_ai_scores
 from app.utils.file_utils import is_safe_upload_path
@@ -566,3 +566,70 @@ async def trigger_aggregate_now(
     t = threading.Thread(target=_run, daemon=True, name="ManualAggregateTrigger")
     t.start()
     return {"message": "聚合评分已触发", "status": get_aggregate_status()}
+
+
+@router.post("/recalculate", summary="重新计算指定周的聚合评分")
+async def recalculate_week(
+    payload: Dict[str, Any],
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """对指定周的所有员工强制重新计算聚合评分（force=True）。
+
+    适用场景：管理员上传了错误的考勤/聊天数据后更正重传，需要对该周数据重新评分。
+    请求体: {"week_start": "2026-07-20"}
+    """
+    week_start_str = payload.get("week_start")
+    if not week_start_str:
+        raise HTTPException(status_code=400, detail="请提供 week_start 参数（格式: YYYY-MM-DD）")
+
+    try:
+        week_start = date.fromisoformat(week_start_str)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="week_start 格式错误，应为 YYYY-MM-DD")
+
+    week_end = week_start + timedelta(days=6)
+
+    # 获取所有启用员工
+    result = await db.execute(select(Person).where(Person.is_active == True))
+    persons = list(result.scalars().all())
+    if not persons:
+        raise HTTPException(status_code=400, detail="无启用员工")
+
+    from app.services.aggregator import auto_aggregate
+
+    success_count = 0
+    error_count = 0
+    for p in persons:
+        try:
+            await auto_aggregate(
+                db,
+                person_id=p.id,
+                author_name=p.name,
+                department=p.department_name or "",
+                department_id=p.department_id,
+                week_start=week_start,
+                week_end=week_end,
+                preserve_manual=False,
+                force=True,
+            )
+            success_count += 1
+        except Exception as e:
+            logger.warning(f"[重新计算] 处理 {p.name} 失败: {e}")
+            error_count += 1
+
+    await write_operation_log(
+        db, admin, "recalculate", "weekly_aggregate", "", request,
+        {"week_start": week_start_str, "week_end": week_end.isoformat(),
+         "success": success_count, "errors": error_count},
+    )
+    await db.commit()
+
+    return {
+        "message": f"重新计算完成：成功 {success_count} 人，失败 {error_count} 人",
+        "week_start": week_start_str,
+        "week_end": week_end.isoformat(),
+        "success_count": success_count,
+        "error_count": error_count,
+    }

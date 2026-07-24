@@ -285,6 +285,7 @@ async def get_chat_status(
         "employees_count": employees_count,
         "unmatched_employees_count": unmatched_employees_count,
         "last_upload": last_upload,
+        "is_current_week": last.week_start == current_week_start if last else False,
     }
 
 

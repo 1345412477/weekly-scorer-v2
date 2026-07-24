@@ -2,209 +2,225 @@
   <div class="dashboard page-content">
     <!-- 顶部概览 -->
     <div class="overview-row fade-in-up" style="--delay: 0ms">
-      <div
-        class="overview-item fade-in-up"
-        :style="{ '--delay': (80 * 0) + 'ms' }"
-      >
+      <div class="overview-item clickable fade-in-up" :style="{ '--delay': (80 * 0) + 'ms' }" @click="showTotalPersonsDialog">
         <span class="overview-label">本周应提交</span>
         <span class="overview-value">{{ animatedTotalPersons }}</span>
       </div>
-      <div
-        class="overview-item fade-in-up"
-        :style="{ '--delay': (80 * 1) + 'ms' }"
-      >
+      <div class="overview-item clickable fade-in-up" :style="{ '--delay': (80 * 1) + 'ms' }" @click="showSubmittedDialog">
         <span class="overview-label">已提交</span>
         <span class="overview-value highlight-green">{{ animatedSubmitted }}</span>
       </div>
-      <div
-        class="overview-item fade-in-up"
-        :style="{ '--delay': (80 * 2) + 'ms' }"
-      >
-        <span class="overview-label">未提交</span>
-        <span class="overview-value highlight-red">{{ animatedNotSubmitted }}</span>
-      </div>
-      <div
-        class="overview-item fade-in-up"
-        :style="{ '--delay': (80 * 3) + 'ms' }"
-      >
-        <span class="overview-label">进步人员</span>
-        <span class="overview-value highlight-blue">{{ animatedImprovers }}</span>
-      </div>
     </div>
 
-    <!-- 三大区域 -->
-    <div class="panels-grid">
-      <!-- 未提交 -->
+    <!-- 异常人员 + 正在进行项目 -->
+    <div class="panels-grid-two">
+      <!-- 异常人员 -->
       <section class="panel fade-in-up" :style="{ '--delay': '120ms' }">
         <header class="panel-header">
           <div>
-            <h3>本周未提交人员</h3>
+            <h3>本周异常人员</h3>
+            <p class="panel-sub-title">未提交 {{ notSubmittedCount }} 人 · 迟交 {{ lateSubmittedCount }} 人</p>
           </div>
-          <span class="panel-count">{{ notSubmitted.length }} 人</span>
+          <span class="panel-count">{{ abnormalPersons.length }} 人</span>
         </header>
         <div class="panel-body">
-          <div v-if="notSubmitted.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
+          <div v-if="abnormalPersons.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
             <i class="pi pi-check-circle empty-icon success"></i>
-            <span>全员已提交，非常棒！</span>
+            <span>全员正常提交，非常棒！</span>
           </div>
           <div v-else class="list-items">
             <div
-              v-for="(item, idx) in notSubmitted"
+              v-for="(item, idx) in abnormalPersons"
               :key="item.name"
               class="list-item fade-in-up"
-              :style="{ '--delay': (120 + idx * 50) + 'ms' }"
+              :style="{ '--delay': (120 + idx * 40) + 'ms' }"
             >
               <span class="item-index">{{ idx + 1 }}</span>
               <div class="item-main">
                 <span class="item-name">{{ item.name }}</span>
                 <span class="item-meta">{{ item.department || '未分配' }}{{ item.position ? ' · ' + item.position : '' }}</span>
               </div>
-              <span class="item-badge item-badge-warn">未提交</span>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 评级较低 -->
-      <section class="panel fade-in-up" :style="{ '--delay': '200ms' }">
-        <header class="panel-header">
-          <div>
-            <h3>评级较低人员</h3>
-          </div>
-          <span class="panel-count">{{ lowScorers.length }} 人</span>
-        </header>
-        <div class="panel-body">
-          <div v-if="lowScorers.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
-            <i class="pi pi-thumbs-up empty-icon success"></i>
-            <span>暂无低分人员</span>
-          </div>
-          <div v-else class="list-items">
-            <div
-              v-for="(item, idx) in lowScorers"
-              :key="item.name"
-              class="list-item fade-in-up"
-              :style="{ '--delay': (200 + idx * 50) + 'ms' }"
-            >
-              <span class="item-index">{{ idx + 1 }}</span>
-              <div class="item-main">
-                <span class="item-name">{{ item.name }}</span>
-                <span class="item-meta">{{ item.department || '—' }}</span>
-              </div>
-              <div class="item-score-box">
-                <span class="item-score">{{ Math.round(Number(item.total_score)) }}</span>
-                <span v-if="item.grade" :class="['grade-chip', gradeClass(item.grade)]">{{ item.grade }}</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </section>
-
-      <!-- 进步较大 -->
-      <section class="panel fade-in-up" :style="{ '--delay': '280ms' }">
-        <header class="panel-header">
-          <div>
-            <h3>进步较大人员</h3>
-          </div>
-          <span class="panel-count">{{ topImprovers.length }} 人</span>
-        </header>
-        <div class="panel-body">
-          <div v-if="topImprovers.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
-            <i class="pi pi-chart-line empty-icon muted"></i>
-            <span>本周暂无对比数据</span>
-          </div>
-          <div v-else class="list-items">
-            <div
-              v-for="(item, idx) in topImprovers"
-              :key="item.name"
-              class="list-item fade-in-up"
-              :style="{ '--delay': (280 + idx * 50) + 'ms' }"
-            >
-              <span class="item-index">{{ idx + 1 }}</span>
-              <div class="item-main">
-                <span class="item-name">{{ item.name }}</span>
-                <span class="item-meta">
-                  {{ item.previous_avg }} → {{ item.current_avg }}
-                </span>
-              </div>
-              <span class="item-badge item-badge-improve">
-                <i class="pi pi-arrow-up"></i>
-                {{ item.improvement }}
+              <span :class="['item-badge', item.status === '未提交' ? 'item-badge-warn' : 'item-badge-late']">
+                {{ item.status }}
               </span>
             </div>
           </div>
         </div>
       </section>
-    </div>
 
-    <!-- 统计卡片 / 趋势 -->
-    <div class="charts-row">
-      <section class="panel chart-panel fade-in-up" :style="{ '--delay': '320ms' }">
+      <!-- 正在进行项目 -->
+      <section class="panel fade-in-up" :style="{ '--delay': '200ms' }">
         <header class="panel-header">
           <div>
-            <h3>整体评分概况</h3>
-          </div>
-          <div class="panel-actions">
-            <button
-              class="danger-link-btn"
-              @click="confirmClearAll"
-              :disabled="loading.value"
-              v-if="hasAnyData"
-            >
-              <i class="pi pi-trash"></i> 清空所有数据
-            </button>
+            <h3>正在进行项目</h3>
+            <p class="panel-sub-title">本周 {{ currentProjects.length }} 个项目</p>
           </div>
         </header>
-        <div class="stats-block">
-          <div class="stat-box fade-in-up" :style="{ '--delay': '380ms' }">
-            <span class="stat-label">总报告数</span>
-            <span class="stat-value">{{ animatedTotalReports }}</span>
+        <div class="panel-body">
+          <div v-if="currentProjects.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
+            <i class="pi pi-folder empty-icon muted"></i>
+            <span>本周暂无项目信息</span>
           </div>
-          <div class="stat-box fade-in-up" :style="{ '--delay': '440ms' }">
-            <span class="stat-label">已评分</span>
-            <span class="stat-value">{{ animatedScoredReports }}</span>
-          </div>
-          <div class="stat-box fade-in-up" :style="{ '--delay': '500ms' }">
-            <span class="stat-label">平均分</span>
-            <span class="stat-value primary">{{ animatedAvgScore }}</span>
-          </div>
-        </div>
-        <div v-if="weeklyTrend.length" class="mini-chart-block fade-in-up" style="--delay: 560ms">
-          <h4>近 12 周平均分趋势</h4>
-          <div ref="trendChartRef" class="mini-chart"></div>
-        </div>
-        <div v-if="gradeDist && Object.keys(gradeDist).length" class="grade-block fade-in-up" style="--delay: 620ms">
-          <h4>等级分布</h4>
-          <div class="grade-bars">
-            <div v-for="(val, key, index) in gradeDist" :key="key" class="grade-bar-row">
-              <span :class="['grade-chip grade-chip-' + gradeIdx(key)]">{{ key }}</span>
-              <div class="grade-bar-bg">
-                <div
-                  class="grade-bar-fill"
-                  :style="{ width: (gradeBarVisible ? gradeBarWidth(val) : 0) + '%', transitionDelay: (700 + index * 80) + 'ms' }"
-                ></div>
+          <div v-else class="project-list">
+            <div
+              v-for="(proj, idx) in currentProjects"
+              :key="proj.name"
+              class="project-item fade-in-up"
+              :class="{ 'project-highlight': proj.highlight }"
+              :style="{ '--delay': (200 + idx * 60) + 'ms' }"
+            >
+              <div class="project-header">
+                <div class="project-name-row">
+                  <i v-if="proj.highlight" class="pi pi-star-fill project-star"></i>
+                  <span class="project-name">{{ proj.name }}</span>
+                  <span class="project-progress-badge" :class="progressClass(proj.progress)">{{ proj.progress }}%</span>
+                </div>
+                <div class="project-departments">
+                  <span v-for="dept in proj.departments" :key="dept" class="project-dept-tag">{{ dept }}</span>
+                </div>
               </div>
-              <span class="grade-count">{{ val }}</span>
+              <div class="project-progress-bar">
+                <div class="project-progress-fill" :style="{ width: proj.progress + '%' }"></div>
+              </div>
+              <p v-if="proj.summary" class="project-summary">{{ proj.summary }}</p>
+              <div class="project-persons">
+                <span v-for="person in proj.persons" :key="person" class="project-person-tag">{{ person }}</span>
+              </div>
             </div>
           </div>
         </div>
       </section>
     </div>
+
+    <!-- 人员详情对话框 -->
+    <Dialog v-model:visible="personsDialogVisible" :header="personsDialogTitle" modal :style="{ width: '600px', maxHeight: '80vh' }">
+      <div class="persons-dialog-content">
+        <div v-if="personsDialogList.length === 0" class="empty-state">
+          <i class="pi pi-inbox empty-icon muted"></i>
+          <span>暂无人员数据</span>
+        </div>
+        <div v-else class="persons-list">
+          <div v-for="(person, idx) in personsDialogList" :key="person.name" class="person-item">
+            <span class="person-index">{{ idx + 1 }}</span>
+            <div class="person-info">
+              <span class="person-name">{{ person.name }}</span>
+              <span class="person-meta">{{ person.department || '未分配' }}{{ person.position ? ' · ' + person.position : '' }}</span>
+            </div>
+            <span v-if="person.status" :class="['person-badge', person.status === '未提交' ? 'badge-warn' : 'badge-late']">
+              {{ person.status }}
+            </span>
+          </div>
+        </div>
+      </div>
+    </Dialog>
+
+    <!-- 历史项目情况 -->
+    <section class="panel fade-in-up" :style="{ '--delay': '300ms' }">
+      <header class="panel-header">
+        <div>
+          <h3>历史项目情况</h3>
+        </div>
+        <div class="history-nav" v-if="historyWeeks.length > 1">
+          <button class="nav-btn" @click="prevHistoryWeek" :disabled="historyWeekIndex === 0">
+            <i class="pi pi-chevron-left"></i>
+          </button>
+          <span class="history-nav-label">{{ historyWeekIndex + 1 }} / {{ historyWeeks.length }}</span>
+          <button class="nav-btn" @click="nextHistoryWeek" :disabled="historyWeekIndex === historyWeeks.length - 1">
+            <i class="pi pi-chevron-right"></i>
+          </button>
+        </div>
+      </header>
+      <div class="panel-body">
+        <div v-if="historyWeeks.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
+          <i class="pi pi-history empty-icon muted"></i>
+          <span>暂无历史项目数据</span>
+        </div>
+        <div v-else class="history-week">
+          <div class="history-week-header">
+            <i class="pi pi-calendar"></i>
+            <span class="history-week-label">{{ currentHistoryWeek.week_label }}</span>
+            <span class="history-week-count">{{ currentHistoryWeek.projects.length }} 个项目</span>
+          </div>
+          <div class="history-projects">
+            <div
+              v-for="proj in currentHistoryWeek.projects"
+              :key="proj.name"
+              class="history-project-item"
+              :class="{ 'project-highlight': proj.highlight }"
+            >
+              <div class="history-proj-head">
+                <i v-if="proj.highlight" class="pi pi-star-fill project-star"></i>
+                <span class="history-proj-name">{{ proj.name }}</span>
+                <span class="project-progress-badge" :class="progressClass(proj.progress)">{{ proj.progress }}%</span>
+              </div>
+              <p v-if="proj.summary" class="history-proj-summary">{{ proj.summary }}</p>
+              <div class="project-persons">
+                <span v-for="person in proj.persons" :key="person" class="project-person-tag">{{ person }}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import Dialog from 'primevue/dialog'
 import { leaderboardAPI, reportAPI } from '../api'
 import { useDataRefresh, getDashboardEvents } from '../composables/useDataRefresh'
+
+// 人员详情对话框
+const personsDialogVisible = ref(false)
+const personsDialogTitle = ref('')
+const personsDialogList = ref([])
+const allPersons = ref([]) // 所有在职人员（用于"本周应提交"弹窗）
+
+function showTotalPersonsDialog() {
+  personsDialogTitle.value = `本周应提交人员（${allPersons.value.length} 人）`
+  personsDialogList.value = allPersons.value.map(p => ({
+    name: p.name,
+    department: p.department_name || '',
+    position: p.position || '',
+  }))
+  personsDialogVisible.value = true
+}
+
+function showSubmittedDialog() {
+  // 已提交 = 全部人员 - 异常人员
+  const abnormalNames = new Set(abnormalPersons.value.map(p => p.name))
+  const submitted = allPersons.value
+    .filter(p => !abnormalNames.has(p.name))
+    .map(p => ({ name: p.name, department: p.department_name || '', position: p.position || '' }))
+  personsDialogTitle.value = `已提交人员（${submitted.length} 人）`
+  personsDialogList.value = submitted
+  personsDialogVisible.value = true
+}
 
 // 弹出确认对话框
 const emitConfirm = (msg, onOk) => {
   if (window.confirm(msg)) onOk()
 }
 
-const notSubmitted = ref([])
-const lowScorers = ref([])
-const topImprovers = ref([])
+const abnormalPersons = ref([])
+const notSubmittedCount = ref(0)
+const lateSubmittedCount = ref(0)
+const currentProjects = ref([])
+const historyWeeks = ref([])
+const historyWeekIndex = ref(0)
+
+const currentHistoryWeek = computed(() => {
+  return historyWeeks.value[historyWeekIndex.value] || { week_label: '', projects: [] }
+})
+
+function prevHistoryWeek() {
+  if (historyWeekIndex.value > 0) historyWeekIndex.value--
+}
+
+function nextHistoryWeek() {
+  if (historyWeekIndex.value < historyWeeks.value.length - 1) historyWeekIndex.value++
+}
 const totalPersons = ref(0)
 const submittedCount = ref(0)
 const stats = ref({ total_reports: 0, scored_reports: 0, avg_score: 0 })
@@ -217,8 +233,7 @@ const gradeBarVisible = ref(false)
 // 计数动画
 const animatedTotalPersons = ref(0)
 const animatedSubmitted = ref(0)
-const animatedNotSubmitted = ref(0)
-const animatedImprovers = ref(0)
+const animatedAbnormal = ref(0)
 const animatedTotalReports = ref(0)
 const animatedScoredReports = ref(0)
 const animatedAvgScore = ref(0)
@@ -241,11 +256,16 @@ function animateNumber(target, from = 0, to = 0, duration = 900) {
 function runAllCountAnims() {
   animateNumber(animatedTotalPersons, 0, totalPersons.value || 0)
   animateNumber(animatedSubmitted, 0, submittedCount.value || 0)
-  animateNumber(animatedNotSubmitted, 0, notSubmitted.value.length || 0)
-  animateNumber(animatedImprovers, 0, topImprovers.value.length || 0)
+  animateNumber(animatedAbnormal, 0, abnormalPersons.value.length || 0)
   animateNumber(animatedTotalReports, 0, stats.value.total_reports || 0)
   animateNumber(animatedScoredReports, 0, stats.value.scored_reports || 0)
   animateNumber(animatedAvgScore, 0, Math.round(Number(stats.value.avg_score)) || 0, 1100)
+}
+
+function progressClass(progress) {
+  if (progress >= 80) return 'progress-high'
+  if (progress >= 50) return 'progress-mid'
+  return 'progress-low'
 }
 
 const maxGrade = computed(() => {
@@ -305,11 +325,14 @@ async function loadData() {
     ])
 
     const overview = overviewRes.data
-    notSubmitted.value = overview.not_submitted || []
-    lowScorers.value = (overview.low_scorers || []).slice(0, 5)
-    topImprovers.value = (overview.top_improvers || []).slice(0, 5)
+    abnormalPersons.value = overview.abnormal_persons || []
+    notSubmittedCount.value = overview.not_submitted_count || 0
+    lateSubmittedCount.value = overview.late_submitted_count || 0
+    currentProjects.value = overview.current_projects || []
+    historyWeeks.value = overview.history_weeks || []
     totalPersons.value = overview.total_persons || 0
     submittedCount.value = overview.submitted_count || 0
+    allPersons.value = overview.all_persons || []
 
     const sd = statsRes.data
     stats.value = {
@@ -428,7 +451,7 @@ if (typeof window !== 'undefined') {
 /* 顶部概览 */
 .overview-row {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(2, 1fr);
   gap: 14px;
 }
 
@@ -441,6 +464,16 @@ if (typeof window !== 'undefined') {
   flex-direction: column;
   gap: 8px;
   transition: transform 0.25s ease, box-shadow 0.25s ease, border-color 0.25s ease;
+}
+
+.overview-item.clickable {
+  cursor: pointer;
+}
+
+.overview-item.clickable:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 10px 24px -12px rgba(47, 68, 160, 0.18);
+  border-color: #4f6bff;
 }
 
 .overview-item:hover {
@@ -466,11 +499,18 @@ if (typeof window !== 'undefined') {
 .highlight-red { color: #ef4444; }
 .highlight-blue { color: #4f6bff; }
 
-/* 三个主面板 */
-.panels-grid {
+/* 两个主面板（异常人员 + 正在进行项目） */
+.panels-grid-two {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: 1fr 2fr;
   gap: 18px;
+}
+
+.panel-sub-title {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: #7a819a;
+  font-weight: 400;
 }
 
 .panel {
@@ -646,6 +686,7 @@ if (typeof window !== 'undefined') {
 }
 
 .item-badge-warn { background: rgba(239, 68, 68, 0.1); color: #ef4444; }
+.item-badge-late { background: rgba(251, 146, 60, 0.1); color: #fb923c; }
 .item-badge-improve { background: rgba(22, 168, 117, 0.12); color: #16a875; }
 
 .item-score-box {
@@ -779,14 +820,362 @@ if (typeof window !== 'undefined') {
   font-variant-numeric: tabular-nums;
 }
 
+/* 项目卡片样式 */
+.project-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.project-list::-webkit-scrollbar {
+  width: 4px;
+}
+
+.project-list::-webkit-scrollbar-thumb {
+  background: #d0d5e8;
+  border-radius: 4px;
+}
+
+.project-list::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.project-item {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: #f8faff;
+  border: 1px solid #eef1f9;
+  transition: all 0.2s ease;
+}
+
+.project-item:hover {
+  background: #eef2ff;
+  border-color: #dde5ff;
+  transform: translateY(-1px);
+}
+
+.project-item.project-highlight {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.05), #f8faff);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.project-header {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.project-name-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.project-star {
+  color: #fbbf24;
+  font-size: 14px;
+}
+
+.project-name {
+  font-size: 15px;
+  font-weight: 600;
+  color: #1e2335;
+  flex: 1;
+}
+
+.project-progress-badge {
+  font-size: 12px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 999px;
+}
+
+.project-progress-badge.progress-high {
+  background: rgba(22, 168, 117, 0.12);
+  color: #16a875;
+}
+
+.project-progress-badge.progress-mid {
+  background: rgba(79, 107, 255, 0.12);
+  color: #4f6bff;
+}
+
+.project-progress-badge.progress-low {
+  background: rgba(251, 146, 60, 0.12);
+  color: #fb923c;
+}
+
+.project-departments {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.project-dept-tag {
+  font-size: 11px;
+  color: #5a6481;
+  background: #e4e9f6;
+  padding: 2px 8px;
+  border-radius: 6px;
+}
+
+.project-progress-bar {
+  height: 6px;
+  background: #eef1f9;
+  border-radius: 3px;
+  overflow: hidden;
+  margin-bottom: 10px;
+}
+
+.project-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #4f6bff, #6ed0ff);
+  border-radius: 3px;
+  transition: width 0.6s ease;
+}
+
+.project-summary {
+  font-size: 13px;
+  color: #5a6481;
+  line-height: 1.6;
+  margin: 0 0 10px 0;
+}
+
+.project-persons {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.project-person-tag {
+  font-size: 11px;
+  color: #4f6bff;
+  background: rgba(79, 107, 255, 0.08);
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+/* 历史项目样式 */
+/* 历史周切换导航 */
+.history-nav {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.nav-btn {
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: 1px solid #dde5ff;
+  background: #f0f3ff;
+  color: #4f6bff;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: all 0.2s;
+}
+
+.nav-btn:hover:not(:disabled) {
+  background: #4f6bff;
+  color: #fff;
+  border-color: #4f6bff;
+}
+
+.nav-btn:disabled {
+  opacity: 0.3;
+  cursor: not-allowed;
+}
+
+.nav-btn .pi {
+  font-size: 16px;
+}
+
+.history-nav-label {
+  font-size: 14px;
+  color: #5a6481;
+  font-weight: 600;
+  min-width: 48px;
+  text-align: center;
+}
+
+.history-week {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.history-week-header {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  background: linear-gradient(135deg, #f4f7ff, #ffffff);
+  border: 1px solid #dde5ff;
+  border-radius: 10px;
+}
+
+.history-week-header i {
+  color: #4f6bff;
+  font-size: 16px;
+}
+
+.history-week-label {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e2335;
+  flex: 1;
+}
+
+.history-week-count {
+  font-size: 12px;
+  color: #5a6481;
+}
+
+.history-projects {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding-left: 8px;
+}
+
+.history-project-item {
+  padding: 12px 14px;
+  border-radius: 10px;
+  background: #f8faff;
+  border: 1px solid #eef1f9;
+  transition: all 0.2s ease;
+}
+
+.history-project-item:hover {
+  background: #eef2ff;
+  border-color: #dde5ff;
+}
+
+.history-project-item.project-highlight {
+  background: linear-gradient(135deg, rgba(251, 191, 36, 0.05), #f8faff);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+.history-proj-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.history-proj-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e2335;
+  flex: 1;
+}
+
+.history-proj-summary {
+  font-size: 12px;
+  color: #5a6481;
+  line-height: 1.5;
+  margin: 0 0 8px 0;
+}
+
+/* 人员详情对话框 */
+.persons-dialog-content {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 4px;
+}
+
+.persons-dialog-content::-webkit-scrollbar {
+  width: 6px;
+}
+
+.persons-dialog-content::-webkit-scrollbar-thumb {
+  background: #d0d5e8;
+  border-radius: 3px;
+}
+
+.persons-dialog-content::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.persons-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.person-item {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 14px;
+  background: #f8faff;
+  border-radius: 10px;
+  border: 1px solid #eef1f9;
+}
+
+.person-index {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  background: #4f6bff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.person-info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.person-name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1e2335;
+}
+
+.person-meta {
+  font-size: 12px;
+  color: #5a6481;
+}
+
+.person-badge {
+  font-size: 12px;
+  font-weight: 500;
+  padding: 4px 10px;
+  border-radius: 999px;
+}
+
+.person-badge.badge-warn {
+  background: rgba(239, 68, 68, 0.1);
+  color: #ef4444;
+}
+
+.person-badge.badge-late {
+  background: rgba(251, 146, 60, 0.1);
+  color: #fb923c;
+}
+
 /* 响应式 */
 @media (max-width: 1200px) {
-  .panels-grid { grid-template-columns: 1fr; }
+  .panels-grid-two { grid-template-columns: 1fr; }
   .overview-row { grid-template-columns: repeat(2, 1fr); }
+  .history-projects { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 640px) {
   .stats-block { grid-template-columns: 1fr; }
   .overview-value { font-size: 22px; }
+  .history-projects { grid-template-columns: 1fr; }
 }
 </style>

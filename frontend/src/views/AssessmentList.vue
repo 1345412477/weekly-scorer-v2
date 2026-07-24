@@ -1,10 +1,5 @@
 <template>
   <div class="assessment-list">
-    <div class="page-header">
-      <h2>内部考核</h2>
-      <p class="page-desc">查看员工在指定时间范围内的综合表现和项目贡献</p>
-    </div>
-
     <Card class="filter-card">
       <template #content>
         <div class="filter-row">
@@ -51,14 +46,7 @@
         >
           <template #empty>暂无数据</template>
           
-          <Column field="author_name" header="姓名" :sortable="true">
-            <template #body="{ data }">
-              <div class="user-info">
-                <Avatar :label="data.author_name?.charAt(0)" shape="circle" />
-                <span>{{ data.author_name }}</span>
-              </div>
-            </template>
-          </Column>
+          <Column field="author_name" header="姓名" :sortable="true" />
           
           <Column field="department" header="部门" :sortable="true" />
           
@@ -111,13 +99,13 @@ import Column from 'primevue/column'
 import DatePicker from 'primevue/datepicker'
 import Dropdown from 'primevue/dropdown'
 import Button from 'primevue/button'
-import Avatar from 'primevue/avatar'
 import ProgressBar from 'primevue/progressbar'
 import { assessmentAPI } from '../api'
 import { departmentAPI } from '../api'
-import { showToast } from '../utils/toast'
+import { useToast } from 'primevue/usetoast'
 
 const router = useRouter()
+const toast = useToast()
 
 const startDate = ref(null)
 const endDate = ref(null)
@@ -150,7 +138,7 @@ const loadDepartments = async () => {
 
 const loadAssessments = async () => {
   if (!startDate.value || !endDate.value) {
-    showToast('请选择开始和结束日期', 'warn')
+    toast.add({ severity: 'warn', summary: '请选择开始和结束日期', life: 3000 })
     return
   }
   
@@ -169,7 +157,7 @@ const loadAssessments = async () => {
     assessments.value = res.data.items || []
   } catch (error) {
     console.error('加载考核列表失败:', error)
-    showToast('加载考核列表失败', 'error')
+    toast.add({ severity: 'error', summary: '加载考核列表失败', life: 3000 })
   } finally {
     loading.value = false
   }
@@ -222,23 +210,6 @@ const getScoreClass = (score) => {
   padding: 1.5rem;
 }
 
-.page-header {
-  margin-bottom: 1.5rem;
-}
-
-.page-header h2 {
-  margin: 0 0 0.5rem 0;
-  font-size: 1.75rem;
-  font-weight: 600;
-  color: var(--text-primary);
-}
-
-.page-desc {
-  margin: 0;
-  color: var(--text-secondary);
-  font-size: 0.95rem;
-}
-
 .filter-card {
   margin-bottom: 1.5rem;
 }
@@ -270,12 +241,6 @@ const getScoreClass = (score) => {
 
 .table-card {
   margin-bottom: 1.5rem;
-}
-
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
 }
 
 .score-badge {

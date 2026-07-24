@@ -49,6 +49,7 @@ async def upload_unified(
     report: UploadFile = File(..., description="周报文件，仅支持 .xlsx"),
     summary: Optional[UploadFile] = File(None, description="一周小结图片（可选），仅支持 .png / .jpg / .jpeg"),
     force_submit: str = Form("false", description="强制提交（跳过周次校验）"),
+    overwrite_summary: str = Form("false", description="覆盖已存在的一周小结图片"),
     db: AsyncSession = Depends(get_db),
 ):
     # 1. 文件格式校验
@@ -182,6 +183,33 @@ async def upload_unified(
             },
         )
 
+    # 4c. 一周小结重复检查（在保存周报之前，避免周报已保存但一周小结被拒绝）
+    is_overwrite = overwrite_summary.lower() == "true"
+    if summary_saved_name:
+        existing_sum_q = select(WeeklySummary).where(
+            WeeklySummary.author_name == author_name,
+            WeeklySummary.week_start == week_start,
+            WeeklySummary.week_end == week_end,
+        )
+        existing_sum_r = await db.execute(existing_sum_q)
+        if existing_sum_r.scalar_one_or_none() and not is_overwrite:
+            # 清理已保存的文件
+            try:
+                os.remove(report_path)
+                if summary_path:
+                    os.remove(summary_path)
+            except OSError:
+                pass
+            raise HTTPException(
+                status_code=409,
+                detail={
+                    "type": "summary_exists",
+                    "message": f"{author_name} 本周（{week_start.isoformat()}）已上传一周小结图片，是否覆盖？",
+                    "week_start": week_start.isoformat(),
+                    "week_end": week_end.isoformat(),
+                },
+            )
+
     # 5. 写入周报记录（随后立即触发后台异步 AI 评分，不阻塞当前请求）
     report_record = WeeklyReport(
         id=report_file_id,
@@ -208,6 +236,7 @@ async def upload_unified(
         raise HTTPException(status_code=400, detail=f"写入周报记录失败: {e}")
 
     # 6. 写入一周小结记录（可选，有图片时才写入）
+    # 注意：一周小结重复检查已在步骤4c完成，这里只需处理新增或更新
     summary_record = None
     if summary_saved_name:
         existing_sum = await db.execute(
@@ -220,6 +249,7 @@ async def upload_unified(
         existing_summary = existing_sum.scalar_one_or_none()
 
         if existing_summary:
+            # 用户已确认覆盖（步骤4c已通过），直接更新记录
             existing_summary.source_file = summary_saved_name
             existing_summary.updated_at = bj_now()
             summary_record = existing_summary

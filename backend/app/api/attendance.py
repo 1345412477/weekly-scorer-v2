@@ -273,6 +273,7 @@ async def get_attendance_status(
         "records_count": records_count,
         "employees_count": employees_count,
         "last_upload": last_upload,
+        "is_current_week": last.week_start == current_week_start if last else False,
     }
 
 

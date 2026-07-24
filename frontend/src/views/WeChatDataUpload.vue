@@ -1,12 +1,12 @@
 <template>
   <div class="wechat-upload page-content">
 
-    <!-- 本周上传状态 -->
+    <!-- 上传状态 -->
     <section class="status-panel">
       <div class="status-panel-header">
         <div class="status-panel-title">
           <i class="pi pi-calendar-check"></i>
-          <span>本周数据上传状态</span>
+          <span>数据上传状态</span>
         </div>
         <div class="status-panel-week">
           当前周：{{ currentWeekRange }}
@@ -17,7 +17,8 @@
       </div>
 
       <div class="status-cards">
-        <div class="status-card" :class="{ 'has-data': attendanceStatus?.uploaded_this_week, 'no-data': !attendanceStatus?.uploaded_this_week, 'loading': statusLoading }">
+        <!-- 考勤状态 -->
+        <div class="status-card" :class="{ 'has-data': attendanceStatus?.last_upload, 'no-data': !attendanceStatus?.last_upload, 'loading': statusLoading }">
           <div class="status-card-icon at-icon">
             <i class="pi pi-clock"></i>
           </div>
@@ -27,32 +28,34 @@
               <span v-if="statusLoading" class="loading-text">
                 <i class="pi pi-spin pi-spinner"></i> 加载中...
               </span>
-              <span v-else-if="attendanceStatus?.uploaded_this_week" class="ok">
-                <i class="pi pi-check-circle"></i> 本周已上传
+              <span v-else-if="attendanceStatus?.last_upload" class="ok">
+                <i class="pi pi-check-circle"></i> 已上传
               </span>
               <span v-else class="warn">
-                <i class="pi pi-exclamation-triangle"></i> 本周尚未上传
+                <i class="pi pi-exclamation-triangle"></i> 尚未上传
               </span>
             </p>
-            <template v-if="attendanceStatus?.uploaded_this_week">
+            <template v-if="attendanceStatus?.last_upload">
+              <p class="status-card-info">
+                覆盖周：{{ attendanceStatus.last_upload.week_start }} ~ {{ attendanceStatus.last_upload.week_end }}
+              </p>
               <p class="status-card-info">
                 覆盖员工：<strong>{{ attendanceStatus.employees_count ?? 0 }}</strong> 人，
                 共 <strong>{{ attendanceStatus.records_count ?? 0 }}</strong> 条记录
               </p>
-              <template v-if="attendanceStatus.last_upload">
-                <p class="status-card-meta">
-                  最近一次：{{ formatBeijingTimeShort(attendanceStatus.last_upload.uploaded_at) }} · 
-                  文件名：{{ attendanceStatus.last_upload.filename || '—' }}
-                  <span class="mode-tag" :class="attendanceStatus.last_upload.mode">
-                    {{ attendanceStatus.last_upload.mode === 'replace' ? '覆盖上传' : '追加上传' }}
-                  </span>
-                </p>
-              </template>
+              <p class="status-card-meta">
+                最近一次：{{ formatBeijingTimeShort(attendanceStatus.last_upload.uploaded_at) }} ·
+                文件名：{{ attendanceStatus.last_upload.filename || '—' }}
+                <span class="mode-tag" :class="attendanceStatus.last_upload.mode">
+                  {{ attendanceStatus.last_upload.mode === 'replace' ? '覆盖上传' : '追加上传' }}
+                </span>
+              </p>
             </template>
           </div>
         </div>
 
-        <div class="status-card" :class="{ 'has-data': chatStatus?.uploaded_this_week, 'no-data': !chatStatus?.uploaded_this_week, 'loading': statusLoading }">
+        <!-- 聊天状态 -->
+        <div class="status-card" :class="{ 'has-data': chatStatus?.last_upload, 'no-data': !chatStatus?.last_upload, 'loading': statusLoading }">
           <div class="status-card-icon chat-icon">
             <i class="pi pi-comments"></i>
           </div>
@@ -62,28 +65,29 @@
               <span v-if="statusLoading" class="loading-text">
                 <i class="pi pi-spin pi-spinner"></i> 加载中...
               </span>
-              <span v-else-if="chatStatus?.uploaded_this_week" class="ok">
-                <i class="pi pi-check-circle"></i> 本周已上传
+              <span v-else-if="chatStatus?.last_upload" class="ok">
+                <i class="pi pi-check-circle"></i> 已上传
               </span>
               <span v-else class="warn">
-                <i class="pi pi-exclamation-triangle"></i> 本周尚未上传
+                <i class="pi pi-exclamation-triangle"></i> 尚未上传
               </span>
             </p>
-            <template v-if="chatStatus?.uploaded_this_week">
+            <template v-if="chatStatus?.last_upload">
+              <p class="status-card-info">
+                覆盖周：{{ chatStatus.last_upload.week_start }} ~ {{ chatStatus.last_upload.week_end }}
+              </p>
               <p class="status-card-info">
                 匹配员工：<strong>{{ chatStatus.employees_count ?? 0 }}</strong> 人 ·
                 其他参与：<strong>{{ chatStatus.unmatched_employees_count ?? 0 }}</strong> 人 ·
                 共 <strong>{{ chatStatus.last_upload?.record_count ?? chatStatus.records_count ?? 0 }}</strong> 条记录
               </p>
-              <template v-if="chatStatus.last_upload">
-                <p class="status-card-meta">
-                  最近一次：{{ formatBeijingTimeShort(chatStatus.last_upload.uploaded_at) }} · 
-                  文件名：{{ chatStatus.last_upload.filename || '—' }}
-                  <span class="mode-tag" :class="chatStatus.last_upload.mode">
-                    {{ chatStatus.last_upload.mode === 'replace' ? '覆盖上传' : '追加上传' }}
-                  </span>
-                </p>
-              </template>
+              <p class="status-card-meta">
+                最近一次：{{ formatBeijingTimeShort(chatStatus.last_upload.uploaded_at) }} ·
+                文件名：{{ chatStatus.last_upload.filename || '—' }}
+                <span class="mode-tag" :class="chatStatus.last_upload.mode">
+                  {{ chatStatus.last_upload.mode === 'replace' ? '覆盖上传' : '追加上传' }}
+                </span>
+              </p>
             </template>
           </div>
         </div>
@@ -130,7 +134,7 @@
 
         <div class="btn-row">
           <Button
-            v-if="!attendanceStatus?.uploaded_this_week"
+            v-if="!attendanceStatus?.last_upload"
             label="上传考勤文件"
             icon="pi pi-upload"
             :loading="attendanceUploading"
@@ -171,6 +175,7 @@
 
         <div v-if="attendanceResult" class="result-box" :class="attendanceResult.mode === 'replace' ? 'replace' : 'append'">
           <div><strong>{{ attendanceResult.message }}</strong></div>
+          <div>覆盖周：{{ attendanceResult.week_start }} ~ {{ attendanceResult.week_end }}</div>
           <div>识别记录：{{ attendanceResult.total_records ?? '—' }} 条</div>
           <div>匹配员工：{{ attendanceResult.employees_matched ?? 0 }} 人</div>
           <div v-if="attendanceResult.mode === 'replace'" class="replace-info">
@@ -220,7 +225,7 @@
 
         <div class="btn-row">
           <Button
-            v-if="!chatStatus?.uploaded_this_week"
+            v-if="!chatStatus?.last_upload"
             label="上传聊天记录文件"
             icon="pi pi-upload"
             :loading="chatUploading"
@@ -261,6 +266,7 @@
 
         <div v-if="chatResult" class="result-box" :class="chatResult.mode === 'replace' ? 'replace' : 'append'">
           <div><strong>{{ chatResult.message }}</strong></div>
+          <div>覆盖周：{{ chatResult.week_start }} ~ {{ chatResult.week_end }}</div>
           <div>识别记录：{{ chatResult.total_records ?? '—' }} 条
             <span v-if="chatResult.unmatched_records != null && chatResult.unmatched_records > 0" class="subtle">
               （其中 {{ chatResult.unmatched_records }} 条属于非员工）
@@ -281,26 +287,66 @@
       </div>
     </div>
 
+    <!-- 重新计算按钮（非本周数据上传后显示） -->
+    <div v-if="showRecalculateBtn" class="recalculate-section">
+      <div class="recalculate-info">
+        <i class="pi pi-info-circle"></i>
+        <span>已上传非本周数据，如需更新评分请点击"重新计算"</span>
+      </div>
+      <Button
+        label="重新计算该周评分"
+        icon="pi pi-refresh"
+        :loading="recalculating"
+        @click="recalculate"
+        severity="warn"
+        class="recalculate-btn"
+      />
+    </div>
+
     <!-- 定时评分提示 -->
     <div class="scoring-hint">
       <i class="pi pi-calendar-clock"></i>
       <span>员工提交的周报会立即 AI 评分，无需手动触发。系统每天在配置时间自动聚合考勤分与沟通分。</span>
     </div>
 
+    <!-- 错误弹窗 -->
     <Dialog v-model:visible="showError" :closable="true" header="错误提示" :style="{ width: '460px' }">
       <div class="error-text">{{ errorMessage }}</div>
       <template #footer>
         <Button label="我知道了" icon="pi pi-check" @click="showError = false" />
       </template>
     </Dialog>
+
+    <!-- 非本周确认弹窗 -->
+    <Dialog v-model:visible="showWeekConfirm" header="确认上传" modal :style="{ width: '460px' }">
+      <div class="confirm-text">
+        <p>您即将上传的数据属于 <strong>{{ pendingUploadWeek }}</strong>，不是本周数据。</p>
+        <p>上传后如需更新评分，请点击"重新计算该周评分"按钮。</p>
+        <p>是否继续上传？</p>
+      </div>
+      <template #footer>
+        <Button label="取消" icon="pi pi-times" text @click="showWeekConfirm = false" />
+        <Button label="继续上传" icon="pi pi-check" @click="confirmUpload" severity="primary" />
+      </template>
+    </Dialog>
+
+    <!-- 重新计算结果弹窗 -->
+    <Dialog v-model:visible="showRecalcResult" header="重新计算结果" modal :style="{ width: '460px' }">
+      <div class="recalc-result-text">
+        <p>{{ recalcResultMessage }}</p>
+      </div>
+      <template #footer>
+        <Button label="确定" icon="pi pi-check" @click="showRecalcResult = false" />
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import Button from 'primevue/button'
 import Dialog from 'primevue/dialog'
-import { attendanceAPI, chatAPI } from '../api'
+import { attendanceAPI, chatAPI, aggregateAPI } from '../api'
 import { useToast } from 'primevue/usetoast'
 import { formatBeijingTimeShort, getBeijingNow } from '../utils/timeUtil.js'
 
@@ -344,6 +390,22 @@ const chatResult = ref(null)
 
 const showError = ref(false)
 const errorMessage = ref('')
+
+// 非本周确认
+const showWeekConfirm = ref(false)
+const pendingUploadType = ref('') // 'attendance' or 'chat'
+const pendingUploadMode = ref('append')
+const pendingUploadWeek = ref('')
+
+// 重新计算
+const showRecalculateBtn = computed(() => {
+  const atNotCurrent = attendanceStatus.value?.last_upload && !attendanceStatus.value?.is_current_week
+  const chatNotCurrent = chatStatus.value?.last_upload && !chatStatus.value?.is_current_week
+  return atNotCurrent || chatNotCurrent
+})
+const recalculating = ref(false)
+const showRecalcResult = ref(false)
+const recalcResultMessage = ref('')
 
 function formatFileSize(bytes) {
   if (bytes < 1024) return bytes + ' B'
@@ -390,19 +452,33 @@ async function uploadAttendance(mode) {
   attendanceUploading.value = true
   try {
     const res = await attendanceAPI.upload(attendanceFile.value, mode)
+    const weekStart = res.data.week_start
+    const currentWeekStart = attendanceStatus.value?.current_week_start
+    const isCurrentWeek = weekStart === currentWeekStart
+
     attendanceResult.value = {
       message: res.data.message || '上传成功',
       mode: res.data.mode || mode,
+      week_start: weekStart,
+      week_end: res.data.week_end,
       total_records: res.data.total_records ?? '—',
       employees_matched: res.data.employees_matched ?? 0,
       employees_unmatched: res.data.employees_unmatched ?? [],
       replaced_old_count: res.data.replaced_old_count ?? 0,
     }
-    toast.add({
-      severity: 'success',
-      summary: mode === 'replace' ? '考勤数据已覆盖' : '考勤数据上传成功',
-      life: 3000,
-    })
+
+    if (!isCurrentWeek) {
+      // 非本周数据，弹窗提示
+      pendingUploadWeek.value = `${weekStart} ~ ${res.data.week_end}`
+      showWeekConfirm.value = true
+    } else {
+      toast.add({
+        severity: 'success',
+        summary: mode === 'replace' ? '考勤数据已覆盖' : '考勤数据上传成功',
+        life: 3000,
+      })
+    }
+
     attendanceFile.value = null
     refreshStatus()
   } catch (e) {
@@ -456,9 +532,15 @@ async function uploadChat(mode) {
   chatUploading.value = true
   try {
     const res = await chatAPI.upload(chatFile.value, mode)
+    const weekStart = res.data.week_start
+    const currentWeekStart = chatStatus.value?.current_week_start
+    const isCurrentWeek = weekStart === currentWeekStart
+
     chatResult.value = {
       message: res.data.message || '上传成功',
       mode: res.data.mode || mode,
+      week_start: weekStart,
+      week_end: res.data.week_end,
       total_records: res.data.total_records ?? '—',
       matched_records: res.data.matched_records ?? 0,
       unmatched_records: res.data.unmatched_records ?? 0,
@@ -467,11 +549,19 @@ async function uploadChat(mode) {
       employees_unmatched: res.data.employees_unmatched ?? [],
       replaced_old_count: res.data.replaced_old_count ?? 0,
     }
-    toast.add({
-      severity: 'success',
-      summary: mode === 'replace' ? '聊天记录已覆盖' : '聊天记录上传成功',
-      life: 3000,
-    })
+
+    if (!isCurrentWeek) {
+      // 非本周数据，弹窗提示
+      pendingUploadWeek.value = `${weekStart} ~ ${res.data.week_end}`
+      showWeekConfirm.value = true
+    } else {
+      toast.add({
+        severity: 'success',
+        summary: mode === 'replace' ? '聊天记录已覆盖' : '聊天记录上传成功',
+        life: 3000,
+      })
+    }
+
     chatFile.value = null
     refreshStatus()
   } catch (e) {
@@ -502,6 +592,52 @@ async function cancelChat() {
   }
 }
 
+// ---------- 非本周确认 ----------
+function confirmUpload() {
+  // 数据已经上传完成，弹窗只是提示用户
+  // 关闭弹窗并刷新状态
+  showWeekConfirm.value = false
+  refreshStatus()
+  toast.add({
+    severity: 'info',
+    summary: '非本周数据已上传，如需更新评分请点击"重新计算该周评分"按钮',
+    life: 5000,
+  })
+}
+
+// ---------- 重新计算 ----------
+async function recalculate() {
+  // 获取需要重新计算的周（优先考勤，其次聊天）
+  let weekStart = null
+  if (attendanceStatus.value?.last_upload && !attendanceStatus.value?.is_current_week) {
+    weekStart = attendanceStatus.value.last_upload.week_start
+  } else if (chatStatus.value?.last_upload && !chatStatus.value?.is_current_week) {
+    weekStart = chatStatus.value.last_upload.week_start
+  }
+
+  if (!weekStart) {
+    toast.add({ severity: 'warn', summary: '没有需要重新计算的非本周数据', life: 3000 })
+    return
+  }
+
+  recalculating.value = true
+  try {
+    const res = await aggregateAPI.recalculate(weekStart)
+    recalcResultMessage.value = res.data.message || '重新计算完成'
+    showRecalcResult.value = true
+    toast.add({
+      severity: 'success',
+      summary: '重新计算完成',
+      life: 3000,
+    })
+  } catch (e) {
+    errorMessage.value = e.response?.data?.detail || '重新计算失败，请稍后重试'
+    showError.value = true
+  } finally {
+    recalculating.value = false
+  }
+}
+
 onMounted(() => {
   refreshStatus()
 })
@@ -514,7 +650,7 @@ onMounted(() => {
   gap: 20px;
 }
 
-/* ---- 本周上传状态 ---- */
+/* ---- 上传状态 ---- */
 .status-panel {
   background: #fff;
   border-radius: 14px;
@@ -856,6 +992,34 @@ onMounted(() => {
 
 .unmatched { color: #c6572c; }
 
+/* ---- 重新计算区域 ---- */
+.recalculate-section {
+  background: linear-gradient(135deg, #fff8f0 0%, #fff 80%);
+  border: 1px solid #ffd6a5;
+  border-radius: 12px;
+  padding: 16px 20px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.recalculate-info {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 14px;
+  color: #d97706;
+}
+
+.recalculate-info .pi {
+  font-size: 18px;
+}
+
+.recalculate-btn {
+  flex-shrink: 0;
+}
+
 /* ---- 定时评分提示 ---- */
 .scoring-hint {
   display: flex;
@@ -882,6 +1046,26 @@ onMounted(() => {
   line-height: 1.6;
 }
 
+.confirm-text {
+  color: #3a4059;
+  font-size: 14px;
+  line-height: 1.8;
+}
+
+.confirm-text p {
+  margin: 0 0 12px 0;
+}
+
+.confirm-text p:last-child {
+  margin-bottom: 0;
+}
+
+.recalc-result-text {
+  color: #3a4059;
+  font-size: 14px;
+  line-height: 1.6;
+}
+
 /* ---- 响应式 ---- */
 @media (max-width: 960px) {
   .status-cards { grid-template-columns: 1fr; }
@@ -897,5 +1081,9 @@ onMounted(() => {
   .upload-card { padding: 18px; }
   .btn-row { flex-direction: column; }
   .btn-row .submit-btn { width: 100%; }
+  .recalculate-section {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

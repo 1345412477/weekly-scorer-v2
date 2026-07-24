@@ -204,6 +204,27 @@
       </div>
     </Dialog>
 
+    <!-- 一周小结覆盖确认弹窗 -->
+    <Dialog v-model:visible="showSummaryOverwrite" header="一周小结已存在" :closable="true" :dismissableMask="true"
+      :closeOnEscape="true" :style="{ width: '440px' }" class="result-dialog">
+      <div v-if="summaryOverwriteData" class="result-body">
+        <div class="success-info" style="background: #fff7e6;">
+          <i class="pi pi-exclamation-triangle" style="color: #f59e0b; font-size: 20px; margin-top: 2px;"></i>
+          <div>
+            <p class="success-title" style="color: #92400e;">检测到已上传一周小结图片</p>
+            <p class="success-desc" style="color: #78350f;">
+              {{ summaryOverwriteData.message }}
+            </p>
+          </div>
+        </div>
+
+        <div class="result-footer">
+          <Button label="取消" icon="pi pi-times" severity="secondary" outlined @click="showSummaryOverwrite = false" />
+          <Button label="确认覆盖" icon="pi pi-check" @click="confirmSummaryOverwrite" />
+        </div>
+      </div>
+    </Dialog>
+
     <!-- 图片放大查看 -->
     <div v-if="lightboxSrc" class="lightbox-overlay" @click.self="closeLightbox">
       <div class="lightbox-content">
@@ -250,6 +271,10 @@ const resultData = ref(null)
 // 周次不匹配确认弹窗
 const showWeekMismatch = ref(false)
 const weekMismatchData = ref(null)
+
+// 一周小结覆盖确认弹窗
+const showSummaryOverwrite = ref(false)
+const summaryOverwriteData = ref(null)
 
 // 图片放大
 const lightboxSrc = ref(null)
@@ -340,11 +365,11 @@ function clearSummary() {
   if (summaryInput.value) summaryInput.value.value = ''
 }
 
-async function uploadAll(forceSubmit = false) {
+async function uploadAll(forceSubmit = false, overwriteSummary = false) {
   if (!selectedReport.value) return
   uploading.value = true
   try {
-    const res = await unifiedUploadAPI.uploadUnified(selectedReport.value, summaryFile.value, forceSubmit)
+    const res = await unifiedUploadAPI.uploadUnified(selectedReport.value, summaryFile.value, forceSubmit, overwriteSummary)
     const data = res.data
     resultData.value = {
       author_name: data.author_name,
@@ -369,6 +394,13 @@ async function uploadAll(forceSubmit = false) {
       return
     }
 
+    // 一周小结已存在：弹出覆盖确认对话框
+    if (status === 409 && rawDetail && typeof rawDetail === 'object' && rawDetail.type === 'summary_exists') {
+      summaryOverwriteData.value = rawDetail
+      showSummaryOverwrite.value = true
+      return
+    }
+
     // handleError 可能已将 detail 转为字符串，尝试从 userMessage 或原始 detail 获取
     const msg = e.userMessage || (typeof rawDetail === 'string' ? rawDetail : (rawDetail?.message || '提交失败，请重试'))
     showToast('error', msg, 4000)
@@ -380,7 +412,13 @@ async function uploadAll(forceSubmit = false) {
 // 确认提交非本周周报
 async function confirmWeekMismatch() {
   showWeekMismatch.value = false
-  await uploadAll(true)
+  await uploadAll(true, false)
+}
+
+// 确认覆盖一周小结图片
+async function confirmSummaryOverwrite() {
+  showSummaryOverwrite.value = false
+  await uploadAll(false, true)
 }
 
 </script>

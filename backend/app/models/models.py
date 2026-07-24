@@ -49,6 +49,9 @@ class ScoringConfig(Base):
     # v3 新增：三项权重 JSON，默认 {"report": 1, "attendance": 1, "chat": 1}
     weights = Column(JSON, nullable=True, default=dict)
     min_content_length = Column(Integer, default=50)
+    # 提交期限设置（小时数，从周一 00:00 起算）
+    submission_deadline_hours = Column(Integer, default=168)  # 迟交期限：默认周日 00:00（168h）
+    late_deadline_hours = Column(Integer, default=336)  # 补交期限：默认下周日 00:00（336h）
     is_active = Column(Boolean, default=True)
     # AI 连接状态缓存（避免频繁检测产生 token 消耗）
     ai_connection_status = Column(Boolean, nullable=True)   # True=已连接 / False=连接失败 / None=未检测

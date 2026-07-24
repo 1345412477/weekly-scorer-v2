@@ -1,13 +1,13 @@
 """排行榜 API"""
-from datetime import date, timedelta
+from datetime import date, timedelta, datetime
 from typing import Optional
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc
 
 from app.database import get_db
-from app.models.models import WeeklyReport, ReportScore, Person, WeeklyAggregate
-from app.utils.time_utils import bj_today
+from app.models.models import WeeklyReport, ReportScore, Person, WeeklyAggregate, ScoringConfig, DepartmentSummary
+from app.utils.time_utils import bj_today, bj_now
 
 router = APIRouter(prefix="/api/v1/leaderboard", tags=["排行榜"])
 
@@ -299,149 +299,197 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
 
 @router.get("/dashboard")
 async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
-    """获取 Dashboard 聚合数据：未提交人员 / 评级较低 / 进步较大"""
+    """获取 Dashboard 聚合数据：异常人员（未提交+迟交）/ 公司项目 / 历史项目"""
     current_monday, current_sunday = get_current_week()
-    prev_monday, prev_sunday = get_previous_week(current_monday, current_sunday)
+    now = bj_now()
 
-    # 1. 本周已提交人员
+    # 读取提交期限配置
+    config_result = await db.execute(
+        select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1)
+    )
+    config = config_result.scalar_one_or_none()
+    submission_deadline_hours = getattr(config, "submission_deadline_hours", 168) or 168
+    late_deadline_hours = getattr(config, "late_deadline_hours", 336) or 336
+
+    # 计算截止时间点
+    deadline_time = datetime(current_monday.year, current_monday.month, current_monday.day) + timedelta(hours=submission_deadline_hours)
+    late_deadline_time = datetime(current_monday.year, current_monday.month, current_monday.day) + timedelta(hours=late_deadline_hours)
+
+    # 1. 本周已提交人员（含提交时间）
     submitted_q = (
-        select(WeeklyReport.author_name)
+        select(WeeklyReport.author_name, WeeklyReport.submit_time)
+        .select_from(WeeklyReport)
         .where(WeeklyReport.status.in_(["scored", "submitted"]))
         .where(WeeklyReport.week_start >= current_monday)
         .where(WeeklyReport.week_end <= current_sunday)
     )
     submitted_r = await db.execute(submitted_q)
-    submitted_names = {row[0] for row in submitted_r.fetchall()}
+    submitted_rows = submitted_r.fetchall()
+    submitted_names = {row[0] for row in submitted_rows}
+    # 记录每人的最早提交时间
+    submit_times = {}
+    for row in submitted_rows:
+        if row[0] not in submit_times or (row[1] and row[1] < submit_times[row[0]]):
+            submit_times[row[0]] = row[1]
 
-    # 2. 未提交人员（persons 表中 - 已提交）
+    # 2. 获取所有在职人员
     persons_q = select(Person).where(Person.is_active == True)
     persons_r = await db.execute(persons_q)
     persons = persons_r.scalars().all()
 
-    not_submitted = []
+    not_submitted = []  # 过了补交期限仍未提交
+    late_submitted = []  # 过了迟交期限但提交了（迟交）
+
     for p in persons:
         if p.name not in submitted_names:
-            not_submitted.append({
-                "name": p.name,
-                "department": p.department_name or "",
-                "position": p.position or "",
-            })
-
-    # 3. 本周已评分记录（每人取最新一份报告，优先有 ReportScore 关联的）
-    cur_inner = (
-        select(
-            WeeklyReport.id,
-            WeeklyReport.author_name,
-            WeeklyReport.department,
-            func.row_number()
-            .over(
-                partition_by=[WeeklyReport.author_name, WeeklyReport.week_start, WeeklyReport.week_end],
-                order_by=[ReportScore.id.is_(None).asc(), WeeklyReport.created_at.desc()],
-            )
-            .label("rn"),
-        )
-        .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
-        .where(WeeklyReport.status.in_(["scored", "submitted"]))
-        .where(WeeklyReport.week_start >= current_monday)
-        .where(WeeklyReport.week_end <= current_sunday)
-    ).cte("cur_inner")
-
-    scored_q = (
-        select(
-            cur_inner.c.author_name,
-            cur_inner.c.department,
-            ReportScore.total_score,
-            ReportScore.grade,
-            ReportScore.ai_comment,
-        )
-        .select_from(cur_inner)
-        .join(ReportScore, ReportScore.report_id == cur_inner.c.id)
-        .where(cur_inner.c.rn == 1)
-    )
-    scored_r = await db.execute(scored_q)
-    scored_rows = scored_r.fetchall()
-
-    # 本周低分人员（排名后 30%）
-    if scored_rows:
-        sorted_by_score = sorted(scored_rows, key=lambda r: float(r.total_score or 0))
-        low_count = max(1, len(sorted_by_score) // 3)
-        low_scorers = []
-        for r in sorted_by_score[:low_count]:
-            low_scorers.append({
-                "name": r.author_name,
-                "department": r.department or "",
-                "total_score": round(float(r.total_score or 0), 1),
-                "grade": r.grade or "",
-                "comment": r.ai_comment or "",
-            })
-    else:
-        low_scorers = []
-
-    # 4. 进步较大人员（本周 vs 上周分数差 > 0，均取每人最新有评分的报告）
-    # 统一工具函数：在给定 [mon, sun] 内，取每人每周最新且有评分的报告的 avg_score
-    def _score_map(monday, sunday):
-        inner = (
-            select(
-                WeeklyReport.id,
-                WeeklyReport.author_name,
-                func.row_number()
-                .over(
-                    partition_by=[WeeklyReport.author_name, WeeklyReport.week_start, WeeklyReport.week_end],
-                    order_by=[ReportScore.id.is_(None).asc(), WeeklyReport.created_at.desc()],
-                )
-                .label("rn"),
-            )
-            .join(ReportScore, ReportScore.report_id == WeeklyReport.id, isouter=True)
-            .where(WeeklyReport.status.in_(["scored", "submitted"]))
-            .where(WeeklyReport.week_start >= monday)
-            .where(WeeklyReport.week_end <= sunday)
-        ).cte("prev_inner")
-
-        q = (
-            select(
-                inner.c.author_name,
-                func.coalesce(func.avg(ReportScore.total_score), 0).label("avg_score"),
-            )
-            .select_from(inner)
-            .join(ReportScore, ReportScore.report_id == inner.c.id, isouter=True)
-            .where(inner.c.rn == 1)
-            .group_by(inner.c.author_name)
-        )
-        return q
-
-    prev_avg_q = _score_map(prev_monday, prev_sunday)
-    prev_avg_r = await db.execute(prev_avg_q)
-    prev_avg_map = {}
-    for row in prev_avg_r.fetchall():
-        prev_avg_map[row.author_name] = float(row.avg_score or 0)
-
-    # 获取本周（每人首次提交）分数
-    cur_avg_q = _score_map(current_monday, current_sunday)
-    cur_avg_r = await db.execute(cur_avg_q)
-    improvements = []
-    for row in cur_avg_r.fetchall():
-        name = row.author_name
-        cur_avg = float(row.avg_score or 0)
-        prev_avg = prev_avg_map.get(name, 0)
-        if cur_avg > 0 and prev_avg > 0:
-            diff = round(cur_avg - prev_avg, 1)
-            if diff > 0:
-                improvements.append({
-                    "name": name,
-                    "current_avg": cur_avg,
-                    "previous_avg": prev_avg,
-                    "improvement": diff,
+            # 未提交：判断是否过了补交期限
+            if now >= late_deadline_time:
+                not_submitted.append({
+                    "name": p.name,
+                    "department": p.department_name or "",
+                    "position": p.position or "",
+                    "status": "未提交",
+                })
+        else:
+            # 已提交：判断是否迟交
+            st = submit_times.get(p.name)
+            if st and st >= deadline_time:
+                late_submitted.append({
+                    "name": p.name,
+                    "department": p.department_name or "",
+                    "position": p.position or "",
+                    "status": "迟交",
                 })
 
-    improvements.sort(key=lambda x: x["improvement"], reverse=True)
-    top_improvers = improvements[:5]
+    # 合并异常人员：未提交在前，迟交在后
+    abnormal_persons = not_submitted + late_submitted
+
+    # 3. 公司正在进行的项目（本周各部门 this_week_projects 汇总去重）
+    dept_summaries_q = (
+        select(DepartmentSummary)
+        .where(DepartmentSummary.week_start >= current_monday)
+        .where(DepartmentSummary.week_end <= current_sunday)
+        .where(DepartmentSummary.status == "done")
+    )
+    dept_r = await db.execute(dept_summaries_q)
+    dept_summaries = dept_r.scalars().all()
+
+    # 汇总所有部门的项目，按项目名去重合并
+    project_map = {}
+    for ds in dept_summaries:
+        projects = ds.this_week_projects or []
+        for proj in projects:
+            pname = proj.get("name", "")
+            if not pname:
+                continue
+            if pname not in project_map:
+                project_map[pname] = {
+                    "name": pname,
+                    "progress": proj.get("progress", 0),
+                    "highlight": proj.get("highlight", False),
+                    "summary": proj.get("summary", ""),
+                    "persons": list(proj.get("persons", [])),
+                    "departments": set(),
+                }
+            else:
+                # 合并参与人员（去重）
+                existing = set(project_map[pname]["persons"])
+                for pn in proj.get("persons", []):
+                    if pn not in existing:
+                        project_map[pname]["persons"].append(pn)
+                        existing.add(pn)
+                # 取最高进度
+                project_map[pname]["progress"] = max(project_map[pname]["progress"], proj.get("progress", 0))
+                # 任一部门标记重点则为重点
+                if proj.get("highlight"):
+                    project_map[pname]["highlight"] = True
+            project_map[pname]["departments"].add(ds.department_name)
+
+    current_projects = []
+    for pname, pdata in project_map.items():
+        current_projects.append({
+            "name": pdata["name"],
+            "progress": pdata["progress"],
+            "highlight": pdata["highlight"],
+            "summary": pdata["summary"],
+            "persons": pdata["persons"],
+            "departments": list(pdata["departments"]),
+        })
+    # 重点项目排前，其次按进度降序
+    current_projects.sort(key=lambda x: (not x["highlight"], -x["progress"]))
+
+    # 4. 历史项目（过去 4 周的项目，按周分组）
+    history_weeks = []
+    for week_offset in range(1, 5):
+        w_monday = current_monday - timedelta(days=7 * week_offset)
+        w_sunday = w_monday + timedelta(days=6)
+        week_label = f"{w_monday.month}/{w_monday.day} - {w_sunday.month}/{w_sunday.day}"
+
+        h_dept_q = (
+            select(DepartmentSummary)
+            .where(DepartmentSummary.week_start >= w_monday)
+            .where(DepartmentSummary.week_end <= w_sunday)
+            .where(DepartmentSummary.status == "done")
+        )
+        h_dept_r = await db.execute(h_dept_q)
+        h_depts = h_dept_r.scalars().all()
+
+        h_projects = []
+        h_project_map = {}
+        for ds in h_depts:
+            projects = ds.this_week_projects or []
+            for proj in projects:
+                pname = proj.get("name", "")
+                if not pname:
+                    continue
+                if pname not in h_project_map:
+                    h_project_map[pname] = {
+                        "name": pname,
+                        "progress": proj.get("progress", 0),
+                        "highlight": proj.get("highlight", False),
+                        "summary": proj.get("summary", ""),
+                        "persons": list(proj.get("persons", [])),
+                    }
+                else:
+                    existing = set(h_project_map[pname]["persons"])
+                    for pn in proj.get("persons", []):
+                        if pn not in existing:
+                            h_project_map[pname]["persons"].append(pn)
+                            existing.add(pn)
+                    h_project_map[pname]["progress"] = max(h_project_map[pname]["progress"], proj.get("progress", 0))
+                    if proj.get("highlight"):
+                        h_project_map[pname]["highlight"] = True
+
+        for pname, pdata in h_project_map.items():
+            h_projects.append(pdata)
+        h_projects.sort(key=lambda x: (not x["highlight"], -x["progress"]))
+
+        if h_projects:
+            history_weeks.append({
+                "week_label": week_label,
+                "week_start": str(w_monday),
+                "projects": h_projects,
+            })
+
+    # 返回完整人员列表（用于前端弹窗展示）
+    all_persons_list = [
+        {
+            "name": p.name,
+            "department_name": p.department_name or "",
+            "position": p.position or "",
+        }
+        for p in persons
+    ]
 
     return {
         "week_start": str(current_monday),
         "week_end": str(current_sunday),
-        "not_submitted": not_submitted,
-        "low_scorers": low_scorers,
-        "top_improvers": top_improvers,
+        "abnormal_persons": abnormal_persons,
+        "not_submitted_count": len(not_submitted),
+        "late_submitted_count": len(late_submitted),
+        "current_projects": current_projects,
+        "history_weeks": history_weeks,
         "total_persons": len(persons),
         "submitted_count": len(submitted_names),
+        "all_persons": all_persons_list,
     }
