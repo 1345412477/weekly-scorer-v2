@@ -507,6 +507,7 @@ function resetFilters() {
   selectedWeekLabel.value = currentOpt ? currentOpt.value : ''
   if (selectedWeekLabel.value) filters.week_start = selectedWeekLabel.value
   page.value = 1
+  clearSavedFilters()
   loadData()
 }
 
@@ -546,14 +547,46 @@ async function saveEdit() {
   }
 }
 
+function saveFiltersToStorage() {
+  try {
+    sessionStorage.setItem('reportListFilters', JSON.stringify({
+      author_name: filters.author_name,
+      department: filters.department,
+      week_start: filters.week_start,
+      selectedYear: selectedYear.value,
+      selectedWeekLabel: selectedWeekLabel.value,
+      page: page.value,
+    }))
+  } catch {}
+}
+
+function restoreFiltersFromStorage() {
+  try {
+    const saved = sessionStorage.getItem('reportListFilters')
+    if (!saved) return false
+    const s = JSON.parse(saved)
+    filters.author_name = s.author_name || ''
+    filters.department = s.department || ''
+    filters.week_start = s.week_start || ''
+    selectedYear.value = s.selectedYear ?? new Date().getFullYear()
+    selectedWeekLabel.value = s.selectedWeekLabel || ''
+    page.value = s.page || 1
+    return true
+  } catch {
+    return false
+  }
+}
+
+function clearSavedFilters() {
+  try { sessionStorage.removeItem('reportListFilters') } catch {}
+}
+
 function viewReport(data) {
   if (data.report_id) {
+    saveFiltersToStorage()
     router.push(`/admin/reports/${data.report_id}`)
     return
   }
-  // 若无 report_id，通过 author_name + week_start 调用后端获取（后端已有对应接口）
-  // 先尝试通过下载报告接口的间接方式——实际路由跳转到 ReportDetail 需要 report_id
-  // 这里直接给用户提示
   toast.add({ severity: 'warn', summary: '该周评暂未关联周报', life: 2500 })
 }
 
@@ -643,15 +676,19 @@ async function onBatchExport() {
 }
 
 onMounted(() => {
-  // 初始化周筛选到当前周
-  const currentMonday = getMonday(new Date())
-  selectedYear.value = currentMonday.getFullYear()
-  const currentOpt = generateWeekOptionsForYear(selectedYear.value).find(
-    opt => opt.value === formatYMD(currentMonday)
-  )
-  if (currentOpt) {
-    selectedWeekLabel.value = currentOpt.value
-    filters.week_start = currentOpt.value
+  // 尝试从 sessionStorage 恢复筛选状态（从周报详情返回时）
+  const restored = restoreFiltersFromStorage()
+  if (!restored) {
+    // 无缓存：初始化周筛选到当前周
+    const currentMonday = getMonday(new Date())
+    selectedYear.value = currentMonday.getFullYear()
+    const currentOpt = generateWeekOptionsForYear(selectedYear.value).find(
+      opt => opt.value === formatYMD(currentMonday)
+    )
+    if (currentOpt) {
+      selectedWeekLabel.value = currentOpt.value
+      filters.week_start = currentOpt.value
+    }
   }
   loadData()
   startScoringPoll()
@@ -661,6 +698,12 @@ onUnmounted(() => {
   if (scoringPollTimer) {
     clearInterval(scoringPollTimer)
     scoringPollTimer = null
+  }
+  // 离开列表页时清除缓存（避免下次进入仍保留旧筛选）
+  // 仅在路由不是 ReportDetail 时清除
+  const currentPath = router.currentRoute.value.path
+  if (!currentPath.startsWith('/admin/reports/')) {
+    clearSavedFilters()
   }
 })
 </script>
