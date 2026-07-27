@@ -48,11 +48,11 @@
         </div>
       </section>
 
-      <!-- 正在进行项目 -->
+      <!-- 本周项目任务 -->
       <section class="panel fade-in-up" :style="{ '--delay': '200ms' }">
         <header class="panel-header">
           <div>
-            <h3>正在进行项目</h3>
+            <h3>本周项目任务</h3>
             <p class="panel-sub-title">上周 {{ currentProjects.length }} 个项目</p>
           </div>
         </header>
@@ -114,11 +114,11 @@
       </div>
     </Dialog>
 
-    <!-- 历史项目情况 -->
+    <!-- 上周项目任务 -->
     <section class="panel fade-in-up" :style="{ '--delay': '300ms' }">
       <header class="panel-header">
         <div>
-          <h3>历史项目情况</h3>
+          <h3>上周项目任务</h3>
         </div>
         <div class="history-nav" v-if="historyWeeks.length > 1">
           <button class="nav-btn" @click="prevHistoryWeek" :disabled="historyWeekIndex === 0">

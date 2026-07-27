@@ -60,7 +60,7 @@
             <i class="pi pi-comments"></i>
           </div>
           <div class="status-card-body">
-            <h3>聊天记录数据</h3>
+            <h3>会话记录数据</h3>
             <p class="status-card-state">
               <span v-if="statusLoading" class="loading-text">
                 <i class="pi pi-spin pi-spinner"></i> 加载中...
@@ -192,15 +192,15 @@
         </div>
       </div>
 
-      <!-- 聊天记录 -->
+      <!-- 会话记录 -->
       <div class="upload-card">
         <div class="card-header">
           <div class="card-icon chat-icon">
             <i class="pi pi-comments"></i>
           </div>
           <div>
-            <h2>聊天记录数据</h2>
-            <p class="card-desc">上传企业微信聊天记录导出的 Excel 文件</p>
+            <h2>会话记录数据</h2>
+            <p class="card-desc">上传企业微信会话记录导出的 Excel 文件</p>
           </div>
         </div>
 
@@ -231,7 +231,7 @@
         <div class="btn-row">
           <Button
             v-if="!chatStatus?.last_upload"
-            label="上传聊天记录文件"
+            label="上传会话记录文件"
             icon="pi pi-upload"
             :loading="chatUploading"
             :disabled="!chatFile"
@@ -241,7 +241,7 @@
           />
           <Button
             v-else
-            label="覆盖上传聊天记录"
+            label="覆盖上传会话记录"
             icon="pi pi-refresh"
             :loading="chatUploading"
             :disabled="!chatFile"
@@ -262,10 +262,10 @@
         </div>
         <p class="btn-hint">
           <template v-if="chatStatus?.last_upload">
-            <i class="pi pi-info-circle"></i> 聊天记录已上传。如需修改请重新上传文件覆盖，如需清除请点击"取消上传"。
+            <i class="pi pi-info-circle"></i> 会话记录已上传。如需修改请重新上传文件覆盖，如需清除请点击"取消上传"。
           </template>
           <template v-else>
-            <i class="pi pi-info-circle"></i> 选择聊天记录 Excel 文件并点击"上传聊天记录文件"即可。
+            <i class="pi pi-info-circle"></i> 选择会话记录 Excel 文件并点击"上传会话记录文件"即可。
           </template>
         </p>
 
@@ -385,7 +385,7 @@ const attendanceUploading = ref(false)
 const attendanceCancelling = ref(false)
 const attendanceResult = ref(null)
 
-// 聊天记录上传
+// 会话记录上传
 const chatInput = ref(null)
 const chatFile = ref(null)
 const chatDragOver = ref(false)
@@ -556,7 +556,7 @@ async function confirmWeekUpload() {
       }
       toast.add({
         severity: 'success',
-        summary: '聊天记录上传成功',
+        summary: '会话记录上传成功',
         life: 3000,
       })
       chatFile.value = null
@@ -592,7 +592,7 @@ async function cancelAttendance() {
   }
 }
 
-// ---------- 聊天记录 ----------
+// ---------- 会话记录 ----------
 function triggerChatInput() { chatInput.value?.click() }
 function onChatFileSelect(e) {
   const f = e.target.files?.[0]
@@ -649,14 +649,14 @@ async function uploadChat(mode) {
 
     toast.add({
       severity: 'success',
-      summary: mode === 'replace' ? '聊天记录已覆盖' : '聊天记录上传成功',
+      summary: mode === 'replace' ? '会话记录已覆盖' : '会话记录上传成功',
       life: 3000,
     })
 
     chatFile.value = null
     refreshStatus()
   } catch (e) {
-    errorMessage.value = e.response?.data?.detail || '聊天记录上传失败，请检查文件格式'
+    errorMessage.value = e.response?.data?.detail || '会话记录上传失败，请检查文件格式'
     showError.value = true
   } finally {
     chatUploading.value = false
@@ -669,14 +669,14 @@ async function cancelChat() {
     const res = await chatAPI.cancel()
     toast.add({
       severity: 'info',
-      summary: `聊天记录上传已取消（共清除 ${res.data.deleted_records} 条记录）`,
+      summary: `会话记录上传已取消（共清除 ${res.data.deleted_records} 条记录）`,
       life: 3000,
     })
     chatResult.value = null
     chatFile.value = null
     refreshStatus()
   } catch (e) {
-    errorMessage.value = e.response?.data?.detail || '取消聊天记录上传失败，请稍后重试'
+    errorMessage.value = e.response?.data?.detail || '取消会话记录上传失败，请稍后重试'
     showError.value = true
   } finally {
     chatCancelling.value = false

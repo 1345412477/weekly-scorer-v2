@@ -84,16 +84,6 @@
                   <span class="project-name" :class="{ 'project-name-bold': project.highlight }">
                     {{ project.name }}
                   </span>
-                  <div class="project-progress-wrapper">
-                    <div class="progress-bar-bg">
-                      <div
-                        class="progress-bar-fill"
-                        :style="{ width: project.progress + '%' }"
-                        :class="getProgressColor(project.progress)"
-                      ></div>
-                    </div>
-                    <span class="progress-text">{{ project.progress }}%</span>
-                  </div>
                 </div>
               </div>
               <div v-if="!dept.last_week_projects?.length" class="empty-text">
@@ -176,16 +166,6 @@
                   <span class="project-detail-name" :class="{ 'project-detail-name-bold': project.highlight }">
                     {{ project.name }}
                   </span>
-                  <div class="project-detail-progress">
-                    <div class="progress-bar-bg">
-                      <div
-                        class="progress-bar-fill"
-                        :style="{ width: project.progress + '%' }"
-                        :class="getProgressColor(project.progress)"
-                      ></div>
-                    </div>
-                    <span class="progress-text">{{ project.progress }}%</span>
-                  </div>
                 </div>
                 <div class="project-detail-summary" v-if="project.summary">
                   {{ project.summary }}
@@ -678,12 +658,6 @@ const getStatusSeverity = (status) => {
     failed: 'danger',
   }
   return map[status] || 'secondary'
-}
-
-const getProgressColor = (progress) => {
-  if (progress >= 80) return 'progress-success'
-  if (progress >= 50) return 'progress-warning'
-  return 'progress-danger'
 }
 
 onMounted(async () => {
