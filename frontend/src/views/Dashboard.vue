@@ -3,7 +3,7 @@
     <!-- 顶部概览 -->
     <div class="overview-row fade-in-up" style="--delay: 0ms">
       <div class="overview-item clickable fade-in-up" :style="{ '--delay': (80 * 0) + 'ms' }" @click="showTotalPersonsDialog">
-        <span class="overview-label">本周应提交</span>
+        <span class="overview-label">上周应提交</span>
         <span class="overview-value">{{ animatedTotalPersons }}</span>
       </div>
       <div class="overview-item clickable fade-in-up" :style="{ '--delay': (80 * 1) + 'ms' }" @click="showSubmittedDialog">
@@ -53,13 +53,13 @@
         <header class="panel-header">
           <div>
             <h3>正在进行项目</h3>
-            <p class="panel-sub-title">本周 {{ currentProjects.length }} 个项目</p>
+            <p class="panel-sub-title">上周 {{ currentProjects.length }} 个项目</p>
           </div>
         </header>
         <div class="panel-body">
           <div v-if="currentProjects.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
             <i class="pi pi-folder empty-icon muted"></i>
-            <span>本周暂无项目信息</span>
+            <span>上周暂无项目信息</span>
           </div>
           <div v-else class="project-list">
             <div
@@ -178,7 +178,7 @@ const personsDialogList = ref([])
 const allPersons = ref([]) // 所有在职人员（用于"本周应提交"弹窗）
 
 function showTotalPersonsDialog() {
-  personsDialogTitle.value = `本周应提交人员（${allPersons.value.length} 人）`
+  personsDialogTitle.value = `上周应提交人员（${allPersons.value.length} 人）`
   personsDialogList.value = allPersons.value.map(p => ({
     name: p.name,
     department: p.department_name || '',

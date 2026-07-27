@@ -300,7 +300,9 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
 @router.get("/dashboard")
 async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     """获取 Dashboard 聚合数据：异常人员（未提交+迟交）/ 公司项目 / 历史项目"""
-    current_monday, current_sunday = get_current_week()
+    # 统一使用上周数据
+    cur_monday, cur_sunday = get_current_week()
+    current_monday, current_sunday = get_previous_week(cur_monday, cur_sunday)
     now = bj_now()
 
     # 读取提交期限配置
