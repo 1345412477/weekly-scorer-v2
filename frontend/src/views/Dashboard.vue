@@ -18,7 +18,7 @@
       <section class="panel fade-in-up" :style="{ '--delay': '120ms' }">
         <header class="panel-header">
           <div>
-            <h3>本周异常人员</h3>
+            <h3>上周异常人员</h3>
             <p class="panel-sub-title">未提交 {{ notSubmittedCount }} 人 · 迟交 {{ lateSubmittedCount }} 人</p>
           </div>
           <span class="panel-count">{{ abnormalPersons.length }} 人</span>
@@ -53,13 +53,13 @@
         <header class="panel-header">
           <div>
             <h3>本周项目任务</h3>
-            <p class="panel-sub-title">上周 {{ currentProjects.length }} 个项目</p>
+            <p class="panel-sub-title">本周 {{ currentProjects.length }} 个项目</p>
           </div>
         </header>
         <div class="panel-body">
           <div v-if="currentProjects.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
             <i class="pi pi-folder empty-icon muted"></i>
-            <span>上周暂无项目信息</span>
+            <span>本周暂无项目信息</span>
           </div>
           <div v-else class="project-list">
             <div
@@ -73,14 +73,10 @@
                 <div class="project-name-row">
                   <i v-if="proj.highlight" class="pi pi-star-fill project-star"></i>
                   <span class="project-name">{{ proj.name }}</span>
-                  <span class="project-progress-badge" :class="progressClass(proj.progress)">{{ proj.progress }}%</span>
                 </div>
                 <div class="project-departments">
                   <span v-for="dept in proj.departments" :key="dept" class="project-dept-tag">{{ dept }}</span>
                 </div>
-              </div>
-              <div class="project-progress-bar">
-                <div class="project-progress-fill" :style="{ width: proj.progress + '%' }"></div>
               </div>
               <p v-if="proj.summary" class="project-summary">{{ proj.summary }}</p>
               <div class="project-persons">
@@ -120,30 +116,21 @@
         <div>
           <h3>上周项目任务</h3>
         </div>
-        <div class="history-nav" v-if="historyWeeks.length > 1">
-          <button class="nav-btn" @click="prevHistoryWeek" :disabled="historyWeekIndex === 0">
-            <i class="pi pi-chevron-left"></i>
-          </button>
-          <span class="history-nav-label">{{ historyWeekIndex + 1 }} / {{ historyWeeks.length }}</span>
-          <button class="nav-btn" @click="nextHistoryWeek" :disabled="historyWeekIndex === historyWeeks.length - 1">
-            <i class="pi pi-chevron-right"></i>
-          </button>
-        </div>
       </header>
       <div class="panel-body">
-        <div v-if="historyWeeks.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
+        <div v-if="lastWeekProjects.length === 0" class="empty-state fade-in-up" style="--delay: 80ms">
           <i class="pi pi-history empty-icon muted"></i>
-          <span>暂无历史项目数据</span>
+          <span>暂无上周项目数据</span>
         </div>
         <div v-else class="history-week">
           <div class="history-week-header">
             <i class="pi pi-calendar"></i>
-            <span class="history-week-label">{{ currentHistoryWeek.week_label }}</span>
-            <span class="history-week-count">{{ currentHistoryWeek.projects.length }} 个项目</span>
+            <span class="history-week-label">{{ lastWeekLabel }}</span>
+            <span class="history-week-count">{{ lastWeekProjects.length }} 个项目</span>
           </div>
           <div class="history-projects">
             <div
-              v-for="proj in currentHistoryWeek.projects"
+              v-for="proj in lastWeekProjects"
               :key="proj.name"
               class="history-project-item"
               :class="{ 'project-highlight': proj.highlight }"
@@ -151,7 +138,6 @@
               <div class="history-proj-head">
                 <i v-if="proj.highlight" class="pi pi-star-fill project-star"></i>
                 <span class="history-proj-name">{{ proj.name }}</span>
-                <span class="project-progress-badge" :class="progressClass(proj.progress)">{{ proj.progress }}%</span>
               </div>
               <p v-if="proj.summary" class="history-proj-summary">{{ proj.summary }}</p>
               <div class="project-persons">
@@ -166,7 +152,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted, nextTick, watch } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick, watch } from 'vue'
 import Dialog from 'primevue/dialog'
 import { leaderboardAPI, reportAPI } from '../api'
 import { useDataRefresh, getDashboardEvents } from '../composables/useDataRefresh'
@@ -208,21 +194,12 @@ const notSubmittedCount = ref(0)
 const lateSubmittedCount = ref(0)
 const currentProjects = ref([])
 const historyWeeks = ref([])
-const historyWeekIndex = ref(0)
 
-const currentHistoryWeek = computed(() => {
-  return historyWeeks.value[historyWeekIndex.value] || { week_label: '', projects: [] }
-})
-
-function prevHistoryWeek() {
-  if (historyWeekIndex.value > 0) historyWeekIndex.value--
-}
-
-function nextHistoryWeek() {
-  if (historyWeekIndex.value < historyWeeks.value.length - 1) historyWeekIndex.value++
-}
+// 上周项目任务：取 historyWeeks 的第一项（即上周）
+const lastWeekProjects = computed(() => historyWeeks.value[0]?.projects || [])
+const lastWeekLabel = computed(() => historyWeeks.value[0]?.week_label || '')
 const totalPersons = ref(0)
-const submittedCount = computed(() => totalPersons.value - abnormalPersons.value.length)
+const submittedCount = ref(0)
 const stats = ref({ total_reports: 0, scored_reports: 0, avg_score: 0 })
 const weeklyTrend = ref([])
 const gradeDist = ref({})
@@ -324,6 +301,7 @@ async function loadData() {
       leaderboardAPI.stats(),
     ])
 
+    if (!overviewRes || !overviewRes.data) return
     const overview = overviewRes.data
     abnormalPersons.value = overview.abnormal_persons || []
     notSubmittedCount.value = overview.not_submitted_count || 0
@@ -331,8 +309,10 @@ async function loadData() {
     currentProjects.value = overview.current_projects || []
     historyWeeks.value = overview.history_weeks || []
     totalPersons.value = overview.total_persons || 0
+    submittedCount.value = overview.submitted_count || 0
     allPersons.value = overview.all_persons || []
 
+    if (!statsRes || !statsRes.data) return
     const sd = statsRes.data
     stats.value = {
       total_reports: sd.total_reports || 0,
@@ -410,14 +390,20 @@ function renderTrendChart() {
   })
 }
 
-onMounted(() => { loadData() })
+let resizeHandler = null
 
-// 窗口 resize 处理
-if (typeof window !== 'undefined') {
-  window.addEventListener('resize', () => {
-    trendChartInstance.value?.resize()
-  })
-}
+onMounted(() => {
+  loadData()
+  resizeHandler = () => { trendChartInstance.value?.resize() }
+  window.addEventListener('resize', resizeHandler)
+})
+
+onUnmounted(() => {
+  if (resizeHandler) {
+    window.removeEventListener('resize', resizeHandler)
+    resizeHandler = null
+  }
+})
 </script>
 
 <style scoped>

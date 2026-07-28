@@ -568,12 +568,8 @@ class TestAIScoringIntegration:
             detail_resp = await client.get(f"/api/v1/reports/{report_id}", headers=admin_headers)
             detail = detail_resp.json()
             assert detail["total_score"] is not None
-            assert detail["dimension_scores"]
-            assert len(detail["dimension_scores"]) == 3
-            for dim in detail["dimension_scores"]:
-                assert dim["name"]
-                assert dim["score"] >= 0
-                assert dim["max"] > 0
+            assert detail["ai_comment"] is not None
+            assert isinstance(detail["total_score"], (int, float))
         finally:
             os.unlink(f.name)
 

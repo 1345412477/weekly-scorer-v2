@@ -665,7 +665,8 @@ def parse_chat_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
             if 0 < diff <= 720:
                 response_per_sender.setdefault(sender, []).append(diff)
 
-    # 按周聚合
+    # 按周聚合 + 同时保存原始消息明细
+    raw_by_person_week: Dict[Tuple[str, date, date], List[Dict]] = {}
     for msg in raw_messages:
         sender = msg["sender"]
         send_time = msg.get("send_time")
@@ -705,6 +706,15 @@ def parse_chat_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
             if snippet and snippet not in b["snippets"]:
                 b["snippets"].append(snippet)
 
+        # 保存原始消息明细
+        raw_by_person_week.setdefault(key, []).append({
+            "send_time": send_time.isoformat() if send_time else None,
+            "content": content,
+            "group_name": group,
+            "receiver": receiver,
+            "message_type": mtype,
+        })
+
     # 整理为最终记录
     records: List[Dict[str, Any]] = []
     for b in bucket_key.values():
@@ -720,6 +730,9 @@ def parse_chat_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
         if b["snippets"]:
             summary_parts.append("; ".join(b["snippets"][:3]))
 
+        pwk = (sender, b["week_start"], b["week_end"])
+        raw_msgs = raw_by_person_week.get(pwk, [])
+
         records.append({
             "author_name": sender,
             "week_start": b["week_start"],
@@ -730,6 +743,7 @@ def parse_chat_excel(file_path: str) -> Tuple[List[Dict[str, Any]], List[str]]:
             "message_count": b["message_count"],
             "response_minutes": resp_avg,
             "content_summary": " | ".join(summary_parts)[:500],
+            "raw_messages": raw_msgs,
         })
 
     records.sort(key=lambda r: (r["week_start"], r["author_name"]))
@@ -748,7 +762,7 @@ def summarize_chat_for_person(
     lines = [f"员工 {author_name} 本周沟通数据："]
     if filtered:
         total = sum(r.get("message_count", 0) for r in filtered)
-        lines.append(f"聊天记录 {len(filtered)} 组，共 {total} 条消息：")
+        lines.append(f"会话记录 {len(filtered)} 组，共 {total} 条消息：")
         for r in filtered:
             parts = [
                 f"日期范围 {r.get('week_start', '-')} ~ {r.get('week_end', '-')}",
@@ -759,9 +773,20 @@ def summarize_chat_for_person(
             resp = r.get("response_minutes")
             if resp is not None:
                 parts.append(f"平均响应 {resp} 分钟")
-            summary = r.get("content_summary")
-            if summary:
-                parts.append(f"摘要：{summary}")
+
+            # 原始消息明细（用于敏感词检测和响应时间校验）
+            raw_msgs = r.get("raw_messages", [])
+            if raw_msgs:
+                parts.append(f"消息明细 {len(raw_msgs)} 条")
+                # 最多展示前 20 条消息避免超出 token 限制
+                for mi, m in enumerate(raw_msgs[:20]):
+                    st = m.get("send_time", "")
+                    ct = m.get("content", "")[:60]
+                    parts.append(f"  消息{mi+1}: [{st}] {ct}")
+            else:
+                summary = r.get("content_summary")
+                if summary:
+                    parts.append(f"摘要：{summary}")
             lines.append("  · " + " ｜ ".join(parts))
     else:
         lines.append("  （无聊天记录）")

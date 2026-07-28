@@ -12,7 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, desc, delete
 
 from app.database import get_db
-from app.models.models import WeeklyReport, ReportScore, Person, AdminUser, WeeklyAggregate
+from app.models.models import WeeklyReport, ReportScore, Person, AdminUser, WeeklyAggregate, WeeklySummary
 from app.schemas.schemas import ReportCreate, ReportResponse
 from app.services.scoring import trigger_scoring
 from app.services.ai_scorer import AIScoringError
@@ -720,7 +720,19 @@ async def batch_delete_reports(
     for report in reports:
         await db.delete(report)
 
-    await write_operation_log(db, user, "batch_delete", "report", "", request, {"report_ids": report_ids, "deleted_aggregates": deleted_aggregates})
+    # 级联删除对应的一周小结（按 author_name + week_start 匹配）
+    deleted_summaries = 0
+    if reports:
+        summary_q = select(WeeklySummary).where(
+            (WeeklySummary.author_name.in_([r.author_name for r in reports]))
+            & (WeeklySummary.week_start.in_([r.week_start for r in reports]))
+        )
+        summary_r = await db.execute(summary_q)
+        for s in summary_r.scalars().all():
+            await db.delete(s)
+            deleted_summaries += 1
+
+    await write_operation_log(db, user, "batch_delete", "report", "", request, {"report_ids": report_ids, "deleted_aggregates": deleted_aggregates, "deleted_summaries": deleted_summaries})
     await db.commit()
     return {
         "message": "批量删除成功",
@@ -778,7 +790,14 @@ async def clear_all_reports(
             delete(WeeklyReport).where(WeeklyReport.id.in_(report_ids))
         )
 
-    # 6. 记录操作日志
+    # 6. 删除所有 WeeklySummary（一周小结）
+    summary_r = await db.execute(
+        select(func.count()).select_from(WeeklySummary)
+    )
+    deleted_summaries = summary_r.scalar() or 0
+    await db.execute(delete(WeeklySummary))
+
+    # 7. 记录操作日志
     await write_operation_log(
         db,
         user,
@@ -791,6 +810,7 @@ async def clear_all_reports(
             "deleted_scores": deleted_scores,
             "deleted_aggregates": deleted_aggregates,
             "deleted_files": deleted_files,
+            "deleted_summaries": deleted_summaries,
         },
     )
     await db.commit()
@@ -798,7 +818,7 @@ async def clear_all_reports(
     logger.info(
         f"[clear_all] 管理员 {user.username} 清空了所有评分数据："
         f"{deleted_reports} 条周报 / {deleted_scores} 条评分 / "
-        f"{deleted_aggregates} 条聚合分数 / {deleted_files} 个文件"
+        f"{deleted_aggregates} 条聚合分数 / {deleted_files} 个文件 / {deleted_summaries} 条一周小结"
     )
 
     return {
@@ -975,8 +995,19 @@ async def delete_report(
 
     await db.delete(report)
 
+    # 级联删除对应的一周小结
+    deleted_summaries = 0
+    summary_q = select(WeeklySummary).where(
+        (WeeklySummary.author_name == report.author_name)
+        & (WeeklySummary.week_start == report.week_start)
+    )
+    summary_r = await db.execute(summary_q)
+    for s in summary_r.scalars().all():
+        await db.delete(s)
+        deleted_summaries += 1
+
     await write_operation_log(db, user, "delete", "report", report_id, request,
-                              {"author_name": report.author_name, "deleted_aggregates": deleted_aggregates})
+                              {"author_name": report.author_name, "deleted_aggregates": deleted_aggregates, "deleted_summaries": deleted_summaries})
     await db.commit()
     return {"message": "周报已删除", "deleted_aggregates": deleted_aggregates}
 

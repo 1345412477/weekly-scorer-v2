@@ -233,6 +233,7 @@ async function loadReport() {
   loading.value = true
   try {
     const res = await reportAPI.get(route.params.id)
+    if (!res || !res.data) return
     report.value = res.data
   } catch (e) {
     console.error('[ReportDetail] 加载失败:', e)

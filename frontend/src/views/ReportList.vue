@@ -112,50 +112,70 @@
         <!-- 考勤分 -->
         <Column header="考勤分" style="min-width:100px">
           <template #body="{ data }">
-            <span
-              v-if="data.attendance_score != null"
-              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.attendance_score) === 0 }]"
-              @dblclick="openEdit(data, 'attendance_score')"
-              :title="'双击修改考勤分'">
-              {{ Math.round(Number(data.attendance_score)) }}
-            </span>
-            <span v-else class="text-muted">/</span>
+            <template v-if="data.status === 'pending'">
+              <span class="text-muted">-</span>
+            </template>
+            <template v-else>
+              <span
+                v-if="data.attendance_score != null"
+                :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.attendance_score) === 0 }]"
+                @dblclick="openEdit(data, 'attendance_score')"
+                :title="'双击修改考勤分'">
+                {{ Math.round(Number(data.attendance_score)) }}
+              </span>
+              <span v-else class="text-muted">/</span>
+            </template>
           </template>
         </Column>
 
         <!-- 周报分 -->
         <Column header="周报分" style="min-width:100px">
           <template #body="{ data }">
-            <span
-              v-if="data.report_score != null"
-              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.report_score) === 0 }]"
-              @dblclick="openEdit(data, 'report_score')"
-              :title="'双击修改周报分'">
-              {{ Math.round(Number(data.report_score)) }}
-            </span>
-            <span v-else class="text-muted">/</span>
+            <template v-if="data.status === 'pending'">
+              <span class="text-muted">评分中...</span>
+            </template>
+            <template v-else>
+              <span
+                v-if="data.report_score != null"
+                :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.report_score) === 0 }]"
+                @dblclick="openEdit(data, 'report_score')"
+                :title="'双击修改周报分'">
+                {{ Math.round(Number(data.report_score)) }}
+              </span>
+              <span v-else class="text-muted">/</span>
+            </template>
           </template>
         </Column>
 
         <!-- 沟通分 -->
         <Column header="沟通分" style="min-width:100px">
           <template #body="{ data }">
-            <span
-              v-if="data.chat_score != null"
-              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.chat_score) === 0 }]"
-              @dblclick="openEdit(data, 'chat_score')"
-              :title="'双击修改沟通分'">
-              {{ Math.round(Number(data.chat_score)) }}
-            </span>
-            <span v-else class="text-muted">/</span>
+            <template v-if="data.status === 'pending'">
+              <span class="text-muted">-</span>
+            </template>
+            <template v-else>
+              <span
+                v-if="data.chat_score != null"
+                :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.chat_score) === 0 }]"
+                @dblclick="openEdit(data, 'chat_score')"
+                :title="'双击修改沟通分'">
+                {{ Math.round(Number(data.chat_score)) }}
+              </span>
+              <span v-else class="text-muted">/</span>
+            </template>
           </template>
         </Column>
 
         <!-- 总分 -->
         <Column header="总分" style="min-width:110px">
           <template #body="{ data }">
-            <ScoreBadge v-if="data.composite_score != null" :score="Number(data.composite_score)" size="sm" />
-            <span v-else class="text-muted">-</span>
+            <template v-if="data.status === 'pending'">
+              <Tag value="评分中" severity="warn" icon="pi pi-spin pi-spinner" />
+            </template>
+            <template v-else>
+              <ScoreBadge v-if="data.composite_score != null" :score="Number(data.composite_score)" size="sm" />
+              <span v-else class="text-muted">-</span>
+            </template>
           </template>
         </Column>
 
@@ -246,6 +266,7 @@ const scoringStatus = reactive({
 })
 
 let scoringPollTimer = null
+let dataPollTimer = null
 const triggerLoading = ref(false)
 
 async function fetchScoringStatus() {
@@ -283,6 +304,16 @@ async function fetchScoringStatus() {
 function startScoringPoll() {
   fetchScoringStatus()
   scoringPollTimer = setInterval(fetchScoringStatus, 5000)
+}
+
+/** 轮询刷新列表（仅当有评分中记录时） */
+function startDataPoll() {
+  dataPollTimer = setInterval(async () => {
+    const hasPending = aggregates.value.some(a => a.status === 'pending')
+    if (hasPending && !loading.value) {
+      loadData()
+    }
+  }, 3000)
 }
 
 async function onTriggerScoring() {
@@ -692,12 +723,17 @@ onMounted(() => {
   }
   loadData()
   startScoringPoll()
+  startDataPoll()
 })
 
 onUnmounted(() => {
   if (scoringPollTimer) {
     clearInterval(scoringPollTimer)
     scoringPollTimer = null
+  }
+  if (dataPollTimer) {
+    clearInterval(dataPollTimer)
+    dataPollTimer = null
   }
   // 离开列表页时清除缓存（避免下次进入仍保留旧筛选）
   // 仅在路由不是 ReportDetail 时清除

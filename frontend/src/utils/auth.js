@@ -5,6 +5,22 @@ export function getToken() {
   return localStorage.getItem(TOKEN_KEY) || ''
 }
 
+export function decodeToken(token) {
+  try {
+    // token 格式: base64(payload).hex(signature)，payload 在索引 0
+    const payload = token.split('.')[0]
+    return JSON.parse(atob(payload))
+  } catch {
+    return null
+  }
+}
+
+function isTokenExpired(token) {
+  const decoded = decodeToken(token)
+  if (!decoded || !decoded.exp) return true
+  return decoded.exp * 1000 < Date.now()
+}
+
 export function setAuth(token, user) {
   localStorage.setItem(TOKEN_KEY, token)
   localStorage.setItem(USER_KEY, JSON.stringify(user || {}))
@@ -24,5 +40,11 @@ export function getAdminUser() {
 }
 
 export function isAdminLoggedIn() {
-  return Boolean(getToken())
+  const token = getToken()
+  if (!token) return false
+  if (isTokenExpired(token)) {
+    clearAuth()
+    return false
+  }
+  return true
 }

@@ -189,7 +189,14 @@ def _rule_based_attendance_score(rec_dicts: list) -> float:
 
 
 async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> Optional[float]:
-    """沟通分：一周小结或聊天记录任意一项缺失 → 返回 None（显示"/"）；两者都有 → AI 评分（0-100）"""
+    """沟通分：一周小结(满分20) + 会话记录(满分80)，独立评分后相加。
+    
+    新规则：
+    - 一周小结满分20分（按工作会话次数和最晚时间扣分）
+    - 会话记录满分80分（按敏感词和响应时间扣分）
+    - 两部分独立评分，缺失部分计0分（不显示"/"）
+    - 两部分相加=沟通总分（0-100）
+    """
     try:
         cr = await db.execute(
             select(ChatRecord).where(
@@ -207,14 +214,12 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
         )
         summaries = list(sr.scalars().all())
 
-        if not chat_records or not summaries:
-            missing = []
-            if not chat_records:
-                missing.append("聊天记录")
-            if not summaries:
-                missing.append("一周小结")
-            logger.info(f"[聚合] {author_name} 该周缺少{'、'.join(missing)} → 沟通分=None（显示/）")
-            return None
+        has_chat = bool(chat_records)
+        has_summary = bool(summaries)
+        
+        if not has_chat and not has_summary:
+            logger.info(f"[聚合] {author_name} 该周无一周小结和聊天记录 → 沟通分=0")
+            return 0.0
 
         chat_dicts = [
             {
@@ -225,9 +230,11 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
                 "message_count": r.message_count or 0,
                 "response_minutes": float(r.response_minutes) if r.response_minutes is not None else None,
                 "content_summary": r.content_summary,
+                "raw_messages": r.raw_messages,
             }
             for r in chat_records
-        ]
+        ] if has_chat else []
+        
         summary_dicts = [
             {
                 "author_name": s.author_name,
@@ -236,9 +243,38 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
                 "latest_time": s.latest_time,
             }
             for s in summaries
-        ]
-        summary = summarize_chat_for_person(chat_dicts, author_name, summary_dicts)
-        ai_result = await score_chat(summary, author_name, "", prompt, db=db)
+        ] if has_summary else []
+
+        # 合并所有原始消息
+        all_raw_messages = []
+        for r in chat_dicts:
+            msgs = r.get("raw_messages") or []
+            if isinstance(msgs, list):
+                all_raw_messages.extend(msgs)
+
+        # 读取敏感词配置和 summary_prompt
+        config = await get_active_config_safe(db)
+        sensitive_words = None
+        summary_prompt = ""
+        if config:
+            sw = getattr(config, "sensitive_words", None)
+            if sw and isinstance(sw, list):
+                sensitive_words = sw
+            summary_prompt = getattr(config, "summary_prompt", "") or ""
+
+        # 分别构建两段摘要，明确传递是否有数据的标志
+        summary_text = summarize_chat_for_person(chat_dicts, author_name, summary_dicts)
+
+        # 使用新版沟通评分提示词
+        ai_result = await score_chat(
+            summary_text, author_name, "", prompt,
+            sensitive_words=sensitive_words,
+            raw_messages=all_raw_messages,
+            has_summary=has_summary,
+            has_chat=has_chat,
+            summary_prompt=summary_prompt,
+            db=db,
+        )
         score = float(ai_result["score"])
         return max(0.0, min(100.0, score))
     except AIScoringError as e:
@@ -301,38 +337,53 @@ async def auto_aggregate(
     )
     agg = result.scalar_one_or_none()
 
-    # 若已存在且已完成评分 → 不重跑考勤/沟通 AI（节省额度），
-    # 但始终重新读取 report_score（从 DB，无 AI 开销）：
-    # 用户可能刚刚上传/提交了新的周报并完成评分，必须同步到聚合表。
+    # 若已存在且已完成评分 → 同步 report_score + 重新计算考勤/沟通分（OCR 可能刚完成），
+    # 但始终尊重 manual_override 保护。
     if agg and not force:
         status = getattr(agg, "status", "done") or "done"
-        if status in ("done", "manual"):
+        if status in ("done", "manual", "pending"):
             new_report_score, new_report_obj, new_report_score_id = await _get_report_score(
                 db, author_name, week_start, week_end
             )
-            # 始终同步 report_score 和 report_score_id（即使分数相同，ID 也可能因删除重建而改变）
             old_report_score_val = float(agg.report_score) if agg.report_score is not None else None
             needs_update = False
 
-            # 比较新旧周报分（None 视为未评分）
+            # 始终同步 report_score（即使分数相同，ID 也可能因删除重建而改变）
             if new_report_score is not None and abs((old_report_score_val or 0) - new_report_score) > 0.1:
                 agg.report_score = Decimal(str(round(new_report_score, 1)))
                 needs_update = True
-            elif new_report_score is None and old_report_score_val is not None:
-                # 保持原有分数不变（异步评分中）
-                pass
-            
-            # 关键修复：无条件同步 report_score_id，避免删除重建后 ID 不一致
             if new_report_score_id and agg.report_score_id != new_report_score_id:
                 agg.report_score_id = new_report_score_id
                 needs_update = True
             elif not new_report_score_id and agg.report_score_id is not None:
-                # 报告被删除但 aggregate 仍保留 → 清空引用
                 agg.report_score_id = None
                 needs_update = True
 
+            # 读取 manual_override 和配置
+            manual_override = {}
+            if getattr(agg, "manual_override", None):
+                manual_override = dict(agg.manual_override) if isinstance(agg.manual_override, dict) else {}
+            config = await get_active_config_safe(db)
+            attendance_prompt = getattr(config, "attendance_prompt", "") or ""
+            chat_prompt = getattr(config, "chat_prompt", "") or ""
+
+            # 重新计算考勤分（除非 manual_override 保护）
+            old_attendance = float(agg.attendance_score) if agg.attendance_score is not None else None
+            if not manual_override.get("attendance_score"):
+                new_attendance = await _get_attendance_score(db, author_name, week_start, week_end, attendance_prompt)
+                if new_attendance is not None and (old_attendance is None or abs(old_attendance - new_attendance) > 0.1):
+                    agg.attendance_score = Decimal(str(round(new_attendance, 1)))
+                    needs_update = True
+
+            # 重新计算沟通分（除非 manual_override 保护）— 解决 OCR 完成后沟通分未更新的问题
+            old_chat = float(agg.chat_score) if agg.chat_score is not None else None
+            if not manual_override.get("chat_score"):
+                new_chat = await _get_chat_score(db, author_name, week_start, week_end, chat_prompt)
+                if new_chat is not None and (old_chat is None or abs(old_chat - new_chat) > 0.1):
+                    agg.chat_score = Decimal(str(round(new_chat, 1)))
+                    needs_update = True
+
             if needs_update:
-                # 重新计算总分（考勤分/沟通分不变，缺失项按 0 计算）
                 total = (
                     float(agg.report_score or 0)
                     + float(agg.attendance_score or 0)
@@ -340,12 +391,23 @@ async def auto_aggregate(
                 )
                 agg.composite_score = Decimal(str(round(total, 2)))
 
+            # 评分完成后更新状态
+            if status == "pending" and new_report_score is not None:
+                agg.status = "done"
+            elif status == "pending" and new_report_score is None:
+                logger.warning(
+                    f"[聚合] {author_name} 该周状态=pending 但无 report_score（week_start={week_start}），"
+                    f"无法自动转为 done，请检查该员工是否已提交周报"
+                )
+
             agg.updated_at = bj_now()
             await db.commit()
             await db.refresh(agg)
             logger.info(
                 f"[聚合] {author_name} 该周状态={status}，"
-                f"{'已同步周报分：'+str(new_report_score) if needs_update else '仅刷新更新时间'}后跳过"
+                f"{'已同步分数' if needs_update else '分数无变化'}（report={new_report_score}, "
+                f"attendance={old_attendance}→{float(agg.attendance_score) if agg.attendance_score else None}, "
+                f"chat={old_chat}→{float(agg.chat_score) if agg.chat_score else None}）"
             )
             return agg
 
@@ -402,11 +464,14 @@ async def auto_aggregate(
         agg.composite_score = Decimal(str(round(total, 2)))
         if report_score_id:
             agg.report_score_id = report_score_id
-        # 只有当尚未被手动覆盖时才标记 done；如果原本是 manual，则保留 manual
+        # 只有当尚未被手动覆盖时才标记状态；
+        # 如果原本是 manual，则保留 manual
         if getattr(agg, "status", None) != "manual":
-            agg.status = "done"
+            has_report_but_no_score = (report_obj is not None) and (report_score is None)
+            agg.status = "pending" if has_report_but_no_score else "done"
         agg.updated_at = bj_now()
     else:
+        has_report_but_no_score = (report_obj is not None) and (report_score is None)
         agg = WeeklyAggregate(
             person_id=person_id,
             author_name=author_name,
@@ -420,7 +485,7 @@ async def auto_aggregate(
             composite_score=Decimal(str(round(total, 2))),
             report_score_id=report_score_id,
             manual_override={},
-            status="done",
+            status="pending" if has_report_but_no_score else "done",
         )
         db.add(agg)
 
@@ -590,7 +655,24 @@ async def list_aggregates(
     department: Optional[str] = None,
     week_start: Optional[date] = None,
 ) -> Dict[str, Any]:
-    q = select(WeeklyAggregate)
+    # 同一人同一周可能有多条记录（并发创建），只取最新的一条
+    # 使用 row_number 窗口函数去重
+    inner_q = (
+        select(
+            WeeklyAggregate.id,
+            func.row_number()
+            .over(
+                partition_by=[WeeklyAggregate.author_name, WeeklyAggregate.week_start],
+                order_by=WeeklyAggregate.created_at.desc(),
+            )
+            .label("rn"),
+        )
+    ).cte("dedup")
+
+    q = select(WeeklyAggregate).join(
+        inner_q, WeeklyAggregate.id == inner_q.c.id
+    ).where(inner_q.c.rn == 1)
+
     conditions = []
     if author_name:
         conditions.append(WeeklyAggregate.author_name.contains(author_name))
@@ -603,7 +685,10 @@ async def list_aggregates(
 
     q = q.order_by(WeeklyAggregate.updated_at.desc())
 
-    count_q = select(WeeklyAggregate)
+    # 计数也要去重
+    count_q = select(WeeklyAggregate).join(
+        inner_q, WeeklyAggregate.id == inner_q.c.id
+    ).where(inner_q.c.rn == 1)
     if conditions:
         count_q = count_q.where(and_(*conditions))
 

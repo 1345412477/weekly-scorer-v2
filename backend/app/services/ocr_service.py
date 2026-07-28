@@ -22,22 +22,6 @@ class OCRParseError(Exception):
     pass
 
 
-OCR_SYSTEM_PROMPT = (
-    "你是一个精准的 OCR 解析助手。用户会上传一张「一周小结」的图片，"
-    "请从图片内容中提取以下字段并严格以 JSON 格式输出：\n"
-    "- author_name: 员工姓名（字符串）\n"
-    "- work_session_count: 本周处理的工作会话次数（整数，**必须识别，例如「共 12 次会话」「12 次会话」「处理了 12 次会话」等字样中的数字）\n"
-    "- total_minutes: 本周工作总耗时（分钟，整数；若无法识别则 null）\n"
-    "- latest_time: 最晚工作时间原文（字符串，如「22:35」或「周一 22:35」）\n"
-    "- week_start: 本周周一日期（YYYY-MM-DD；若图片未明确给出则填 null）\n"
-    "- week_end: 本周周日日期（YYYY-MM-DD；若图片未明确给出则填 null）\n"
-    "注意：\n"
-    "- 必须严格输出 JSON，不要额外文字；\n"
-    "- 若图片中没有姓名（例如「一周小结」字样则 work_session_count 必须返回 null，不要编造；\n"
-    "- 只输出一个 JSON 对象，不要包含说明文字。"
-)
-
-
 def _mime_from_filename(filename: str) -> str:
     """根据文件名推导 MIME 类型"""
     if not filename:
@@ -57,6 +41,7 @@ async def parse_summary_image(
     image_bytes: bytes,
     filename: str,
     override_author_name: Optional[str] = None,
+    db=None,
 ) -> dict:
     """对一周小结图片执行 OCR + 结构化解析。
 
@@ -66,6 +51,7 @@ async def parse_summary_image(
     参数:
       override_author_name: 可选；若提供，将直接覆盖 AI 识别到的 author_name
         （因为一周小结图片不一定包含员工姓名，可由调用方从周报文件名统一识别）
+      db: 可选数据库会话；若提供，优先使用数据库中的活跃 AI 模型
     """
     if not image_bytes or len(image_bytes) < 10:
         raise OCRParseError("上传的图片内容为空或损坏，无法识别")
@@ -74,11 +60,44 @@ async def parse_summary_image(
     b64 = base64.b64encode(image_bytes).decode("ascii")
     data_url = f"data:{mime};base64,{b64}"
 
-    # 选择模型：优先使用 VISION_MODEL（视觉模型）；未配置时回退到 SCORING_MODEL
-    model = (getattr(settings, "VISION_MODEL", "") or "").strip()
+    # 优先使用数据库中的活跃模型（视觉能力需模型支持）
+    ocr_api_key = None
+    ocr_base_url = None
+    model = None
+    if db is not None:
+        try:
+            from app.services.ai_scorer import _get_active_model_from_db
+            db_model = await _get_active_model_from_db(db)
+            if db_model:
+                model = db_model["model_id"]
+                ocr_api_key = db_model["api_key"]
+                ocr_base_url = db_model["base_url"]
+                logger.info(f"[OCR] 使用数据库模型: {model}")
+        except Exception:
+            logger.warning("[OCR] 加载数据库模型失败，回退到 .env 配置")
+
     if not model:
-        model = settings.SCORING_MODEL
-        logger.info(f"[OCR] 未配置 VISION_MODEL，回退到 SCORING_MODEL=%s（若该模型不支持视觉时会失败）", model)
+        # 选择模型：优先使用 VISION_MODEL（视觉模型）；未配置时回退到 SCORING_MODEL
+        model = (getattr(settings, "VISION_MODEL", "") or "").strip()
+        if not model:
+            model = settings.SCORING_MODEL
+            logger.info(f"[OCR] 未配置 VISION_MODEL，回退到 SCORING_MODEL=%s（若该模型不支持视觉时会失败）", model)
+
+    # 读取数据库中的 OCR 提示词配置（必须配置）
+    ocr_system_prompt = ""
+    if db is not None:
+        try:
+            from app.models.models import ScoringConfig
+            from sqlalchemy import select
+            cfg_r = await db.execute(select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1))
+            cfg = cfg_r.scalar_one_or_none()
+            if cfg and getattr(cfg, "ocr_prompt", ""):
+                ocr_system_prompt = cfg.ocr_prompt
+                logger.info("[OCR] 使用数据库中的 OCR 提示词配置")
+        except Exception:
+            pass
+    if not ocr_system_prompt:
+        raise OCRParseError("未配置 OCR 一周小结提示词，请在系统设置中填写")
 
     user_text = (
         "以下是一张一周小结图片，请先完整读取图片中的所有中文内容，"
@@ -90,11 +109,11 @@ async def parse_summary_image(
     )
 
     try:
-        c = get_client()
+        c = get_client(api_key=ocr_api_key, base_url=ocr_base_url)
         response = await c.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": OCR_SYSTEM_PROMPT},
+                {"role": "system", "content": ocr_system_prompt},
                 {
                     "role": "user",
                     "content": [

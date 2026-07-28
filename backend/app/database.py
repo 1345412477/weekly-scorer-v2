@@ -135,6 +135,9 @@ async def _migrate_schema():
         "ai_connection_provider": "VARCHAR(50)",
         "ai_connection_model": "VARCHAR(100)",
         "ai_connection_checked_at": "TIMESTAMP",
+        "raw_messages": "TEXT",
+        "sensitive_words": "TEXT",
+        "ocr_prompt": "TEXT",
     }
 
     async with engine.begin() as conn:
@@ -251,3 +254,92 @@ async def _migrate_schema():
                         logger.info("[migration] attendance_records.attendance_status 类型已改为 TEXT")
             except Exception as e:
                 logger.warning(f"[migration] attendance_records 列类型变更失败: {e}")
+
+        # 6) chat_records 表：raw_messages 列
+        try:
+            chat_cols = await _get_existing_columns(conn, "chat_records")
+        except Exception:
+            chat_cols = set()
+        if "raw_messages" not in chat_cols:
+            try:
+                await conn.execute(text("ALTER TABLE chat_records ADD COLUMN raw_messages TEXT"))
+                logger.info("[migration] chat_records 新增列 raw_messages")
+            except Exception as e:
+                logger.warning(f"[migration] chat_records 新增 raw_messages 失败: {e}")
+
+        # 7) scoring_configs 表：sensitive_words 列
+        try:
+            sc2_cols = await _get_existing_columns(conn, "scoring_configs")
+        except Exception:
+            sc2_cols = set()
+        if "sensitive_words" not in sc2_cols:
+            try:
+                await conn.execute(text("ALTER TABLE scoring_configs ADD COLUMN sensitive_words TEXT"))
+                logger.info("[migration] scoring_configs 新增列 sensitive_words")
+            except Exception as e:
+                logger.warning(f"[migration] scoring_configs 新增 sensitive_words 失败: {e}")
+
+        # 8) scoring_configs 表：ocr_prompt 列
+        try:
+            sc3_cols = await _get_existing_columns(conn, "scoring_configs")
+        except Exception:
+            sc3_cols = set()
+        if "ocr_prompt" not in sc3_cols:
+            try:
+                await conn.execute(text("ALTER TABLE scoring_configs ADD COLUMN ocr_prompt TEXT"))
+                logger.info("[migration] scoring_configs 新增列 ocr_prompt")
+            except Exception as e:
+                logger.warning(f"[migration] scoring_configs 新增 ocr_prompt 失败: {e}")
+
+        # 8b) scoring_configs 表：summary_prompt 列
+        try:
+            sc4_cols = await _get_existing_columns(conn, "scoring_configs")
+        except Exception:
+            sc4_cols = set()
+        if "summary_prompt" not in sc4_cols:
+            try:
+                await conn.execute(text("ALTER TABLE scoring_configs ADD COLUMN summary_prompt TEXT"))
+                logger.info("[migration] scoring_configs 新增列 summary_prompt")
+            except Exception as e:
+                logger.warning(f"[migration] scoring_configs 新增 summary_prompt 失败: {e}")
+
+        # 9) weekly_aggregates 表：添加 author_name + week_start 唯一约束（防止重复记录）
+        if _IS_SQLITE:
+            try:
+                idx_check = await conn.execute(text(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name='uq_aggregate_author_week'"
+                ))
+                if not idx_check.scalar():
+                    # SQLite 不支持直接 ADD CONSTRAINT，需要重建表
+                    # 先检查是否已有重复数据，有则只保留最新的
+                    await conn.execute(text("""
+                        DELETE FROM weekly_aggregates WHERE id NOT IN (
+                            SELECT id FROM (
+                                SELECT id, ROW_NUMBER() OVER (
+                                    PARTITION BY author_name, week_start
+                                    ORDER BY created_at DESC
+                                ) as rn
+                                FROM weekly_aggregates
+                            ) WHERE rn = 1
+                        )
+                    """))
+                    logger.info("[migration] 已清理 weekly_aggregates 重复记录")
+                    # SQLite 无法在线添加唯一约束，记录日志提醒
+                    logger.info("[migration] SQLite 不支持在线添加唯一约束，请手动重建表或忽略")
+            except Exception as e:
+                logger.warning(f"[migration] weekly_aggregates 唯一约束处理失败: {e}")
+        elif _IS_POSTGRES:
+            try:
+                idx_check = await conn.execute(text("""
+                    SELECT indexname FROM pg_indexes
+                    WHERE tablename = 'weekly_aggregates' AND indexname = 'uq_aggregate_author_week'
+                """))
+                if not idx_check.scalar():
+                    await conn.execute(text("""
+                        ALTER TABLE weekly_aggregates
+                        ADD CONSTRAINT uq_aggregate_author_week
+                        UNIQUE (author_name, week_start)
+                    """))
+                    logger.info("[migration] weekly_aggregates 添加唯一约束 uq_aggregate_author_week")
+            except Exception as e:
+                logger.warning(f"[migration] weekly_aggregates 添加唯一约束失败: {e}")

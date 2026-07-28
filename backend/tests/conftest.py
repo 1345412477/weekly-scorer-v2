@@ -105,6 +105,7 @@ async def seed_scoring_config(db):
         ],
         grade_thresholds={"S": 90, "A": 80, "B": 70, "C": 60},
         prompt_template="",
+        report_prompt="你是一位周报评分专家。请根据周报内容评分，满分100分。输出JSON格式。",
     )
     db.add(config)
     await db.commit()

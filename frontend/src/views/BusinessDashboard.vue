@@ -250,7 +250,7 @@
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { businessAPI } from '../api'
 import { useToast } from 'primevue/usetoast'
 import Dropdown from 'primevue/dropdown'
@@ -397,6 +397,7 @@ const loadDepartments = async () => {
   try {
     const weekStart = formatDate(selectedWeek.value)
     const res = await businessAPI.list({ week_start: weekStart })
+    if (!res || !res.data) return
     const respData = res.data.data || res.data
     departments.value = respData.items || []
   } catch (error) {
@@ -416,6 +417,8 @@ const loadDepartments = async () => {
 const generatingTaskId = ref(null)
 /** 轮询定时器 */
 let pollTimer = null
+/** 部门生成轮询定时器 */
+let deptPollTimer = null
 
 /** 开始轮询生成状态 */
 const startPolling = () => {
@@ -526,14 +529,15 @@ const generateDept = async () => {
     // 轮询等待生成完成
     let attempts = 0
     const maxAttempts = 20 // 最多轮询 60 秒
-    const pollInterval = setInterval(async () => {
+    deptPollTimer = setInterval(async () => {
       attempts++
       try {
         const res = await businessAPI.get(selectedDepartment.value.department_id, { week_start: weekStart })
         const respData = res.data.data || res.data
         const status = respData?.status
         if (status === 'done' || status === 'failed' || attempts >= maxAttempts) {
-          clearInterval(pollInterval)
+          clearInterval(deptPollTimer)
+          deptPollTimer = null
           generatingDept.value = false
           if (status === 'done') {
             toast.add({
@@ -580,6 +584,7 @@ const loadDepartmentDetail = async (deptId) => {
   try {
     const weekStart = formatDate(selectedWeek.value)
     const res = await businessAPI.get(deptId, { week_start: weekStart })
+    if (!res || !res.data) return
     const respData = res.data.data || res.data
     selectedDepartment.value = respData
     persons.value = respData.persons || []
@@ -675,6 +680,17 @@ onMounted(async () => {
   
   // 加载当前周数据（不自动切换到上一周）
   await loadDepartments()
+})
+
+onUnmounted(() => {
+  if (pollTimer) {
+    clearInterval(pollTimer)
+    pollTimer = null
+  }
+  if (deptPollTimer) {
+    clearInterval(deptPollTimer)
+    deptPollTimer = null
+  }
 })
 </script>
 

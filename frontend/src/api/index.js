@@ -50,6 +50,11 @@ function handleResponse(res) {
 
   if (res.config.method === 'get' && res.config.cache === true) {
     const key = getCacheKey(res.config.url, res.config.params)
+    // 限制缓存条目，避免内存无限增长
+    if (cache.size >= 100) {
+      const firstKey = cache.keys().next().value
+      if (firstKey) cache.delete(firstKey)
+    }
     cache.set(key, { timestamp: Date.now(), data: res })
   }
   return res

@@ -46,6 +46,12 @@ class ScoringConfig(Base):
     chat_prompt = Column(Text, nullable=True, default="")
     # v4 新增：业务盘总结提示词
     business_summary_prompt = Column(Text, nullable=True, default="")
+    # v5 新增：敏感词列表（沟通分-会话记录部分使用）
+    sensitive_words = Column(JSON, nullable=True, default=list)
+    # v6 新增：OCR 一周小结提示词
+    ocr_prompt = Column(Text, nullable=True, default="")
+    # v7 新增：一周小结评分提示词（20分制，独立于 chat_prompt）
+    summary_prompt = Column(Text, nullable=True, default="")
     # v3 新增：三项权重 JSON，默认 {"report": 1, "attendance": 1, "chat": 1}
     weights = Column(JSON, nullable=True, default=dict)
     min_content_length = Column(Integer, default=50)
@@ -226,6 +232,7 @@ class ChatRecord(Base):
     message_count = Column(Integer, nullable=True, default=0)
     response_minutes = Column(DECIMAL(10, 2), nullable=True)
     content_summary = Column(Text, nullable=True)
+    raw_messages = Column(JSON, nullable=True, default=list)  # 原始消息明细，用于敏感词检测和响应时间校验
     source_file = Column(String(200), nullable=True)
     created_at = Column(DateTime, default=bj_now)
     updated_at = Column(DateTime, default=bj_now, onupdate=bj_now)
@@ -237,6 +244,7 @@ class WeeklyAggregate(Base):
     __table_args__ = (
         Index("idx_aggregate_week_person", "week_start", "person_id"),
         Index("idx_aggregate_week_author", "week_start", "author_name"),
+        UniqueConstraint("author_name", "week_start", name="uq_aggregate_author_week"),
     )
 
     id = Column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))

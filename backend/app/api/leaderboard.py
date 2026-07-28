@@ -300,9 +300,10 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
 @router.get("/dashboard")
 async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     """获取 Dashboard 聚合数据：异常人员（未提交+迟交）/ 公司项目 / 历史项目"""
-    # 统一使用上周数据
-    cur_monday, cur_sunday = get_current_week()
-    current_monday, current_sunday = get_previous_week(cur_monday, cur_sunday)
+    # 本周（用于"本周项目任务"）
+    this_monday, this_sunday = get_current_week()
+    # 上周（用于异常人员、已提交统计）
+    last_monday, last_sunday = get_previous_week(this_monday, this_sunday)
     now = bj_now()
 
     # 读取提交期限配置
@@ -313,17 +314,17 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     submission_deadline_hours = getattr(config, "submission_deadline_hours", 168) or 168
     late_deadline_hours = getattr(config, "late_deadline_hours", 336) or 336
 
-    # 计算截止时间点
-    deadline_time = datetime(current_monday.year, current_monday.month, current_monday.day) + timedelta(hours=submission_deadline_hours)
-    late_deadline_time = datetime(current_monday.year, current_monday.month, current_monday.day) + timedelta(hours=late_deadline_hours)
+    # 计算截止时间点（基于上周）
+    deadline_time = datetime(last_monday.year, last_monday.month, last_monday.day) + timedelta(hours=submission_deadline_hours)
+    late_deadline_time = datetime(last_monday.year, last_monday.month, last_monday.day) + timedelta(hours=late_deadline_hours)
 
-    # 1. 本周已提交人员（含提交时间）
+    # 1. 上周已提交人员（含提交时间）
     submitted_q = (
         select(WeeklyReport.author_name, WeeklyReport.submit_time)
         .select_from(WeeklyReport)
         .where(WeeklyReport.status.in_(["scored", "submitted"]))
-        .where(WeeklyReport.week_start >= current_monday)
-        .where(WeeklyReport.week_end <= current_sunday)
+        .where(WeeklyReport.week_start >= last_monday)
+        .where(WeeklyReport.week_end <= last_sunday)
     )
     submitted_r = await db.execute(submitted_q)
     submitted_rows = submitted_r.fetchall()
@@ -365,11 +366,11 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     # 合并异常人员：未提交在前，迟交在后
     abnormal_persons = not_submitted + late_submitted
 
-    # 3. 公司正在进行的项目（本周各部门 this_week_projects 汇总去重）
+    # 3. 本周项目任务（本周各部门 this_week_projects 汇总去重）
     dept_summaries_q = (
         select(DepartmentSummary)
-        .where(DepartmentSummary.week_start >= current_monday)
-        .where(DepartmentSummary.week_end <= current_sunday)
+        .where(DepartmentSummary.week_start >= this_monday)
+        .where(DepartmentSummary.week_end <= this_sunday)
         .where(DepartmentSummary.status == "done")
     )
     dept_r = await db.execute(dept_summaries_q)
@@ -419,10 +420,10 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     # 重点项目排前，其次按进度降序
     current_projects.sort(key=lambda x: (not x["highlight"], -x["progress"]))
 
-    # 4. 历史项目（过去 4 周的项目，按周分组）
+    # 4. 历史项目（过去 4 周的项目，按周分组，从上周开始往前推）
     history_weeks = []
-    for week_offset in range(1, 5):
-        w_monday = current_monday - timedelta(days=7 * week_offset)
+    for week_offset in range(0, 4):
+        w_monday = last_monday - timedelta(days=7 * week_offset)
         w_sunday = w_monday + timedelta(days=6)
         week_label = f"{w_monday.month}/{w_monday.day} - {w_sunday.month}/{w_sunday.day}"
 
@@ -483,8 +484,8 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     ]
 
     return {
-        "week_start": str(current_monday),
-        "week_end": str(current_sunday),
+        "week_start": str(this_monday),
+        "week_end": str(this_sunday),
         "abnormal_persons": abnormal_persons,
         "not_submitted_count": len(not_submitted),
         "late_submitted_count": len(late_submitted),

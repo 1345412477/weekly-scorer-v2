@@ -429,7 +429,7 @@ async function refreshStatus() {
     attendanceStatus.value = atRes.data
     chatStatus.value = chatRes.data
   } catch (e) {
-    // 状态接口失败时静默处理
+    console.warn('[Upload] 状态查询失败:', e)
   } finally {
     statusLoading.value = false
   }

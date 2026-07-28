@@ -14,7 +14,7 @@ from sqlalchemy import select
 from pydantic import BaseModel
 
 from app.database import get_db
-from app.models.models import WeeklyAggregate, WeeklyReport, ReportScore, Person
+from app.models.models import WeeklyAggregate, WeeklyReport, ReportScore, Person, WeeklySummary
 from app.core.auth import require_admin, write_operation_log
 from app.services.aggregator import list_aggregates, update_aggregate_scores, restore_ai_scores
 from app.utils.file_utils import is_safe_upload_path
@@ -162,6 +162,12 @@ async def delete_aggregate(
             ReportScore.id == agg.report_score_id
         ))
 
+    # 清理关联的 WeeklySummary（一周小结）
+    await db.execute(WeeklySummary.__table__.delete().where(
+        WeeklySummary.author_name == agg.author_name,
+        WeeklySummary.week_start == agg.week_start
+    ))
+
     await db.delete(agg)
     await write_operation_log(db, admin, "delete", "weekly_aggregate", aggregate_id, request,
                               {"author_name": agg.author_name, "week_start": str(agg.week_start)})
@@ -203,6 +209,13 @@ async def batch_delete_aggregates(
     if related_ids:
         await db.execute(ReportScore.__table__.delete().where(
             ReportScore.id.in_(related_ids)
+        ))
+
+    # 清理关联的 WeeklySummary（一周小结）
+    for a in aggs:
+        await db.execute(WeeklySummary.__table__.delete().where(
+            WeeklySummary.author_name == a.author_name,
+            WeeklySummary.week_start == a.week_start
         ))
 
     for a in aggs:

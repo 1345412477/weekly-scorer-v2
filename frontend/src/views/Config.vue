@@ -23,79 +23,6 @@
       </header>
     </section>
 
-    <!-- 评分维度 + 等级阈值 -->
-    <section class="panel-card collapsible" :class="{ collapsed: !expanded.dimensions }">
-      <header class="panel-header clickable" @click="toggle('dimensions')">
-        <div class="header-left">
-          <h3>评分维度与等级阈值</h3>
-        </div>
-        <div class="header-right">
-          <Button label="添加维度" icon="pi pi-plus" text size="small" @click.stop="addDim" />
-          <i :class="['chevron', 'pi', expanded.dimensions ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
-        </div>
-      </header>
-      <div class="panel-body" v-show="expanded.dimensions">
-        <div class="sub-grid">
-          <!-- 左：评分维度表 -->
-          <div>
-            <div class="table-wrap">
-              <table class="data-table">
-                <thead>
-                  <tr>
-                    <th style="width: 22%">维度名称</th>
-                    <th style="width: 12%">最高分</th>
-                    <th style="width: 12%">最低分</th>
-                    <th style="width: 12%">满分</th>
-                    <th>考核内容</th>
-                    <th style="width: 48px"></th>
-                  </tr>
-                </thead>
-                <tbody>
-                  <tr v-for="(dim, idx) in dimensions" :key="idx">
-                    <td data-label="维度名称">
-                      <InputText v-model="dim.name" placeholder="请输入" class="cell-input" />
-                    </td>
-                    <td data-label="最高分">
-                      <InputNumber v-model="dim.highest_score" :min="0" :max="dim.full_score || 100" size="small" :showButtons="false" class="cell-input" />
-                    </td>
-                    <td data-label="最低分">
-                      <InputNumber v-model="dim.lowest_score" :min="0" :max="dim.full_score || 100" size="small" :showButtons="false" class="cell-input" />
-                    </td>
-                    <td data-label="满分">
-                      <InputNumber v-model="dim.full_score" :min="1" :max="100" size="small" :showButtons="false" class="cell-input" />
-                    </td>
-                    <td data-label="考核内容">
-                      <InputText v-model="dim.evaluation_content" placeholder="描述考核要点" class="cell-input" />
-                    </td>
-                    <td class="action-cell">
-                      <Button icon="pi pi-trash" severity="danger" text rounded size="small" @click="removeDim(idx)" :disabled="dimensions.length <= 1" />
-                    </td>
-                  </tr>
-                </tbody>
-              </table>
-            </div>
-            <div class="totals-row">
-              <span class="totals-label">总满分</span>
-              <span class="totals-value">{{ totalFullScore }} 分</span>
-            </div>
-          </div>
-
-          <!-- 右：等级阈值 -->
-          <div>
-            <div class="sub-section-label">等级阈值（{{ totalFullScore }}分制）</div>
-            <div class="threshold-grid">
-              <div v-for="(val, key) in gradeThresholds" :key="key" :class="['threshold-item', 't-' + gradeIndex(key)]">
-                <span :class="['th-label', 'g-' + gradeIndex(key)]">{{ key }}</span>
-                <span class="th-label-op">得分 ≥</span>
-                <InputNumber v-model="gradeThresholds[key]" :min="0" :max="totalFullScore" size="small" :showButtons="false" class="th-input-num" />
-              </div>
-            </div>
-          </div>
-        </div>
-
-      </div>
-    </section>
-
     <!-- 提示词设置 -->
     <section class="panel-card collapsible" :class="{ collapsed: !expanded.prompts }">
       <header class="panel-header clickable" @click="toggle('prompts')">
@@ -111,7 +38,7 @@
         <!-- 周报评分提示词 -->
         <div class="prompt-sub-section">
           <div class="prompt-sub-header">
-            <span class="prompt-sub-title">周报评分提示词</span>
+            <span class="prompt-sub-title">周报评分提示词 <span class="required-mark">*</span></span>
             <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetReportPrompt" />
           </div>
           <div class="prompt-block">
@@ -126,7 +53,7 @@
         <!-- 考勤评分提示词 -->
         <div class="prompt-sub-section">
           <div class="prompt-sub-header">
-            <span class="prompt-sub-title">考勤评分提示词</span>
+            <span class="prompt-sub-title">考勤评分提示词 <span class="required-mark">*</span></span>
             <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetAttendancePrompt" />
           </div>
           <div class="prompt-block">
@@ -138,19 +65,40 @@
           </div>
         </div>
 
-        <!-- 沟通/一周小结评分提示词 -->
+        <!-- 会话评分提示词 -->
         <div class="prompt-sub-section">
           <div class="prompt-sub-header">
-            <span class="prompt-sub-title">沟通/一周小结评分提示词</span>
+            <span class="prompt-sub-title">会话评分提示词 <span class="required-mark">*</span></span>
             <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetChatPrompt" />
           </div>
+          <p class="prompt-sub-desc">用于会话记录评分（满分80分），包含敏感词和响应时间扣分规则</p>
           <div class="prompt-block">
             <div class="prompt-block-head">
               <span class="prompt-field-label">权重</span>
               <InputNumber v-model.number="weights.chat" :min="0" :step="1" size="small" :showButtons="false" class="weight-input" />
             </div>
-            <Textarea v-model="chatPrompt" rows="6" class="prompt-area" placeholder="请输入沟通/一周小结评分提示词...（如工作会话次数、响应效率、沟通质量）" autoResize />
+            <Textarea v-model="chatPrompt" rows="6" class="prompt-area" placeholder="请输入会话评分提示词...（包含会话记录敏感词/响应时间规则）" autoResize />
           </div>
+        </div>
+
+        <!-- 一周小结评分提示词 -->
+        <div class="prompt-sub-section">
+          <div class="prompt-sub-header">
+            <span class="prompt-sub-title">一周小结评分提示词 <span class="required-mark">*</span></span>
+            <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetSummaryPrompt" />
+          </div>
+          <p class="prompt-sub-desc">用于一周小结独立评分（满分20分），包含工作会话次数和最晚时间扣分规则</p>
+          <Textarea v-model="summaryPrompt" rows="6" class="prompt-area" placeholder="请输入一周小结评分提示词...（20分制，包含工作会话次数和最晚时间扣分规则）" autoResize />
+        </div>
+
+        <!-- OCR 一周小结提示词 -->
+        <div class="prompt-sub-section">
+          <div class="prompt-sub-header">
+            <span class="prompt-sub-title">OCR 一周小结提示词 <span class="required-mark">*</span></span>
+            <Button label="重置默认" icon="pi pi-refresh" text size="small" @click="resetOcrPrompt" />
+          </div>
+          <p class="prompt-sub-desc">用于 AI 从一周小结图片中提取工作会话次数、最晚时间等结构化字段</p>
+          <Textarea v-model="ocrPrompt" rows="6" class="prompt-area" placeholder="请输入 OCR 一周小结提示词..." autoResize />
         </div>
 
         <!-- 业务盘总结提示词 -->
@@ -476,7 +424,6 @@ const { execute } = useDataOperation()
 // 各板块展开状态
 const expanded = reactive({
   status: true,
-  dimensions: false,
   prompts: false,
   businessPrompt: false,
   aiModels: false,
@@ -490,18 +437,13 @@ function toggle(key) {
 const saving = ref(false)
 const testing = ref(false)
 const aiStatus = ref({ provider: '', model: '', success: null, checkedAt: '', cached: false, ttl_remaining: 0 })
-const dimensions = ref([
-  { name: '工作反馈深度', full_score: 14, highest_score: null, lowest_score: null, evaluation_content: '问题发现+分析+解决方案' },
-  { name: '进度节点明确', full_score: 13, highest_score: null, lowest_score: null, evaluation_content: '项目是否有明确进度/节点' },
-  { name: '计划可行性', full_score: 10, highest_score: null, lowest_score: null, evaluation_content: '下周计划是否具体可执行' },
-  { name: '工作连续性', full_score: 13, highest_score: null, lowest_score: null, evaluation_content: '是否承接上周计划且有闭环' },
-])
-const gradeThresholds = ref({ '优': 45, '良': 38, '一般': 33, '差': 28 })
 const promptTemplate = ref('')
 // v3 三项提示词 + 三项权重
 const reportPrompt = ref('')
 const attendancePrompt = ref('')
 const chatPrompt = ref('')
+const summaryPrompt = ref('')
+const ocrPrompt = ref('')
 const businessSummaryPrompt = ref('')
 const weights = ref({ report: 1, attendance: 1, chat: 1 })
 // 定时评分设置
@@ -573,8 +515,6 @@ const editingPersonName = ref('')
 const editingPersonDept = ref(null)
 const editingPersonPosition = ref('')
 
-const totalFullScore = computed(() => dimensions.value.reduce((s, d) => s + (d.full_score || 0), 0))
-
 const providerName = computed(() => {
   const p = aiStatus.value.provider
   if (p === 'mimo') return '小米 MiMo'
@@ -583,10 +523,6 @@ const providerName = computed(() => {
   return p || '待检测'
 })
 
-function gradeIndex(g) {
-  return { '优': 0, '良': 1, '一般': 2, '差': 3 }[g] ?? 0
-}
-
 function gradeSeverity(g) {
   if (g === '优') return 'success'
   if (g === '良') return 'info'
@@ -594,22 +530,7 @@ function gradeSeverity(g) {
   return 'danger'
 }
 
-function addDim() {
-  dimensions.value.push({ name: '', full_score: 10, highest_score: null, lowest_score: null, evaluation_content: '' })
-}
-
-function removeDim(idx) {
-  dimensions.value.splice(idx, 1)
-}
-
 function resetConfig() {
-  dimensions.value = [
-    { name: '工作反馈深度', full_score: 14, highest_score: null, lowest_score: null, evaluation_content: '问题发现+分析+解决方案' },
-    { name: '进度节点明确', full_score: 13, highest_score: null, lowest_score: null, evaluation_content: '项目是否有明确进度/节点' },
-    { name: '计划可行性', full_score: 10, highest_score: null, lowest_score: null, evaluation_content: '下周计划是否具体可执行' },
-    { name: '工作连续性', full_score: 13, highest_score: null, lowest_score: null, evaluation_content: '是否承接上周计划且有闭环' },
-  ]
-  gradeThresholds.value = { '优': 45, '良': 38, '一般': 33, '差': 28 }
   promptTemplate.value = `# 周报评分系统提示词
 
 ## 角色设定
@@ -842,21 +763,54 @@ function resetAttendancePrompt() {
 }
 
 function resetChatPrompt() {
-  chatPrompt.value = `# 沟通与一周小结评分提示词
+  chatPrompt.value = `你是一位专业的沟通评分专家。请对员工的会话记录进行评分（满分80分）。
 
-请根据员工本周的工作沟通记录（企业微信对话记录）以及一周小结内容，在 0-100 分范围内对其沟通质量和响应效率进行评分。
+## 扣分规则
+- 敏感词检测：每出现一次敏感词扣10分
+- 响应时间：
+  - 工作日（周一至周五）9:00-18:00：5分钟内回复不扣分，超过5分钟或不回复扣5分
+  - 非工作日（周六、周日）及其他非工作时间：10分钟内回复不扣分，超过10分钟或不回复扣5分
 
-## 评分参考维度
-1. 工作会话数量：处理的工作相关对话数（体现在一周小结中）
-2. 响应效率：回复是否及时，阻塞时长如何
-3. 沟通质量：表达清晰、有层次、提供必要信息
-4. 一周小结完整性：是否完整反映本周工作
+会话记录得分 = max(0, 80 - 以上扣分总和)
 
 ## 输出要求
-请以 JSON 格式返回：
-- score（0-100 的数值）
-- comment（简短点评）`
-  toast.add({ severity: 'info', summary: '已重置沟通评分提示词', life: 2000 })
+请严格以 JSON 格式返回，不要额外文字：
+{"score": 会话记录得分(0-80), "comment": "简短点评（说明扣分原因）"}`
+  toast.add({ severity: 'info', summary: '已重置会话评分提示词', life: 2000 })
+}
+
+function resetSummaryPrompt() {
+  summaryPrompt.value = `你是一位专业的沟通评分专家。请对员工的一周小结进行评分（满分20分）。
+
+## 扣分规则
+- 工作会话次数 >= 300：不扣分
+- 300 > 工作会话次数 >= 200：扣5分
+- 200 > 工作会话次数 >= 100：扣10分
+- 工作会话次数 < 100：扣15分
+- 最晚时间在晚上6点（18:00）之前：扣5分
+
+一周小结得分 = max(0, 20 - 以上扣分总和)
+
+## 输出要求
+请严格以 JSON 格式返回，不要额外文字：
+{"score": 一周小结得分(0-20), "comment": "简短点评（说明扣分原因）"}`
+  toast.add({ severity: 'info', summary: '已重置一周小结评分提示词', life: 2000 })
+}
+
+function resetOcrPrompt() {
+  ocrPrompt.value = `你是一个精准的 OCR 解析助手。用户会上传一张「一周小结」的图片，
+请从图片内容中提取以下字段并严格以 JSON 格式输出：
+- author_name: 员工姓名（字符串）
+- work_session_count: 本周处理的工作会话次数（整数，**必须识别，例如「共 12 次会话」「12 次会话」「处理了 12 次会话」等字样中的数字）
+- total_minutes: 本周工作总耗时（分钟，整数；若无法识别则 null）
+- latest_time: 最晚工作时间原文（字符串，如「22:35」或「周一 22:35」）
+- week_start: 本周周一日期（YYYY-MM-DD；若图片未明确给出则填 null）
+- week_end: 本周周日日期（YYYY-MM-DD；若图片未明确给出则填 null）
+注意：
+- 必须严格输出 JSON，不要额外文字；
+- 若图片中没有姓名（例如「一周小结」字样则 work_session_count 必须返回 null，不要编造；
+- 只输出一个 JSON 对象，不要包含说明文字。`
+  toast.add({ severity: 'info', summary: '已重置 OCR 一周小结提示词', life: 2000 })
 }
 
 function resetBusinessPrompt() {
@@ -965,14 +919,15 @@ function resetBusinessPrompt() {
 async function loadConfig() {
   try {
     const res = await configAPI.get()
+    if (!res || !res.data) return
     const d = res.data
-    if (d.dimensions?.length) dimensions.value = d.dimensions
-    if (d.grade_thresholds) gradeThresholds.value = d.grade_thresholds
     if (d.prompt_template) promptTemplate.value = d.prompt_template
     // v3 三项提示词
     if (typeof d.report_prompt === 'string') reportPrompt.value = d.report_prompt
     if (typeof d.attendance_prompt === 'string') attendancePrompt.value = d.attendance_prompt
     if (typeof d.chat_prompt === 'string') chatPrompt.value = d.chat_prompt
+    if (typeof d.summary_prompt === 'string') summaryPrompt.value = d.summary_prompt
+    if (typeof d.ocr_prompt === 'string') ocrPrompt.value = d.ocr_prompt
     if (typeof d.business_summary_prompt === 'string') businessSummaryPrompt.value = d.business_summary_prompt
     if (d.weights && typeof d.weights === 'object') {
       weights.value = {
@@ -988,26 +943,31 @@ async function loadConfig() {
 }
 
 async function saveConfig() {
-  for (const dim of dimensions.value) {
-    if (!dim.name?.trim()) {
-      toast.add({ severity: 'warn', summary: '请填写所有维度名称', life: 2000 })
-      return
-    }
-    if (!dim.full_score || dim.full_score <= 0) {
-      toast.add({ severity: 'warn', summary: `维度 "${dim.name}" 的满分必须大于 0`, life: 2000 })
-      return
-    }
+  // 校验提示词必填
+  const promptFields = [
+    { name: '周报评分提示词', value: reportPrompt.value },
+    { name: '考勤评分提示词', value: attendancePrompt.value },
+    { name: '会话评分提示词', value: chatPrompt.value },
+    { name: '一周小结评分提示词', value: summaryPrompt.value },
+    { name: 'OCR 一周小结提示词', value: ocrPrompt.value },
+  ]
+  const emptyPrompts = promptFields.filter(p => !p.value?.trim())
+  if (emptyPrompts.length) {
+    const names = emptyPrompts.map(p => p.name).join('、')
+    toast.add({ severity: 'warn', summary: `提示词未填写完整`, detail: `请补充：${names}`, life: 5000 })
+    return
   }
+
   saving.value = true
   try {
     // 保存配置
     await configAPI.save({
-      dimensions: dimensions.value,
-      grade_thresholds: gradeThresholds.value,
       prompt_template: promptTemplate.value,
       report_prompt: reportPrompt.value,
       attendance_prompt: attendancePrompt.value,
       chat_prompt: chatPrompt.value,
+      summary_prompt: summaryPrompt.value,
+      ocr_prompt: ocrPrompt.value,
       business_summary_prompt: businessSummaryPrompt.value,
       weights: {
         report: Number(weights.value.report ?? 1),
@@ -1038,18 +998,7 @@ async function saveConfig() {
 
 function generateAllPrompts() {
   // 周报
-  const dims = dimensions.value.map((d, i) => {
-    let line = `  ${i + 1}. ${d.name}（满分${d.full_score}分`
-    if (d.highest_score != null) line += `，最高分${d.highest_score}分`
-    if (d.lowest_score != null) line += `，最低分${d.lowest_score}分`
-    line += `，考核内容：${d.evaluation_content || '待补充'}）`
-    return line
-  }).join('\n')
-  const gradeText = Object.entries(gradeThresholds.value)
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k}(≥${v})`)
-    .join('、')
-  reportPrompt.value = `# 周报评分提示词\n\n请根据员工提交的周报在 0-${totalFullScore.value} 分范围进行评分。\n\n## 评分维度\n${dims}\n\n## 等级划分\n${gradeText}\n\n## 输出要求\n请以 JSON 格式返回：\n- dimension_scores（每项含name/score/max/comment）\n- total_score（各维度相加）\n- grade（优/良/一般/差）\n- comment（总体评语）\n- suggestion（改进建议）\n\n## 周报内容\n{content}`
+  reportPrompt.value = `# 周报评分提示词\n\n请根据员工提交的周报在 0-100 分范围进行评分。\n\n## 输出要求\n请以 JSON 格式返回：\n- total_score（0-100 的数值）\n- grade（优/良/一般/差）\n- comment（总体评语）\n- suggestion（改进建议）\n\n## 周报内容\n{content}`
 
   // 考勤
   attendancePrompt.value = `# 考勤评分提示词\n\n请根据员工本周的考勤打卡数据，在 0-100 分范围内进行客观评分。\n\n## 评分参考维度\n1. 出勤完整性：是否全勤，有无迟到、早退、缺卡\n2. 工作时长：每日工作时长是否达标\n3. 异常情况：是否有未说明的异常考勤\n4. 加班情况：合理加班视为积极表现（无需额外加分上限）\n\n## 输出要求\n请以 JSON 格式返回：\n- score（0-100 的数值）\n- comment（简短点评）`
@@ -1190,21 +1139,7 @@ function formatFileSize(bytes) {
 }
 
 function generateDefaultPrompt() {
-  const dims = dimensions.value.map((d, i) => {
-    let line = `  ${i + 1}. ${d.name}（满分${d.full_score}分`
-    if (d.highest_score != null) line += `，最高分${d.highest_score}分`
-    if (d.lowest_score != null) line += `，最低分${d.lowest_score}分`
-    line += `，考核内容：${d.evaluation_content || '待补充'}）`
-    return line
-  }).join('\n')
-
-  const gradeText = Object.entries(gradeThresholds.value)
-    .sort((a, b) => b[1] - a[1])
-    .map(([k, v]) => `${k}(≥${v})`)
-    .join('、')
-
-  promptTemplate.value = `# 智友辰周任务汇总系统提示词\n\n## 角色设定\n你是一位专业、客观的工作报告评审专家。请根据以下评分维度对员工周报进行综合评估。\n\n## 评分原则\n1. 客观公正：基于周报内容进行评价，避免主观臆断\n2. 鼓励量化：对有数据支撑、可量化成果的内容给予更高评价\n3. 关注闭环：重视"计划→执行→结果"的完整闭环\n4. 提供建设性：评语和建议应具体、可操作\n\n## 评分维度\n${dims || '（请先配置评分维度）'}\n\n## 评分标准\n- 每个维度独立打分，不超过该维度满分\n- 综合评分 = 各维度分数直接相加（${totalFullScore.value}分制）\n- 等级划分：${gradeText}\n\n## 输出要求\n请以 JSON 格式返回评分结果，包含：\n- dimension_scores: 各维度得分及评语（含name、score、max、comment）\n- total_score: 综合得分\n- grade: 等级（优/良/一般/差）\n- comment: 总体评语（100字以内）\n- suggestion: 改进建议（具体可执行）\n\n## 周报内容\n{content}`
-
+  promptTemplate.value = `# 智友辰周任务汇总系统提示词\n\n## 角色设定\n你是一位专业、客观的工作报告评审专家。请对员工的周报进行综合评估。\n\n## 评分原则\n1. 客观公正：基于周报内容进行评价，避免主观臆断\n2. 鼓励量化：对有数据支撑、可量化成果的内容给予更高评价\n3. 关注闭环：重视"计划→执行→结果"的完整闭环\n4. 提供建设性：评语和建议应具体、可操作\n\n## 输出要求\n请以 JSON 格式返回评分结果，包含：\n- total_score: 综合得分（0-100）\n- grade: 等级（优/良/一般/差）\n- comment: 总体评语（100字以内）\n- suggestion: 改进建议（具体可执行）\n\n## 周报内容\n{content}`
   toast.add({ severity: 'success', summary: '已生成默认模板', life: 2000 })
 }
 
@@ -1216,9 +1151,11 @@ async function runTest() {
     const formData = new FormData()
     formData.append('file', testFile.value)
     const uploadRes = await reportAPI.upload(formData)
+    if (!uploadRes || !uploadRes.data) return
     const uploadData = uploadRes.data
     if (uploadData.report_id) {
       const detailRes = await reportAPI.get(uploadData.report_id)
+      if (!detailRes || !detailRes.data) return
       const detail = detailRes.data
       testResult.value = {
         total_score: detail.total_score || uploadData.total_score,
@@ -1873,21 +1810,6 @@ useDataRefresh({
   align-items: stretch;
 }
 
-/* 子网格：评分维度表 + 等级阈值 */
-.sub-grid {
-  display: grid;
-  grid-template-columns: 2fr 1fr;
-  gap: 18px;
-  align-items: start;
-}
-
-.sub-section-label {
-  font-size: 13px;
-  color: #1e2335;
-  font-weight: 600;
-  margin-bottom: 8px;
-}
-
 /* 注：通用 panel-card / panel-header / panel-desc 的主样式已在"可收起板块通用样式"区定义
    此处仅保留 section-divider 作为向后兼容占位（如有其他页面引用） */
 .section-divider {
@@ -1949,75 +1871,11 @@ useDataRefresh({
   text-align: center;
 }
 
-.totals-row {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 8px;
-  padding: 12px 16px;
-  background: linear-gradient(135deg, rgba(79, 107, 255, 0.06), #fff);
-  border-radius: 10px;
-  border: 1px solid #dde5ff;
-}
-
-.totals-label {
-  font-size: 13px;
-  color: #5a6481;
-}
-
-.totals-value {
-  font-size: 18px;
-  font-weight: 700;
-  color: #4f6bff;
-}
-
-/* 等级阈值 - 右栏单列垂直排列 */
-.threshold-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
-}
-
-.threshold-item {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 14px 16px;
-  border-radius: 12px;
-  border: 1px solid #eef1f9;
-  background: #f8faff;
-}
-
-.threshold-item.t-0 { border-color: rgba(22, 168, 117, 0.25); background: rgba(22, 168, 117, 0.06); }
-.threshold-item.t-1 { border-color: rgba(79, 107, 255, 0.25); background: rgba(79, 107, 255, 0.06); }
-.threshold-item.t-2 { border-color: rgba(217, 119, 6, 0.25); background: rgba(217, 119, 6, 0.06); }
-.threshold-item.t-3 { border-color: rgba(239, 68, 68, 0.25); background: rgba(239, 68, 68, 0.06); }
-
-.th-label {
-  font-size: 13px;
-  font-weight: 700;
-  flex-shrink: 0;
-}
-
-.th-label.g-0 { color: #16a875; }
-.th-label.g-1 { color: #4f6bff; }
-.th-label.g-2 { color: #d97706; }
-.th-label.g-3 { color: #ef4444; }
-
-.th-label-op {
-  font-size: 13px;
-  color: #5a6481;
-  flex-shrink: 0;
-}
-
-.th-input-num :deep(.p-inputnumber) {
-  flex: 1;
-}
-.th-input-num :deep(.p-inputnumber-input) {
-  height: 34px;
-}
-
 /* Prompt */
+.required-mark {
+  color: #ef4444;
+  font-weight: bold;
+}
 .prompt-area :deep(textarea) {
   font-family: 'Consolas', monospace;
   font-size: 13px;
@@ -2369,12 +2227,7 @@ useDataRefresh({
   .grid-wrap { grid-template-columns: 1fr; }
 }
 
-/* 评分维度板块：窄屏下双栏→单列堆叠 */
 @media (max-width: 900px) {
-  .sub-grid {
-    grid-template-columns: 1fr;
-    gap: 16px;
-  }
 }
 
 @media (max-width: 640px) {
@@ -2432,23 +2285,6 @@ useDataRefresh({
   .data-table tbody td.action-cell::before { content: none; }
   .data-table tbody tr:hover { background: transparent; }
   .cell-input :deep(.p-inputtext) { font-size: 13px; }
-
-  .totals-row {
-    padding: 10px 14px;
-    margin-top: 10px;
-  }
-
-  .sub-section-label {
-    font-size: 12px;
-    margin-top: 4px;
-  }
-  .threshold-grid {
-    grid-template-columns: 1fr;
-  }
-  .threshold-item {
-    padding: 10px 12px;
-  }
-  .th-label { font-size: 13px; }
 
   /* section-actions：纵向全宽，按钮自适应占满 */
   .section-actions {

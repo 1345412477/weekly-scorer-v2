@@ -21,12 +21,16 @@ const router = createRouter({
 })
 
 router.beforeEach((to) => {
+  // 需要登录但未登录 → 跳转登录页
   if (to.meta.requiresAdmin && !isAdminLoggedIn()) {
     return { path: '/admin/login', query: { redirect: to.fullPath } }
   }
+  // 已登录时访问登录页 → 跳转首页
   if (to.path === '/admin/login' && isAdminLoggedIn()) {
     return '/admin/dashboard'
   }
+  // 其他情况放行
+  return true
 })
 
 export default router

@@ -64,7 +64,7 @@ async def upload_summary(
 
     # OCR 解析（失败直接抛 400，无兜底）
     try:
-        parsed = await parse_summary_image(image_bytes, filename)
+        parsed = await parse_summary_image(image_bytes, filename, db=db)
     except OCRParseError as e:
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:

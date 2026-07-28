@@ -14,6 +14,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.database import get_db
 from app.models.models import WeeklySummary, WeeklyReport
@@ -231,6 +232,9 @@ async def upload_unified(
     try:
         await db.commit()
         await db.refresh(report_record)
+    except IntegrityError:
+        logger.warning(f"[unified] 重复提交周报: author={author_name}, week={week_start}")
+        raise HTTPException(status_code=409, detail=f"该员工本周周报已存在，请勿重复提交")
     except Exception as e:
         logger.warning(f"[unified] 写入周报记录失败: {e}")
         raise HTTPException(status_code=400, detail=f"写入周报记录失败: {e}")

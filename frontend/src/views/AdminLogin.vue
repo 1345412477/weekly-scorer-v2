@@ -74,9 +74,8 @@ async function login() {
     const res = await authAPI.login({ username: form.username.trim(), password: form.password })
     setAuth(res.data.access_token, res.data.user)
     toast.add({ severity: 'success', summary: '登录成功，欢迎进入后台', life: 1800 })
-    setTimeout(() => {
-      router.push(router.currentRoute.value.query.redirect || '/admin/dashboard')
-    }, 320)
+    const redirect = router.currentRoute.value.query.redirect || '/admin/dashboard'
+    router.replace(redirect)
   } catch (e) {
     errorMessage.value = e.userMessage || e.response?.data?.detail || '登录失败，请稍后重试'
   } finally {

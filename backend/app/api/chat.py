@@ -207,6 +207,7 @@ async def upload_chat(
             message_count=r.get("message_count", 0),
             response_minutes=r.get("response_minutes"),
             content_summary=r.get("content_summary"),
+            raw_messages=r.get("raw_messages"),
             source_file=file.filename,
         )
         db.add(rec)

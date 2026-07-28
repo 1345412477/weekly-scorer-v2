@@ -6,6 +6,7 @@
 3. 简单、可靠、不引入复杂 broker/事件循环嵌套
 """
 import asyncio
+import os
 import threading
 import time
 import uuid
@@ -14,6 +15,11 @@ from typing import Optional, Dict, Any
 
 from app.utils.logger import log_info, log_error, log_warning
 from app.utils.time_utils import bj_now, bj_today
+
+# 一周小结图片存储目录（与 upload_unified.py / weeklysummary.py 保持一致）
+_SUMMARY_UPLOAD_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "uploads", "weeklysummary")
+)
 
 # --- 任务状态内存记录（小量够用，重启不丢失评分结果本身在 DB）---
 _running_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> {type, ref, status, started_at}
@@ -128,22 +134,49 @@ def submit_summary_ocr(summary_id: str) -> str:
                     return
 
                 source_file = summary.source_file
-                if not source_file or not os.path.exists(source_file):
-                    log_warning(f"[task] 小结图片不存在: {source_file}")
+                if not source_file:
+                    log_warning(f"[task] 小结 source_file 为空: {summary_id}")
                     _running_tasks[task_id]["status"] = "file_missing"
                     return
 
-                with open(source_file, "rb") as f:
+                # 构造完整路径（source_file 仅存文件名，需拼接上传目录）
+                full_path = source_file if os.path.isabs(source_file) else os.path.join(_SUMMARY_UPLOAD_DIR, source_file)
+                if not os.path.exists(full_path):
+                    log_warning(f"[task] 小结图片不存在: {full_path}")
+                    _running_tasks[task_id]["status"] = "file_missing"
+                    return
+
+                with open(full_path, "rb") as f:
                     image_bytes = f.read()
 
-                ocr_result = await parse_summary_image(image_bytes, source_file,
-                                                        override_author_name=summary.author_name)
+                ocr_result = await parse_summary_image(image_bytes, full_path,
+                                                        override_author_name=summary.author_name,
+                                                        db=db)
                 summary.work_session_count = ocr_result.get("work_session_count")
                 summary.total_minutes = ocr_result.get("total_minutes")
                 summary.latest_time = ocr_result.get("latest_time")
                 summary.raw_ocr_text = ocr_result.get("raw_ocr_text", "")
                 await db.commit()
                 log_info(f"[task] 一周小结 OCR 完成: session={summary.work_session_count}")
+
+                # OCR 完成后触发聚合评分，更新沟通分
+                try:
+                    from app.services.aggregator import auto_aggregate
+                    await auto_aggregate(
+                        db,
+                        person_id=summary.person_id,
+                        author_name=summary.author_name,
+                        department=summary.department or "",
+                        department_id=summary.department_id,
+                        week_start=summary.week_start,
+                        week_end=summary.week_end,
+                        preserve_manual=True,
+                        force=False,
+                    )
+                    log_info(f"[task] 聚合更新完成 author_name={summary.author_name}")
+                except Exception as e:
+                    log_warning(f"[task] OCR 后聚合更新失败: {e}")
+
                 _running_tasks[task_id]["status"] = "done"
         except Exception as e:
             log_error(f"[task] OCR 失败 summary_id={summary_id}: {e}")
