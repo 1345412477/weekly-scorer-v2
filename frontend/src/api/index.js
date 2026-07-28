@@ -287,7 +287,7 @@ export const attendanceAPI = {
   },
   cancel: () => api.post('/attendance/cancel'),
   list: (params) => api.get('/attendance', { params }),
-  status: () => api.get('/attendance/status'),
+  status: () => api.get('/attendance/status', { _silent: true }),
 }
 
 export const chatAPI = {
@@ -303,7 +303,7 @@ export const chatAPI = {
   },
   cancel: () => api.post('/chat/cancel'),
   list: (params) => api.get('/chat', { params }),
-  status: () => api.get('/chat/status'),
+  status: () => api.get('/chat/status', { _silent: true }),
 }
 
 // 管理员端：统一评分（对所有已提交材料进行 AI 评分与聚合）
@@ -322,9 +322,9 @@ export const aggregateAPI = {
   export: (payload) => api.post('/weekly-aggregates/export', payload, { responseType: 'blob' }),
   getSchedule: () => api.get('/weekly-aggregates/schedule'),
   saveSchedule: (data) => api.post('/weekly-aggregates/schedule', data),
-  scoringStatus: () => api.get('/weekly-aggregates/status'),
+  scoringStatus: () => api.get('/weekly-aggregates/status', { _silent: true }),
   triggerScoring: () => api.post('/weekly-aggregates/status/trigger'),
-  recalculate: (weekStart) => api.post('/weekly-aggregates/recalculate', { week_start: weekStart }),
+  recalculate: (weekStart) => scoringApi.post('/weekly-aggregates/recalculate', { week_start: weekStart }),
 }
 
 export const leaderboardAPI = {

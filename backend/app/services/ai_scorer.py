@@ -463,12 +463,12 @@ async def score_chat(
 ) -> dict:
     """沟通评分（两段式）：一周小结(满分20) + 会话记录(满分80)，独立评分后相加。
 
-    缺失部分计0分，不显示"/"。
+    一周小结缺失计0分；会话记录缺失默认满分80（有数据则从满分按规则扣分）。
 
     返回：{"score": float (0-100), "summary_part": float (0-20), "records_part": float (0-80), "comment": str, "raw": ...}
     """
     summary_part = 0.0
-    records_part = 0.0
+    records_part = 80.0  # 无会话记录时默认满分80
     comments = []
 
     # 分割摘要文本：找到"一周小结"部分
