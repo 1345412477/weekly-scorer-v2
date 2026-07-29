@@ -6,8 +6,6 @@
         <div>
           <h1>周报详情</h1>
           <p class="page-subtitle">{{ report.author_name }} · 第{{ weekNum }}周 · {{ report.department || '未设置部门' }}
-            <Tag v-if="report.report_type === 'catch_up'" severity="warn" :value="`补报${report.week_diff}周`" style="margin-left:8px" />
-            <Tag v-else-if="report.report_type === 'unknown'" severity="secondary" value="未识别" style="margin-left:8px" />
           </p>
         </div>
       </div>

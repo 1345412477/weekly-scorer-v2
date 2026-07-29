@@ -699,11 +699,17 @@ async def list_aggregates(
     items = list(result.scalars().all())
     report_id_map = await _get_report_ids_for_aggregates(db, items)
 
+    # 获取有数据的周列表（用于前端筛选）
+    weeks_q = select(WeeklyAggregate.week_start).distinct()
+    weeks_result = await db.execute(weeks_q)
+    available_weeks = [str(row[0]) for row in weeks_result.fetchall() if row[0]]
+
     return {
         "items": [aggregate_to_dict(a, report_id_map.get(a.id)) for a in items],
         "total": total,
         "page": page,
         "size": size,
+        "available_weeks": sorted(available_weeks, reverse=True),
     }
 
 

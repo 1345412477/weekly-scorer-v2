@@ -357,6 +357,7 @@ const page = ref(1)
 const pageSize = ref(10)
 const tableRefreshKey = ref(0)
 const selectedRows = ref([])
+const availableWeeks = ref([]) // 有数据的周列表
 
 const filters = reactive({
   author_name: '',
@@ -434,9 +435,13 @@ function generateWeekOptionsForYear(year) {
   return options
 }
 
-/** 根据选中年份过滤周选项 */
+/** 根据选中年份过滤周选项，只显示有数据的周 */
 const filteredWeekOptions = computed(() => {
-  return generateWeekOptionsForYear(selectedYear.value)
+  const allWeeks = generateWeekOptionsForYear(selectedYear.value)
+  // 如果没有可用周数据，显示所有周
+  if (!availableWeeks.value.length) return allWeeks
+  // 只显示有数据的周
+  return allWeeks.filter(week => availableWeeks.value.includes(week.value))
 })
 
 function onYearChange(event) {
@@ -508,6 +513,11 @@ async function loadData() {
     const res = await aggregateAPI.list(params)
     aggregates.value = res.data.items || []
     total.value = Number(res.data.total || 0)
+
+    // 获取有数据的周列表（用于筛选）
+    if (res.data.available_weeks) {
+      availableWeeks.value = res.data.available_weeks
+    }
   } catch (e) {
     toast.add({ severity: 'error', summary: '加载失败', life: 3000 })
   } finally {
@@ -529,14 +539,9 @@ function resetFilters() {
   filters.author_name = ''
   filters.department = ''
   filters.week_start = ''
-  // 重置周筛选到当前周
-  const currentMonday = getMonday(new Date())
-  selectedYear.value = currentMonday.getFullYear()
-  const currentOpt = generateWeekOptionsForYear(selectedYear.value).find(
-    opt => opt.value === formatYMD(currentMonday)
-  )
-  selectedWeekLabel.value = currentOpt ? currentOpt.value : ''
-  if (selectedWeekLabel.value) filters.week_start = selectedWeekLabel.value
+  // 重置到默认状态：显示全部周
+  selectedYear.value = new Date().getFullYear()
+  selectedWeekLabel.value = ''
   page.value = 1
   clearSavedFilters()
   loadData()
@@ -635,7 +640,23 @@ function downloadBlob(blob, filename) {
 async function onDownloadReport(data) {
   try {
     const res = await aggregateAPI.downloadReport(data.id)
-    downloadBlob(res.data, `${data.author_name}_${data.week_start}_周报.xlsx`)
+    // 从响应头提取原始文件名
+    const contentDisposition = res.headers['content-disposition']
+    let filename = `${data.author_name}_${data.week_start}_周报.xlsx`
+    if (contentDisposition) {
+      // 解析 filename*=UTF-8''xxx 格式
+      const match = contentDisposition.match(/filename\*=(?:UTF-8''|utf-8'')(.+)/i)
+      if (match) {
+        filename = decodeURIComponent(match[1])
+      } else {
+        // 解析 filename="xxx" 格式
+        const match2 = contentDisposition.match(/filename="?([^";]+)"?/)
+        if (match2) {
+          filename = decodeURIComponent(match2[1])
+        }
+      }
+    }
+    downloadBlob(res.data, filename)
     toast.add({ severity: 'success', summary: '下载成功', life: 2000 })
   } catch (e) {
     const msg = e.response?.data?.detail || '下载失败'
@@ -710,16 +731,10 @@ onMounted(() => {
   // 尝试从 sessionStorage 恢复筛选状态（从周报详情返回时）
   const restored = restoreFiltersFromStorage()
   if (!restored) {
-    // 无缓存：初始化周筛选到当前周
-    const currentMonday = getMonday(new Date())
-    selectedYear.value = currentMonday.getFullYear()
-    const currentOpt = generateWeekOptionsForYear(selectedYear.value).find(
-      opt => opt.value === formatYMD(currentMonday)
-    )
-    if (currentOpt) {
-      selectedWeekLabel.value = currentOpt.value
-      filters.week_start = currentOpt.value
-    }
+    // 无缓存：默认显示全部周，不设置周筛选
+    selectedYear.value = new Date().getFullYear()
+    selectedWeekLabel.value = ''
+    filters.week_start = ''
   }
   loadData()
   startScoringPoll()
