@@ -275,26 +275,30 @@ async function fetchScoringStatus() {
     const wasRunning = scoringStatus.running
     Object.assign(scoringStatus, data)
 
-    // 若从未执行过且当前不在运行 → 不显示
+    // 若从未执行过且当前不在运行 → 不显示，停止轮询
     if (!scoringStatus.running && !scoringStatus.lastRunAt) {
       scoringStatus.visible = false
+      stopScoringPoll()
       return
     }
 
-    // 刚结束一轮评分 → 显示结果并刷新列表
+    // 刚结束一轮评分 → 显示结果、刷新列表、停止轮询
     if (wasRunning && !scoringStatus.running) {
       scoringStatus.visible = true
       loadData()
+      stopScoringPoll()
+      return
     }
 
-    // 正在运行 → 持续显示 + 继续轮询
+    // 正在运行 → 持续显示，继续轮询
     if (scoringStatus.running) {
       scoringStatus.visible = true
     }
 
-    // 非运行态但有历史记录 → 显示最近一次结果
+    // 非运行态但有历史记录 → 显示最近一次结果，停止轮询
     if (!scoringStatus.running && scoringStatus.lastRunAt) {
       scoringStatus.visible = true
+      stopScoringPoll()
     }
   } catch {
     // 接口挂了不弹错误，静默跳过
@@ -302,8 +306,16 @@ async function fetchScoringStatus() {
 }
 
 function startScoringPoll() {
+  if (scoringPollTimer) return // 避免重复启动
   fetchScoringStatus()
-  scoringPollTimer = setInterval(fetchScoringStatus, 5000)
+  scoringPollTimer = setInterval(fetchScoringStatus, 10000)
+}
+
+function stopScoringPoll() {
+  if (scoringPollTimer) {
+    clearInterval(scoringPollTimer)
+    scoringPollTimer = null
+  }
 }
 
 /** 轮询刷新列表（仅当有评分中记录时） */
@@ -322,6 +334,7 @@ async function onTriggerScoring() {
     await aggregateAPI.triggerScoring()
     scoringStatus.visible = true
     scoringStatus.running = true
+    startScoringPoll()
   } catch (e) {
     const msg = e.response?.data?.detail || '触发失败'
     toast.add({ severity: 'error', summary: msg, life: 3000 })
