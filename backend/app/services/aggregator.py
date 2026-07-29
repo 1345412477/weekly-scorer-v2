@@ -278,11 +278,11 @@ async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, 
         score = float(ai_result["score"])
         return max(0.0, min(100.0, score))
     except AIScoringError as e:
-        logger.warning(f"[聚合] 沟通 AI 评分失败 {author_name}: {e}")
-        return None
+        logger.warning(f"[聚合] 沟通 AI 评分失败 {author_name}: {e}，沟通分计0")
+        return 0.0
     except Exception as e:
-        logger.warning(f"[聚合] 沟通分异常 {author_name}: {e}")
-        return None
+        logger.warning(f"[聚合] 沟通分异常 {author_name}: {e}，沟通分计0")
+        return 0.0
 
 
 # ============================================================
