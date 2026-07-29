@@ -777,9 +777,11 @@ def summarize_chat_for_person(
             # 原始消息明细（用于敏感词检测和响应时间校验）
             raw_msgs = r.get("raw_messages", [])
             if raw_msgs:
-                parts.append(f"消息明细 {len(raw_msgs)} 条")
+                # 过滤非 dict 元素，防止 'str' object has no attribute 'get'
+                valid_msgs = [m for m in raw_msgs if isinstance(m, dict)]
+                parts.append(f"消息明细 {len(valid_msgs)} 条")
                 # 最多展示前 20 条消息避免超出 token 限制
-                for mi, m in enumerate(raw_msgs[:20]):
+                for mi, m in enumerate(valid_msgs[:20]):
                     st = m.get("send_time", "")
                     ct = m.get("content", "")[:60]
                     parts.append(f"  消息{mi+1}: [{st}] {ct}")
