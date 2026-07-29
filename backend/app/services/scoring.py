@@ -67,7 +67,7 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
         grade = ai_result.get("grade", "一般")
         score_record = ReportScore(
             report_id=report.id,
-            dimension_scores=[],
+            dimension_scores=ai_result.get("dimension_scores", []),
             total_score=total,
             grade=grade,
             ai_comment=ai_result.get("comment", ""),

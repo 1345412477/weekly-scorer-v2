@@ -238,7 +238,8 @@ async def score_report(
         f"## 员工信息\n- 姓名：{author_name}\n- 部门：{department or '未设置'}\n\n"
         f"## 周报内容\n{content}\n\n"
         f"## 输出格式（严格 JSON）\n"
-        f'{{"total_score": 数字0-100, "grade": "优/良/一般/差", "comment": "总体评语", "suggestion": "改进建议"}}'
+        f'{{"total_score": 数字0-100, "grade": "优/良/一般/差", "comment": "总体评语", "suggestion": "改进建议", '
+        f'"dimension_scores": [{{"name": "维度名", "score": 得分, "max": 满分, "comment": "评语"}}]}}'
     )
 
     try:
@@ -249,11 +250,24 @@ async def score_report(
             db=db,
         )
         total_score = float(result.get("total_score", 0))
+        # 提取维度评分（AI 可能不返回或格式不规范，需安全解析）
+        dimension_scores = []
+        raw_dims = result.get("dimension_scores")
+        if isinstance(raw_dims, list):
+            for d in raw_dims:
+                if isinstance(d, dict):
+                    dimension_scores.append({
+                        "name": d.get("name", ""),
+                        "score": float(d.get("score", 0)),
+                        "max": float(d.get("max", 0)),
+                        "comment": d.get("comment", ""),
+                    })
         return {
             "total_score": round(max(28.0, min(total_score, 40.0)), 1),
             "grade": result.get("grade", "一般"),
             "comment": result.get("comment", ""),
             "suggestion": result.get("suggestion", ""),
+            "dimension_scores": dimension_scores,
             "raw": raw,
         }
     except AIScoringError as e:
