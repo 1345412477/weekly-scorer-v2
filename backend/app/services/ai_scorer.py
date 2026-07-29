@@ -281,13 +281,15 @@ def _extract_json(text: str) -> dict:
         lines = [l for l in lines if not l.strip().startswith("```")]
         text = "\n".join(lines).strip()
     try:
-        return json.loads(text)
+        result = json.loads(text)
+        return result if isinstance(result, dict) else {}
     except json.JSONDecodeError:
         start = text.find("{")
         end = text.rfind("}") + 1
         if start >= 0 and end > start:
             try:
-                return json.loads(text[start:end])
+                result = json.loads(text[start:end])
+                return result if isinstance(result, dict) else {}
             except json.JSONDecodeError:
                 return {}
         return {}
@@ -347,12 +349,16 @@ async def score_attendance(
 
     try:
         result, raw = await _call_ai_with_retry(system_prompt, user_prompt, db=db)
+        if not isinstance(result, dict):
+            raise AIScoringError(f"AI 返回格式异常: 期望 dict，得到 {type(result).__name__}")
         score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
         return {
             "score": round(max(0.0, min(score, 100.0)), 1),
             "comment": result.get("comment", ""),
             "raw": raw,
         }
+    except AIScoringError:
+        raise
     except Exception as e:
         raise AIScoringError(f"考勤评分失败: {str(e)}") from e
 
@@ -384,12 +390,16 @@ async def score_weekly_summary(
 
     try:
         result, raw = await _call_ai_with_retry(system_prompt, user_prompt, db=db)
+        if not isinstance(result, dict):
+            raise AIScoringError(f"AI 返回格式异常: 期望 dict，得到 {type(result).__name__}")
         score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
         return {
             "score": round(max(0.0, min(score, 20.0)), 1),
             "comment": result.get("comment", ""),
             "raw": raw,
         }
+    except AIScoringError:
+        raise
     except Exception as e:
         raise AIScoringError(f"一周小结评分失败: {str(e)}") from e
 
@@ -413,7 +423,9 @@ async def score_chat_records(
     # 构建会话记录明细文本（含发送时间和内容，供 AI 判断响应时间和敏感词）
     records_detail = ""
     if raw_messages:
-        msgs = sorted(raw_messages, key=lambda m: m.get("send_time", "") or "")
+        # 过滤非 dict 元素，防止 'str' object has no attribute 'get'
+        valid_msgs = [m for m in raw_messages if isinstance(m, dict)]
+        msgs = sorted(valid_msgs, key=lambda m: m.get("send_time", "") or "")
         for idx, m in enumerate(msgs):
             st = m.get("send_time", "")
             ct = (m.get("content", "") or "")[:120]
@@ -438,12 +450,16 @@ async def score_chat_records(
 
     try:
         result, raw = await _call_ai_with_retry(system_prompt, user_prompt, db=db)
+        if not isinstance(result, dict):
+            raise AIScoringError(f"AI 返回格式异常: 期望 dict，得到 {type(result).__name__}")
         score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
         return {
             "score": round(max(0.0, min(score, 80.0)), 1),
             "comment": result.get("comment", ""),
             "raw": raw,
         }
+    except AIScoringError:
+        raise
     except Exception as e:
         raise AIScoringError(f"会话记录评分失败: {str(e)}") from e
 
