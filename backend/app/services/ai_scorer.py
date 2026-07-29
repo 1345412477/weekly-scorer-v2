@@ -250,7 +250,7 @@ async def score_report(
         )
         total_score = float(result.get("total_score", 0))
         return {
-            "total_score": round(max(0.0, min(total_score, 100.0)), 1),
+            "total_score": round(max(28.0, min(total_score, 40.0)), 1),
             "grade": result.get("grade", "一般"),
             "comment": result.get("comment", ""),
             "suggestion": result.get("suggestion", ""),
@@ -483,14 +483,17 @@ async def score_chat(
 
     # 一周小结评分（仅当有数据时）— 使用独立的 summary_prompt（20分制）
     if has_summary and weekly_summary_section and ("工作会话" in weekly_summary_section or "一周小结" in weekly_summary_section):
-        try:
-            result = await score_weekly_summary(weekly_summary_section, author_name, department,
-                                                  prompt_template=summary_prompt, db=db)
-            summary_part = result["score"]
-            if result.get("comment"):
-                comments.append(f"小结:{result['comment']}")
-        except AIScoringError:
-            pass
+        if summary_prompt:
+            try:
+                result = await score_weekly_summary(weekly_summary_section, author_name, department,
+                                                      prompt_template=summary_prompt, db=db)
+                summary_part = result["score"]
+                if result.get("comment"):
+                    comments.append(f"小结:{result['comment']}")
+            except AIScoringError as e:
+                logger.warning(f"[沟通评分] 一周小结评分失败: {e}")
+        else:
+            logger.warning("[沟通评分] summary_prompt 未配置，一周小结评分跳过（计0分）")
 
     # 会话记录评分（仅当有数据时）
     if has_chat and chat_records_section and ("会话记录" in chat_records_section or "聊天记录" in chat_records_section or "消息明细" in chat_records_section):
@@ -503,14 +506,20 @@ async def score_chat(
                 db=db,
             )
             records_part = result["score"]
+            # 严格限制会话记录分不超过80
+            records_part = min(records_part, 80.0)
             if result.get("comment"):
                 comments.append(f"会话:{result['comment']}")
-        except AIScoringError:
-            pass
+        except AIScoringError as e:
+            logger.warning(f"[沟通评分] 会话记录评分失败: {e}")
 
+    # 严格限制各子项分数范围
+    summary_part = max(0.0, min(summary_part, 20.0))
+    records_part = max(0.0, min(records_part, 80.0))
     total = summary_part + records_part
+
     return {
-        "score": round(max(0.0, min(total, 100.0)), 1),
+        "score": round(total, 1),
         "summary_part": round(summary_part, 1),
         "records_part": round(records_part, 1),
         "comment": " | ".join(comments) if comments else "",
