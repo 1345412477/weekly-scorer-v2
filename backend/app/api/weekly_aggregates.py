@@ -260,7 +260,11 @@ async def download_report_by_aggregate(
                               {"original_filename": report.original_filename})
     await db.commit()
 
-    filename = report.original_filename or f"{agg.author_name}-周报.xlsx"
+    _fm = report.week_start.replace(day=1)
+    _fm += timedelta(days=(7 - _fm.weekday()) % 7)
+    _wn = max(0, (report.week_start.day - _fm.day)) // 7 + 1
+    _ymd = report.week_start.strftime("%Y%m%d")
+    filename = f"{report.author_name}-{report.week_start.year}年{report.week_start.month}月第{_wn}周周报{_ymd}.xlsx"
     import urllib.parse
     filename = urllib.parse.quote(filename)
     return FileResponse(
@@ -321,8 +325,12 @@ async def export_aggregates(
     with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
         added = set()
         for agg, report in report_files:
-            # 生成带中文的安全文件名：姓名_起止日期_周报.xlsx
-            base_name = f"{agg.author_name}_{agg.week_start}_{report.original_filename or '周报.xlsx'}"
+            # 文件名格式：姓名-YYYY年MM月第N周周报YYYYMMDD.xlsx
+            _fm2 = report.week_start.replace(day=1)
+            _fm2 += timedelta(days=(7 - _fm2.weekday()) % 7)
+            _wn2 = max(0, (report.week_start.day - _fm2.day)) // 7 + 1
+            _ymd2 = report.week_start.strftime("%Y%m%d")
+            base_name = f"{report.author_name}-{report.week_start.year}年{report.week_start.month}月第{_wn2}周周报{_ymd2}.xlsx"
             safe_name = base_name
             i = 1
             while safe_name in added:

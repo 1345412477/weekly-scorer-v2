@@ -639,7 +639,11 @@ async def export_reports(
         added = set()
         for r in reports:
             if is_safe_upload_path(r.file_path):
-                base_name = safe_download_name(r.original_filename, f"{r.author_name}_周报.xlsx")
+                _fm = r.week_start.replace(day=1)
+                _fm += timedelta(days=(7 - _fm.weekday()) % 7)
+                _wn = max(0, (r.week_start.day - _fm.day)) // 7 + 1
+                _ymd2 = r.week_start.strftime("%Y%m%d")
+                base_name = f"{r.author_name}-{r.week_start.year}年{r.week_start.month}月第{_wn}周周报{_ymd2}.xlsx"
                 name = base_name
                 counter = 1
                 while name in added:
@@ -1041,8 +1045,14 @@ async def download_report(
     )
     await db.commit()
 
+    # 文件名格式：姓名-YYYY年MM月第N周周报YYYYMMDD.xlsx
+    _first_monday = report.week_start.replace(day=1)
+    _first_monday += timedelta(days=(7 - _first_monday.weekday()) % 7)
+    _week_num = max(0, (report.week_start.day - _first_monday.day)) // 7 + 1
+    _ymd = report.week_start.strftime("%Y%m%d")
+    _new_name = f"{report.author_name}-{report.week_start.year}年{report.week_start.month}月第{_week_num}周周报{_ymd}.xlsx"
     return FileResponse(
         os.path.abspath(report.file_path),
-        filename=safe_download_name(report.original_filename, f"周报_{report.author_name}.xlsx"),
+        filename=_new_name,
         media_type="application/octet-stream",
     )
