@@ -174,11 +174,12 @@ function showTotalPersonsDialog() {
 }
 
 function showSubmittedDialog() {
-  // 已提交 = 全部人员 - 异常人员
-  const abnormalNames = new Set(abnormalPersons.value.map(p => p.name))
-  const submitted = allPersons.value
-    .filter(p => !abnormalNames.has(p.name))
-    .map(p => ({ name: p.name, department: p.department_name || '', position: p.position || '' }))
+  // 已提交人员由后端直接返回（含正常+迟交）
+  const submitted = submittedPersons.value.map(p => ({
+    name: p.name,
+    department: p.department_name || '',
+    position: p.position || '',
+  }))
   personsDialogTitle.value = `已提交人员（${submitted.length} 人）`
   personsDialogList.value = submitted
   personsDialogVisible.value = true
@@ -192,6 +193,7 @@ const emitConfirm = (msg, onOk) => {
 const abnormalPersons = ref([])
 const notSubmittedCount = ref(0)
 const lateSubmittedCount = ref(0)
+const submittedPersons = ref([])
 const currentProjects = ref([])
 const historyWeeks = ref([])
 
@@ -306,6 +308,7 @@ async function loadData() {
     abnormalPersons.value = overview.abnormal_persons || []
     notSubmittedCount.value = overview.not_submitted_count || 0
     lateSubmittedCount.value = overview.late_submitted_count || 0
+    submittedPersons.value = overview.submitted_persons || []
     currentProjects.value = overview.current_projects || []
     historyWeeks.value = overview.history_weeks || []
     totalPersons.value = overview.total_persons || 0

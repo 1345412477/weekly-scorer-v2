@@ -366,6 +366,16 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     # 合并异常人员：未提交在前，迟交在后
     abnormal_persons = not_submitted + late_submitted
 
+    # 已提交人员列表（含正常+迟交）
+    submitted_persons = []
+    for p in persons:
+        if p.name in submitted_names:
+            submitted_persons.append({
+                "name": p.name,
+                "department_name": p.department_name or "",
+                "position": p.position or "",
+            })
+
     # 3. 本周项目任务（本周各部门 this_week_projects 汇总去重）
     dept_summaries_q = (
         select(DepartmentSummary)
@@ -493,5 +503,6 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
         "history_weeks": history_weeks,
         "total_persons": len(persons),
         "submitted_count": len(submitted_names),
+        "submitted_persons": submitted_persons,
         "all_persons": all_persons_list,
     }
