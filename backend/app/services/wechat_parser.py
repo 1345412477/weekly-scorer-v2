@@ -185,7 +185,16 @@ def _match_att_field(header: str) -> Optional[str]:
 
 
 def _find_attendance_sheet(wb) -> str:
-    """优先选择「打卡详情」sheet，若无则选第一个 sheet"""
+    """优先选择「Sheet1」（两行表头简化格式），否则按「打卡详情/打卡明细」等规则选择"""
+    # 用户要求：考勤上传只使用「Sheet1」中的数据（时间/姓名/上班1/下班1 两行表头）
+    if "Sheet1" in wb.sheetnames:
+        ws = wb["Sheet1"]
+        probe = list(ws.iter_rows(max_row=5, values_only=True))
+        if len(probe) >= 4:
+            primary = "".join(_norm(c) for c in probe[2])
+            secondary = "".join(_norm(c) for c in probe[3])
+            if "上班1" in primary and "打卡时间" in secondary and "打卡状态" in secondary:
+                return "Sheet1"
     # 精确匹配优先
     exact = ["打卡详情", "打卡明细"]
     for name in wb.sheetnames:
@@ -203,6 +212,7 @@ def _detect_two_row_header(rows) -> Tuple[bool, int]:
     """检测是否为新版两行表头格式。
     返回 (is_two_row, header_row_idx)。
     两行表头特征：某行的前几列包含「姓名」但无「日期」，下一行包含「最早/班次/考勤结果」等二级字段。
+    Sheet1 简化格式的二级表头为「打卡时间/打卡状态」。
     只看前 10 列以避免后面"打卡详情"等干扰列的影响。
     """
     for idx in range(min(8, len(rows) - 1)):
@@ -211,7 +221,12 @@ def _detect_two_row_header(rows) -> Tuple[bool, int]:
         # 一级表头前几列有「姓名」但无「日期」
         if ("姓名" in row_prefix or "员工" in row_prefix) and "日期" not in row_prefix:
             # 下一行有二级字段
-            if "最早" in next_text or "班次" in next_text or "考勤结果" in next_text:
+            if (
+                "最早" in next_text
+                or "班次" in next_text
+                or "考勤结果" in next_text
+                or ("打卡时间" in next_text and "打卡状态" in next_text)
+            ):
                 return True, idx
     return False, -1
 
@@ -227,13 +242,27 @@ def _build_two_row_field_cols(rows, header_row_idx: int) -> Dict[int, str]:
     primary = [_norm(c) for c in rows[header_row_idx]]
     secondary = [_norm(c) for c in rows[header_row_idx + 1]]
     field_cols: Dict[int, str] = {}
+    last_primary = ""
 
     for col_idx in range(max(len(primary), len(secondary))):
         p = primary[col_idx] if col_idx < len(primary) else ""
         s = secondary[col_idx] if col_idx < len(secondary) else ""
+        if p:
+            last_primary = p
 
         # 跳过分组标题列
         if p in _TWO_ROW_SKIP_HEADERS:
+            continue
+
+        # 合并单元格场景：一级表头「上班1/下班1」跨两列，二级表头为「打卡时间/打卡状态」
+        # （如 Sheet1：上班1 合并两列，下班1 合并两列，状态列的一级表头为空）
+        if s in ("打卡时间", "打卡状态") and last_primary in ("上班1", "下班1"):
+            field_cols[col_idx] = {
+                ("上班1", "打卡时间"): "check_in_time",
+                ("上班1", "打卡状态"): "check_in_status",
+                ("下班1", "打卡时间"): "check_out_time",
+                ("下班1", "打卡状态"): "check_out_status",
+            }[(last_primary, s)]
             continue
 
         # 优先用组合映射
@@ -458,6 +487,13 @@ def _parse_new_format(rows, header_row_idx: int) -> Tuple[List[Dict[str, Any]], 
             prev = bucket["attendance_status"]
             bucket["attendance_status"] = (prev + " / " + status).strip(" / ")
 
+        # 分别记录上班/下班状态（Sheet1 简化格式没有"考勤结果"列，状态在上下班打卡状态列）
+        for st_key in ("check_in_status", "check_out_status"):
+            st = raw.get(st_key, "") or ""
+            if st and st != "--" and st not in bucket["attendance_status"]:
+                prev = bucket["attendance_status"]
+                bucket["attendance_status"] = (prev + " / " + st).strip(" / ")
+
     return _finalize_buckets(buckets)
 
 
@@ -489,17 +525,61 @@ def _finalize_buckets(buckets: Dict) -> Tuple[List[Dict[str, Any]], List[str]]:
 def summarize_attendance_for_person(
     records: List[Dict[str, Any]], author_name: str
 ) -> str:
-    """将某员工本周考勤记录转为 AI 评分摘要文本"""
-    filtered = [r for r in records if r.get("author_name") == author_name]
+    """将某员工本周考勤记录转为 AI 评分摘要文本。
+
+    摘要只提供事实统计（工作日/休息日、迟到次数、缺卡次数等），
+    不代替 AI 计算分数；扣分规则由考勤评分提示词定义。
+    """
+    _weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+    filtered = sorted(
+        [r for r in records if r.get("author_name") == author_name],
+        key=lambda r: r.get("record_date") or date.min,
+    )
     if not filtered:
         return f"{author_name}: 本周无考勤数据"
 
-    lines = [f"员工 {author_name} 本周 {len(filtered)} 条打卡记录："]
+    weekdays = [r for r in filtered if (r.get("record_date") or date.min).weekday() < 5]
+    weekends = [r for r in filtered if (r.get("record_date") or date.min).weekday() >= 5]
+    late_count = 0
+    missing_count = 0
+    full_missing_days = 0
+    markers = []
+    for r in filtered:
+        d = r.get("record_date")
+        status = r.get("attendance_status") or ""
+        notes = r.get("notes") or ""
+        if d is not None and d.weekday() < 5:
+            if "迟到" in status:
+                late_count += 1
+            in_missing = not r.get("check_in_time")
+            out_missing = not r.get("check_out_time")
+            if in_missing and out_missing:
+                full_missing_days += 1
+                missing_count += 1  # 整天双缺只记 1 次缺卡
+            elif in_missing or out_missing:
+                missing_count += 1
+        for kw in ("请假", "出差", "审批"):
+            if kw in status or kw in notes:
+                if kw not in markers:
+                    markers.append(kw)
+
+    lines = [
+        f"员工 {author_name} 本周考勤记录：",
+        (
+            f"统计：工作日 {len(weekdays)} 天，休息日 {len(weekends)} 天；"
+            f"迟到 {late_count} 次，缺卡 {missing_count} 次，整天双缺 {full_missing_days} 天；"
+            f"异常/出差标记：{'、'.join(markers) if markers else '无'}"
+        ),
+    ]
     for r in filtered:
         parts = []
-        parts.append(f"日期 {r.get('record_date', '-')}")
-        parts.append(f"上班 {r.get('check_in_time', '未打卡')}@{r.get('check_in_location', '无地点')}")
-        parts.append(f"下班 {r.get('check_out_time', '未打卡')}@{r.get('check_out_location', '无地点')}")
+        d = r.get("record_date")
+        if d is not None:
+            parts.append(f"日期 {d.isoformat()}（{_weekday_names[d.weekday()]}）")
+        else:
+            parts.append("日期 -")
+        parts.append(f"上班 {(r.get('check_in_time') or '未打卡')}@{(r.get('check_in_location') or '无地点')}")
+        parts.append(f"下班 {(r.get('check_out_time') or '未打卡')}@{(r.get('check_out_location') or '无地点')}")
         dur = r.get("work_duration_hours")
         if dur is not None:
             parts.append(f"工时 {dur}h")

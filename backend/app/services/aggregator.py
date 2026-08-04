@@ -123,7 +123,11 @@ async def _get_report_score(db: AsyncSession, author_name: str,
 
 
 async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> Optional[float]:
-    """考勤分：无考勤记录 → None；有记录 → AI 评分（0-100），无 API key 时 fallback 到规则评分。"""
+    """考勤分：无考勤记录 → None；有记录 → AI 评分（0-100）。
+
+    注意：项目策略为"不做规则兜底"，AI 评分失败时记录错误日志并返回 None，
+    由上层/前端提示用户检查 AI 服务与提示词配置。
+    """
     try:
         q = select(AttendanceRecord).where(
             AttendanceRecord.author_name == author_name,
@@ -155,31 +159,14 @@ async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: 
             score = float(ai_result["score"])
             return max(0.0, min(100.0, score))
         except AIScoringError as e:
-            logger.warning(f"[聚合] 考勤 AI 评分失败 {author_name}，走规则 fallback：{e}")
-            return _rule_based_attendance_score(rec_dicts)
+            logger.error(
+                f"[聚合] 考勤 AI 评分失败 {author_name}（无规则兜底，"
+                f"请检查 AI 服务连接与考勤评分提示词）: {e}"
+            )
+            return None
     except Exception as e:
-        logger.warning(f"[聚合] 考勤分异常 {author_name}: {e}")
+        logger.error(f"[聚合] 考勤分获取异常 {author_name}（无规则兜底）: {e}")
         return None
-
-
-def _rule_based_attendance_score(rec_dicts: list) -> float:
-    """规则 fallback：基础分97。按迟到/早退扣2~5分，按加班加2~3分。"""
-    score = 97.0
-    for r in rec_dicts:
-        status = str(r.get("attendance_status") or "")
-        if "迟到" in status:
-            score -= 2.0
-        if "早退" in status:
-            score -= 2.0
-        if "缺勤" in status or "旷工" in status:
-            score -= 8.0
-        # 按工时估算加班：>9小时视为加班
-        wh = r.get("work_duration_hours")
-        if wh and wh > 9:
-            score += 2.0
-            if wh > 10:
-                score += 1.0
-    return max(0.0, min(100.0, score))
 
 
 async def _get_chat_score(db: AsyncSession, author_name: str, week_start: date, week_end: date, prompt: str) -> Optional[float]:
