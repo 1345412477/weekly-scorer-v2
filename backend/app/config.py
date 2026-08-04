@@ -3,7 +3,7 @@ import os
 import secrets
 import warnings
 import logging
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # 内部标记值：用于检测用户是否尚未在 .env 中覆盖关键凭据
 _SENTINEL_AUTH_SECRET = "__UNSET_WEEKLY_SCORER_AUTH_SECRET__"
@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     AI_CONNECT_TIMEOUT: int = 10
 
     APP_TITLE: str = "智友辰周任务汇总系统"
-    APP_VERSION: str = "2.2.0"
+    APP_VERSION: str = "2.3.0"
     TEMPLATE_DIR: str = "./templates"
 
     # ⚠ 生产环境必须在 .env 中覆盖以下三项
@@ -48,10 +48,11 @@ class Settings(BaseSettings):
     ADMIN_PASSWORD: str = _SENTINEL_ADMIN_PASSWORD
     CORS_ALLOW_ORIGINS: str = "http://localhost:3001,http://127.0.0.1:3001,http://localhost:5173,http://127.0.0.1:5173"
 
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"  # 忽略 .env 中未定义的字段，方便自由注释/启用配置
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",  # 忽略 .env 中未定义的字段，方便自由注释/启用配置
+    )
 
 
 _settings = None

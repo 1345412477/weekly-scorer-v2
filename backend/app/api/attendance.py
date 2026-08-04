@@ -136,7 +136,17 @@ async def upload_attendance(
     try:
         records, employees = parse_attendance_excel(saved_path)
     except Exception as e:
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail=f"解析 Excel 失败: {e}")
+
+    # 临时文件解析完成后不再需要（数据库仅保存原始文件名）
+    try:
+        os.remove(saved_path)
+    except OSError:
+        pass
 
     if not records:
         raise HTTPException(status_code=400, detail="未解析到任何考勤记录，请检查表头格式")

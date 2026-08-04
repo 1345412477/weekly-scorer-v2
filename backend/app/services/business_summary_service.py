@@ -226,7 +226,7 @@ async def call_ai_summary(
         )
         raw_text = _safe_get_content(response)
         log_info(f"[业务盘] AI 原始响应 (前500字符): {raw_text[:500]}")
-        log_info(f"[业务盘] AI 原始响应 (完整): {raw_text}")
+        log_info(f"[业务盘] AI 原始响应 (前2000字符): {raw_text[:2000]}")
 
         # 解析 JSON 响应
         result = parse_ai_summary(raw_text)

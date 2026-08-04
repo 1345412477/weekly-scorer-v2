@@ -42,6 +42,23 @@ async def setup_database():
         await conn.run_sync(Base.metadata.drop_all)
 
 
+@pytest_asyncio.fixture(autouse=True)
+async def disable_background_tasks(monkeypatch):
+    """屏蔽上传触发的后台评分/OCR 任务。
+
+    后台任务使用生产数据库连接（app.database.async_session），在测试环境中
+    既会污染真实数据库，也会真实调用 AI API；测试一律改为同步手动触发。
+    """
+    monkeypatch.setattr(
+        "app.core.task_queue.submit_report_scoring",
+        lambda report_id: f"test-score-{report_id}",
+    )
+    monkeypatch.setattr(
+        "app.core.task_queue.submit_summary_ocr",
+        lambda summary_id: f"test-ocr-{summary_id}",
+    )
+
+
 @pytest_asyncio.fixture
 async def db():
     async with TestSessionLocal() as session:
@@ -114,21 +131,45 @@ async def seed_scoring_config(db):
 
 @pytest_asyncio.fixture
 async def seed_ai_model(db):
-    """Seed 一个可用的 AI 模型配置（qwen3.7-plus）"""
+    """Seed 一个 AI 模型配置（占位 Key，不真实调用外部 API）"""
     from app.models.models import AIModel
     model = AIModel(
         id="test-ai-model",
         name="qwen3.7-plus",
         provider="openai",
         model_id="qwen3.7-plus",
-        api_key="sk-ws-H.RXLLPYD.EZ2r.MEQCIFAIRQ9LLE2dTV9n2FTjqAevbyNeCO1akYmm2bIF6CHJAiA1SdMtXf0BfYx5lexqqyR7_InCpdyQXT1nXmx1kkm9Nw",
-        base_url="https://llm-5e0l0navgirl2i2v.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        api_key="test-api-key-placeholder",
+        base_url="https://example.invalid/v1",
         is_vision=True,
         is_active=True,
     )
     db.add(model)
     await db.commit()
     return model
+
+
+@pytest_asyncio.fixture
+async def mock_ai_score(monkeypatch):
+    """将 AI 评分替换为确定性结果，避免测试依赖真实 AI API"""
+    async def fake_score_report(
+        content, author_name, department, prompt_template="", db=None
+    ):
+        return {
+            "total_score": 34.0,
+            "grade": "良",
+            "comment": "测试评语",
+            "suggestion": "测试建议",
+            "dimension_scores": [
+                {"name": "工作反馈深度", "score": 10, "max": 12, "comment": "深度足够"},
+                {"name": "进度节点明确", "score": 8, "max": 10, "comment": "节点清晰"},
+                {"name": "计划可行性", "score": 7, "max": 8, "comment": "计划可执行"},
+                {"name": "工作连续性", "score": 9, "max": 10, "comment": "有闭环"},
+            ],
+            "raw": "{}",
+        }
+
+    monkeypatch.setattr("app.services.scoring.score_report", fake_score_report)
+    return fake_score_report
 
 
 def get_current_week():

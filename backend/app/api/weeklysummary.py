@@ -66,13 +66,25 @@ async def upload_summary(
     try:
         parsed = await parse_summary_image(image_bytes, filename, db=db)
     except OCRParseError as e:
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
         logger.warning(f"[一周小结] OCR 解析异常: {e}")
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail=f"图片解析失败: {e}")
 
     resolved_name = (parsed.get("author_name") or "").strip()
     if not resolved_name:
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail="未识别到员工姓名，请确认图片内容清晰完整")
 
     # 匹配人员库（仅用于部门填充；匹配不到不拦截，但会在聚合时按姓名对齐）
@@ -162,8 +174,16 @@ async def upload_summary(
         )
         db.add(summary)
 
-    await db.commit()
-    await db.refresh(summary)
+    try:
+        await db.commit()
+        await db.refresh(summary)
+    except Exception as e:
+        logger.warning(f"[一周小结] 保存记录失败: {e}")
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
+        raise HTTPException(status_code=400, detail=f"保存一周小结失败: {e}")
 
     # 触发自动聚合（参与沟通分口径）
     aggregate = None

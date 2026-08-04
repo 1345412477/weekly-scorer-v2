@@ -130,7 +130,17 @@ async def upload_chat(
     try:
         records, employees = parse_chat_excel(saved_path)
     except Exception as e:
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
         raise HTTPException(status_code=400, detail=f"解析 Excel 失败: {e}")
+
+    # 临时文件解析完成后不再需要（数据库仅保存原始文件名）
+    try:
+        os.remove(saved_path)
+    except OSError:
+        pass
 
     if not records:
         raise HTTPException(status_code=400, detail="未解析到任何聊天记录，请检查表头格式")
@@ -165,6 +175,11 @@ async def upload_chat(
         except Exception as e:
             logger.warning(f"[chat replace] 删除旧记录失败: {e}")
 
+    # 预加载人员库，避免循环内逐人查库（N+1）
+    all_persons_result = await db.execute(select(Person))
+    all_persons = all_persons_result.scalars().all()
+    person_by_exact = {p.name: p for p in all_persons}
+
     inserted = 0
     inserted_matched = 0
     inserted_unmatched = 0
@@ -173,12 +188,7 @@ async def upload_chat(
 
     for r in records:
         author_name = r.get("author_name", "")
-        person = None
-        try:
-            res = await db.execute(select(Person).where(Person.name == author_name).limit(1))
-            person = res.scalar_one_or_none()
-        except Exception as e:
-            logger.warning(f"匹配人员失败: {e}")
+        person = person_by_exact.get(author_name)
 
         if person:
             matched_names.add(author_name)

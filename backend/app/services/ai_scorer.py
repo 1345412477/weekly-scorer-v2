@@ -203,7 +203,7 @@ async def _call_score_report_api(
     system_prompt: str,
     user_prompt: str,
     db=None,
-) -> dict:
+) -> tuple[dict, str]:
     """实际调用 AI API 进行评分（内部函数，供重试包装器使用）"""
     model_id, db_model = await _get_scoring_config(db)
     c = get_client(

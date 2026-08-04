@@ -1,4 +1,4 @@
-"""文档解析服务 - 支持 Excel / Word / PDF 周报解析"""
+"""文档解析服务 - 支持 Excel（.xlsx）周报解析"""
 import os
 import re
 import logging

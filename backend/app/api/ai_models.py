@@ -193,6 +193,7 @@ async def delete_model(
 
     await write_operation_log(db, user, "delete", "ai_model", model_id, request, {"name": model_name})
     await db.commit()
+    _clear_db_model_cache()
 
     return {"message": "删除成功"}
 

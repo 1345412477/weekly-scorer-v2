@@ -7,7 +7,7 @@ from typing import Optional, Dict, Any, List
 from datetime import date, datetime, timedelta
 from app.utils.time_utils import bj_today
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Body
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -177,8 +177,8 @@ async def delete_aggregate(
 
 @router.post("/batch-delete")
 async def batch_delete_aggregates(
-    payload: Dict[str, Any],
     request: Request,
+    payload: Any = Body(...),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
@@ -186,7 +186,7 @@ async def batch_delete_aggregates(
     if isinstance(payload, list):
         ids = payload
     else:
-        ids = payload.get("aggregate_ids") or payload.get("ids") or []
+        ids = (payload or {}).get("aggregate_ids") or (payload or {}).get("ids") or []
     if not isinstance(ids, list) or len(ids) == 0:
         raise HTTPException(status_code=400, detail="请选择要删除的周评记录")
 
@@ -279,8 +279,8 @@ async def download_report_by_aggregate(
 
 @router.post("/export")
 async def export_aggregates(
-    payload: Dict[str, Any],
     request: Request,
+    payload: Any = Body(...),
     db: AsyncSession = Depends(get_db),
     admin=Depends(require_admin),
 ):
@@ -292,7 +292,7 @@ async def export_aggregates(
     if isinstance(payload, list):
         aggregate_ids = payload
     else:
-        aggregate_ids = payload.get("aggregate_ids") or payload.get("ids") or []
+        aggregate_ids = (payload or {}).get("aggregate_ids") or (payload or {}).get("ids") or []
 
     if not isinstance(aggregate_ids, list) or len(aggregate_ids) == 0:
         raise HTTPException(status_code=400, detail="请选择要导出的周评记录")

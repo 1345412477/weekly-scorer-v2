@@ -24,7 +24,7 @@ from tests.conftest import make_excel_file, make_docx_file, make_empty_file, get
 class TestFileFormatValidation:
     """文件格式验证测试"""
 
-    async def test_upload_xlsx_success(self, client, seed_scoring_config, seed_ai_model):
+    async def test_upload_xlsx_success(self, client, seed_scoring_config, seed_ai_model, seed_persons):
         """上传 .xlsx 文件成功"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -35,6 +35,7 @@ class TestFileFormatValidation:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("test_report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
@@ -161,8 +162,27 @@ class TestPersonDepartmentAutoMatch:
         finally:
             os.unlink(f.name)
 
-    async def test_upload_without_person_uses_form_data(self, client, admin_headers, seed_scoring_config):
-        """不选择人员时，使用表单提交的 author_name 和 department"""
+    async def test_upload_filename_auto_detect_success(self, client, admin_headers, seed_persons, seed_scoring_config):
+        """文件名匹配人员库时，无需传 person_id 也能自动识别"""
+        with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
+            make_excel_file(f.name)
+
+        try:
+            with open(f.name, "rb") as fh:
+                resp = await client.post(
+                    "/api/v1/reports/upload",
+                    files={"file": ("张三-2026年7月第1周周报20260706.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["author_name"] == "张三"
+            assert data["department"] == "技术部"
+            assert data["auto_detected"] is True
+        finally:
+            os.unlink(f.name)
+
+    async def test_upload_without_person_rejected(self, client, admin_headers, seed_scoring_config, seed_persons):
+        """不选择人员且文件名无法匹配人员库时，按规范拒绝上传"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
 
@@ -173,17 +193,13 @@ class TestPersonDepartmentAutoMatch:
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                     data={"author_name": "测试用户", "department": "测试部"},
                 )
-            assert resp.status_code == 200
-
-            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
-            detail = detail_resp.json()
-            assert detail["author_name"] == "测试用户"
-            assert detail["department"] == "测试部"
+            assert resp.status_code == 400
+            assert "系统中无员工信息" in resp.json()["detail"]
         finally:
             os.unlink(f.name)
 
-    async def test_upload_default_author_is_anonymous(self, client, admin_headers, seed_scoring_config):
-        """不传任何人员信息时，默认为匿名"""
+    async def test_upload_without_person_rejected_anonymous(self, client, admin_headers, seed_scoring_config, seed_persons):
+        """不传任何人员信息且文件名无法匹配人员库时，按规范拒绝上传（不兜底匿名）"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
 
@@ -193,10 +209,8 @@ class TestPersonDepartmentAutoMatch:
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                 )
-            assert resp.status_code == 200
-
-            detail_resp = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
-            assert detail_resp.json()["author_name"] == "匿名"
+            assert resp.status_code == 400
+            assert "系统中无员工信息" in resp.json()["detail"]
         finally:
             os.unlink(f.name)
 
@@ -205,7 +219,7 @@ class TestPersonDepartmentAutoMatch:
 class TestTimeClassification:
     """周报时间识别与分类测试"""
 
-    async def test_current_week_report_type_normal(self, client, seed_scoring_config):
+    async def test_current_week_report_type_normal(self, client, seed_scoring_config, seed_persons):
         """本周周报识别为 normal"""
         monday, sunday = get_current_week()
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
@@ -219,6 +233,7 @@ class TestTimeClassification:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
@@ -229,7 +244,7 @@ class TestTimeClassification:
         finally:
             os.unlink(f.name)
 
-    async def test_last_week_report_type_catch_up(self, client, seed_scoring_config, seed_ai_model):
+    async def test_last_week_report_type_catch_up(self, client, seed_scoring_config, seed_ai_model, seed_persons):
         """上周周报识别为 catch_up"""
         monday, sunday = get_current_week()
         last_monday = monday - timedelta(days=7)
@@ -247,6 +262,7 @@ class TestTimeClassification:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
@@ -256,7 +272,7 @@ class TestTimeClassification:
         finally:
             os.unlink(f.name)
 
-    async def test_3_weeks_ago_report_type_catch_up(self, client, seed_scoring_config):
+    async def test_3_weeks_ago_report_type_catch_up(self, client, seed_scoring_config, seed_persons):
         """3周前的周报识别为 catch_up，week_diff=3"""
         monday, sunday = get_current_week()
         target_monday = monday - timedelta(days=21)
@@ -274,6 +290,7 @@ class TestTimeClassification:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
@@ -282,7 +299,7 @@ class TestTimeClassification:
         finally:
             os.unlink(f.name)
 
-    async def test_future_week_report_rejected(self, client, seed_scoring_config):
+    async def test_future_week_report_rejected(self, client, seed_scoring_config, seed_persons):
         """未来周报被拒绝提交"""
         monday, sunday = get_current_week()
         future_monday = monday + timedelta(days=14)
@@ -300,14 +317,15 @@ class TestTimeClassification:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 400
             assert "未来" in resp.json()["detail"]
         finally:
             os.unlink(f.name)
 
-    async def test_no_date_report_needs_confirmation(self, client, seed_scoring_config):
-        """无法识别时间的周报标记 needs_confirmation"""
+    async def test_no_date_report_falls_back_to_current_week(self, client, seed_scoring_config, seed_persons):
+        """无法识别时间的周报兜底为本周，并重新分类为 normal"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(
                 f.name,
@@ -320,15 +338,18 @@ class TestTimeClassification:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
-            assert data["needs_confirmation"] is True
-            assert data["report_type"] in ["unknown", "normal"]
+            assert data["needs_confirmation"] is False
+            assert data["report_type"] == "normal"
+            monday, _ = get_current_week()
+            assert data["week_start"] == monday.isoformat()
         finally:
             os.unlink(f.name)
 
-    async def test_confirmed_week_start_end_override(self, client, seed_scoring_config):
+    async def test_confirmed_week_start_end_override(self, client, seed_scoring_config, seed_persons):
         """用户手动确认时间后，覆盖文件中的日期"""
         monday, sunday = get_current_week()
         last_monday = monday - timedelta(days=7)
@@ -343,6 +364,7 @@ class TestTimeClassification:
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
                     data={
+                        "person_id": "person-1",
                         "confirmed_week_start": last_monday.isoformat(),
                         "confirmed_week_end": last_sunday.isoformat(),
                     },
@@ -375,7 +397,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_special_characters_in_filename(self, client, admin_headers, seed_scoring_config):
+    async def test_special_characters_in_filename(self, client, admin_headers, seed_scoring_config, seed_persons):
         """文件名包含特殊字符"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -385,6 +407,7 @@ class TestEdgeCases:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("周报（2026）-张三@技术部.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             detail = await client.get(f"/api/v1/reports/{resp.json()['report_id']}", headers=admin_headers)
@@ -392,7 +415,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_chinese_characters_in_content(self, client, seed_scoring_config, seed_ai_model):
+    async def test_chinese_characters_in_content(self, client, seed_scoring_config, seed_ai_model, seed_persons):
         """周报内容包含中文特殊字符"""
         monday, sunday = get_current_week()
         last_monday = monday - timedelta(days=7)
@@ -415,6 +438,7 @@ class TestEdgeCases:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
@@ -422,7 +446,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_content_preview_truncation(self, client, seed_scoring_config):
+    async def test_content_preview_truncation(self, client, seed_scoring_config, seed_persons):
         """长内容返回截断的预览"""
         long_rows = [
             [i, f"项目{i}", f"这是第{i}个项目的工作内容，包含大量详细描述" * 10, "张三", f"完成{100-i}%"]
@@ -437,6 +461,7 @@ class TestEdgeCases:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
@@ -444,7 +469,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_upload_report_persists_in_database(self, client, admin_headers, seed_scoring_config, seed_ai_model):
+    async def test_upload_report_persists_in_database(self, client, admin_headers, seed_scoring_config, seed_ai_model, seed_persons):
         """上传的周报正确持久化到数据库"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -454,7 +479,7 @@ class TestEdgeCases:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-                    data={"author_name": "持久化测试", "department": "测试部"},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             report_id = resp.json()["report_id"]
@@ -463,8 +488,8 @@ class TestEdgeCases:
             assert detail_resp.status_code == 200
             detail = detail_resp.json()
             assert detail["id"] == report_id
-            assert detail["author_name"] == "持久化测试"
-            assert detail["department"] == "测试部"
+            assert detail["author_name"] == "张三"
+            assert detail["department"] == "技术部"
             assert detail["status"] == "submitted"  # 异步评分，初始状态为 submitted
             assert detail["content"]
             assert detail["submit_time"]
@@ -476,7 +501,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_upload_file_saved_to_disk(self, client, admin_headers, seed_scoring_config):
+    async def test_upload_file_saved_to_disk(self, client, admin_headers, seed_scoring_config, seed_persons):
         """上传的文件正确保存到磁盘"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -486,6 +511,7 @@ class TestEdgeCases:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             report_id = resp.json()["report_id"]
@@ -502,7 +528,7 @@ class TestEdgeCases:
         finally:
             os.unlink(f.name)
 
-    async def test_original_filename_preserved(self, client, admin_headers, seed_scoring_config):
+    async def test_original_filename_preserved(self, client, admin_headers, seed_scoring_config, seed_persons):
         """原始文件名被正确保存"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -513,6 +539,7 @@ class TestEdgeCases:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": (original_name, fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
 
@@ -526,7 +553,7 @@ class TestEdgeCases:
 class TestAIScoringIntegration:
     """AI 评分集成测试"""
 
-    async def test_upload_triggers_scoring(self, client, seed_scoring_config, seed_ai_model):
+    async def test_upload_triggers_scoring(self, client, seed_scoring_config, seed_ai_model, seed_persons):
         """上传后自动触发评分"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -536,6 +563,7 @@ class TestAIScoringIntegration:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             assert resp.status_code == 200
             data = resp.json()
@@ -544,7 +572,7 @@ class TestAIScoringIntegration:
         finally:
             os.unlink(f.name)
 
-    async def test_scoring_dimensions_in_detail(self, client, admin_headers, seed_scoring_config, seed_ai_model):
+    async def test_scoring_dimensions_in_detail(self, client, admin_headers, seed_scoring_config, seed_ai_model, seed_persons, mock_ai_score):
         """评分详情包含各维度分数（异步评分后查询）"""
         # 上传后手动触发评分（因为后台异步任务使用真实DB，测试中直接调用）
         from app.services.scoring import trigger_scoring
@@ -558,6 +586,7 @@ class TestAIScoringIntegration:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             report_id = resp.json()["report_id"]
 
@@ -573,7 +602,7 @@ class TestAIScoringIntegration:
         finally:
             os.unlink(f.name)
 
-    async def test_report_status_after_upload(self, client, admin_headers, seed_scoring_config, seed_ai_model):
+    async def test_report_status_after_upload(self, client, admin_headers, seed_scoring_config, seed_ai_model, seed_persons, mock_ai_score):
         """上传并评分后状态为 scored"""
         from app.services.scoring import trigger_scoring
         from tests.conftest import TestSessionLocal
@@ -586,6 +615,7 @@ class TestAIScoringIntegration:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
             report_id = resp.json()["report_id"]
 
@@ -603,7 +633,7 @@ class TestAIScoringIntegration:
 class TestListAndDetail:
     """列表和详情测试"""
 
-    async def test_list_reports_after_upload(self, client, admin_headers, seed_scoring_config):
+    async def test_list_reports_after_upload(self, client, admin_headers, seed_scoring_config, seed_persons):
         """上传后能在列表中看到"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -613,6 +643,7 @@ class TestListAndDetail:
                 await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
+                    data={"person_id": "person-1"},
                 )
 
             list_resp = await client.get("/api/v1/reports", headers=admin_headers)
@@ -624,7 +655,7 @@ class TestListAndDetail:
         finally:
             os.unlink(f.name)
 
-    async def test_report_detail_has_all_fields(self, client, admin_headers, seed_scoring_config):
+    async def test_report_detail_has_all_fields(self, client, admin_headers, seed_scoring_config, seed_persons):
         """详情包含所有必要字段"""
         with tempfile.NamedTemporaryFile(suffix=".xlsx", delete=False) as f:
             make_excel_file(f.name)
@@ -634,7 +665,7 @@ class TestListAndDetail:
                 resp = await client.post(
                     "/api/v1/reports/upload",
                     files={"file": ("report.xlsx", fh, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")},
-                    data={"author_name": "详情测试", "department": "测试部"},
+                    data={"person_id": "person-1"},
                 )
             report_id = resp.json()["report_id"]
 
@@ -698,3 +729,81 @@ class TestRBACPermissions:
         submit_resp = await client.post(f"/api/v1/reports/{report_id}/submit")
         assert submit_resp.status_code == 200
         assert submit_resp.json()["report_id"] == report_id
+
+
+@pytest.mark.asyncio
+class TestBatchDeleteSafety:
+    """批量删除周报时，不得误删其他员工/其他周的周评记录"""
+
+    async def test_batch_delete_only_removes_matching_aggregates(
+        self, client, admin_headers, db, seed_persons
+    ):
+        from datetime import date
+        from sqlalchemy import select
+        from app.models.models import WeeklyReport, WeeklyAggregate
+
+        r1 = WeeklyReport(
+            id="r1",
+            author_name="张三",
+            department="技术部",
+            person_id="person-1",
+            department_id="dept-tech",
+            week_start=date(2026, 7, 6),
+            week_end=date(2026, 7, 12),
+            content="本周工作内容",
+            status="scored",
+        )
+        r2 = WeeklyReport(
+            id="r2",
+            author_name="李四",
+            department="产品部",
+            person_id="person-2",
+            department_id="dept-product",
+            week_start=date(2026, 7, 13),
+            week_end=date(2026, 7, 19),
+            content="本周工作内容",
+            status="scored",
+        )
+        db.add_all([r1, r2])
+        await db.commit()
+
+        agg1 = WeeklyAggregate(
+            id="agg1",
+            person_id="person-1",
+            author_name="张三",
+            department="技术部",
+            department_id="dept-tech",
+            week_start=date(2026, 7, 6),
+            week_end=date(2026, 7, 12),
+            composite_score=80,
+        )
+        agg2 = WeeklyAggregate(
+            id="agg2",
+            person_id="person-2",
+            author_name="李四",
+            department="产品部",
+            department_id="dept-product",
+            week_start=date(2026, 7, 13),
+            week_end=date(2026, 7, 19),
+            composite_score=90,
+        )
+        db.add_all([agg1, agg2])
+        await db.commit()
+
+        resp = await client.post(
+            "/api/v1/reports/batch-delete",
+            json=["r1"],
+            headers=admin_headers,
+        )
+        assert resp.status_code == 200
+
+        deleted = (
+            await db.execute(select(WeeklyAggregate).where(WeeklyAggregate.id == "agg1"))
+        ).scalar_one_or_none()
+        assert deleted is None
+
+        # 关键断言：李四第 2 周的周评不能被误删
+        remaining = (
+            await db.execute(select(WeeklyAggregate).where(WeeklyAggregate.id == "agg2"))
+        ).scalar_one_or_none()
+        assert remaining is not None

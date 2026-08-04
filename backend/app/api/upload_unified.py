@@ -45,6 +45,16 @@ ALLOWED_IMAGE_EXT = {".png", ".jpg", ".jpeg"}
 ALLOWED_REPORT_EXT = {".xlsx"}
 
 
+def _cleanup_temp_files(*paths):
+    """删除本次请求产生的临时文件（仅在上传未成功提交时调用）"""
+    for p in paths:
+        if p:
+            try:
+                os.remove(p)
+            except OSError:
+                pass
+
+
 @router.post("/unified")
 async def upload_unified(
     report: UploadFile = File(..., description="周报文件，仅支持 .xlsx"),
@@ -132,9 +142,11 @@ async def upload_unified(
 
         report_parsed = {"raw_content": raw_content}
     except HTTPException:
+        _cleanup_temp_files(report_path, summary_path)
         raise
     except Exception as e:
         logger.warning(f"[unified] 周报解析失败: {e}")
+        _cleanup_temp_files(report_path, summary_path)
         raise HTTPException(status_code=400, detail=f"周报解析失败: {e}")
 
     # 4. 从周报文件名识别提交人姓名与部门（与 /reports/upload 保持一致）
@@ -144,14 +156,17 @@ async def upload_unified(
         )
     except Exception as e:
         logger.warning(f"[unified] 识别提交人失败: {e}")
+        _cleanup_temp_files(report_path, summary_path)
         raise HTTPException(status_code=400, detail=f"识别提交人失败: {e}")
 
     if not detected:
+        _cleanup_temp_files(report_path, summary_path)
         raise HTTPException(
             status_code=400,
             detail=f"系统中无员工信息：{detected_name or '（文件名需为「姓名-YYYY年MM月第N周周报YYYYMMDD.xlsx」）'}{dup_hint}",
         )
     if not detected_dept:
+        _cleanup_temp_files(report_path, summary_path)
         raise HTTPException(
             status_code=400,
             detail=f"系统中无员工信息：{detected_name}（未配置部门）{dup_hint}",
@@ -170,12 +185,7 @@ async def upload_unified(
     existing_r = await db.execute(existing_q)
     if existing_r.scalar_one_or_none():
         # 清理已保存的文件（不会写入 DB 记录）
-        try:
-            os.remove(report_path)
-            if summary_path:
-                os.remove(summary_path)
-        except OSError:
-            pass
+        _cleanup_temp_files(report_path, summary_path)
         raise HTTPException(
             status_code=409,
             detail={
@@ -195,12 +205,7 @@ async def upload_unified(
         existing_sum_r = await db.execute(existing_sum_q)
         if existing_sum_r.scalar_one_or_none() and not is_overwrite:
             # 清理已保存的文件
-            try:
-                os.remove(report_path)
-                if summary_path:
-                    os.remove(summary_path)
-            except OSError:
-                pass
+            _cleanup_temp_files(report_path, summary_path)
             raise HTTPException(
                 status_code=409,
                 detail={
@@ -229,15 +234,6 @@ async def upload_unified(
         submit_time=bj_now(),
     )
     db.add(report_record)
-    try:
-        await db.commit()
-        await db.refresh(report_record)
-    except IntegrityError:
-        logger.warning(f"[unified] 重复提交周报: author={author_name}, week={week_start}")
-        raise HTTPException(status_code=409, detail=f"该员工本周周报已存在，请勿重复提交")
-    except Exception as e:
-        logger.warning(f"[unified] 写入周报记录失败: {e}")
-        raise HTTPException(status_code=400, detail=f"写入周报记录失败: {e}")
 
     # 6. 写入一周小结记录（可选，有图片时才写入）
     # 注意：一周小结重复检查已在步骤4c完成，这里只需处理新增或更新
@@ -270,12 +266,22 @@ async def upload_unified(
             )
             db.add(summary_record)
 
-        try:
-            await db.commit()
+    # 周报与一周小结在同一个事务中提交，保证原子性
+    try:
+        await db.commit()
+        await db.refresh(report_record)
+        if summary_record:
             await db.refresh(summary_record)
-        except Exception as e:
-            logger.warning(f"[unified] 写入一周小结记录失败: {e}")
-            raise HTTPException(status_code=400, detail=f"写入一周小结记录失败: {e}")
+    except IntegrityError:
+        await db.rollback()
+        _cleanup_temp_files(report_path, summary_path)
+        logger.warning(f"[unified] 重复提交周报: author={author_name}, week={week_start}")
+        raise HTTPException(status_code=409, detail=f"该员工本周周报已存在，请勿重复提交")
+    except Exception as e:
+        await db.rollback()
+        _cleanup_temp_files(report_path, summary_path)
+        logger.warning(f"[unified] 写入记录失败: {e}")
+        raise HTTPException(status_code=400, detail=f"写入记录失败: {e}")
 
     # 7. 立即在后台触发异步周报 AI 评分 + 一周小结 OCR（不阻塞本次请求）
     from app.core.task_queue import submit_report_scoring, submit_summary_ocr

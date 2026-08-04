@@ -35,12 +35,6 @@ def _get_week_range_for_date(target_date: date):
     return start, end
 
 
-def _get_active_employees_names(db: AsyncSession) -> List[str]:
-    """返回启用状态的员工姓名列表"""
-    # 内部返回一个列表，由调用方进行异步 await
-    return []  # 占位，具体查询在调用方用 await db.execute
-
-
 # ============================================================
 # 配置与人员
 # ============================================================

@@ -5,11 +5,11 @@ import uuid
 import shutil
 import logging
 from datetime import date, timedelta
-from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request
+from typing import Optional, Any
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File, Form, Request, Body
 from fastapi.responses import FileResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func, desc, delete
+from sqlalchemy import select, func, desc, delete, tuple_
 
 from app.database import get_db
 from app.models.models import WeeklyReport, ReportScore, Person, AdminUser, WeeklyAggregate, WeeklySummary
@@ -53,25 +53,21 @@ async def _upload_multi_week_report(
             person_id = detected_person_id
             department_id = detected_dept_id
         else:
+            # 严格策略：未提供 person_id 时，必须能从文件名识别到人员库中的员工
+            os.remove(file_path)
             if detected_name and not detected_dept:
-                os.remove(file_path)
                 raise HTTPException(
                     status_code=400,
                     detail=f"系统中无员工信息：{detected_name}（未配置部门）{dup_hint}"
                 )
-            if not (author_name and department):
-                if author_name and not department:
-                    os.remove(file_path)
-                    raise HTTPException(
-                        status_code=400,
-                        detail="提交人已提供但部门信息缺失，无法上传"
-                    )
-                author_name = author_name or "匿名"
-                department = department or "未填写部门"
-    
-    department = department or "未填写部门"
+            raise HTTPException(
+                status_code=400,
+                detail=f"系统中无员工信息：{detected_name or '（文件名不符合规范，请按「姓名-YYYY年MM月第N周周报YYYYMMDD.xlsx」命名）'}{dup_hint}",
+            )
+
+    department = department or ""
     department_id = department_id or None
-    author_name = author_name or "匿名"
+    author_name = author_name or ""
     
     # 为每周创建记录
     for week_data in multi_week_data:
@@ -300,12 +296,13 @@ async def upload_report(
     if person_id:
         person_r = await db.execute(select(Person).where(Person.id == person_id))
         person = person_r.scalar_one_or_none()
-        if person:
-            author_name = person.name
-            if not department and person.department_name:
-                department = person.department_name
-            if not department_id and person.department_id:
-                department_id = person.department_id
+        if not person:
+            raise HTTPException(status_code=400, detail="指定的人员不存在")
+        author_name = person.name
+        if not department and person.department_name:
+            department = person.department_name
+        if not department_id and person.department_id:
+            department_id = person.department_id
 
     file_id = str(uuid.uuid4())
     saved_filename = f"{file_id}{file_ext}"
@@ -364,6 +361,8 @@ async def upload_report(
                 monday, sunday = get_current_week()
                 week_start = monday
                 week_end = sunday
+                # 兜底到本周后重新分类，避免 report_type/needs_confirmation 状态错误
+                classification = classify_report_week(week_start, week_end)
 
             # 自动识别提交人并匹配部门（仅当用户未显式指定 person_id 时生效）
             auto_detected = False
@@ -378,29 +377,22 @@ async def upload_report(
                     department_id = detected_dept_id
                     auto_detected = True
                 else:
-                    # 命中人员但未配置部门 → 拒绝
+                    # 严格策略：未提供 person_id 时，必须能从文件名识别到人员库中的员工
+                    os.remove(file_path)
                     if detected_name and not detected_dept:
-                        os.remove(file_path)
                         raise HTTPException(
                             status_code=400,
                             detail=f"系统中无员工信息：{detected_name}（未配置部门）{dup_hint}"
                         )
-                    # 否则：调用方显式提供 author_name + department 则使用之；若均未提供，使用"匿名"兜底
-                    if not (author_name and department):
-                        if author_name and not department:
-                            os.remove(file_path)
-                            raise HTTPException(
-                                status_code=400,
-                                detail="提交人已提供但部门信息缺失，无法上传"
-                            )
-                        # 两者均未提供 → 以"匿名/未填写部门"兜底
-                        author_name = author_name or "匿名"
-                        department = department or "未填写部门"
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"系统中无员工信息：{detected_name or '（文件名不符合规范，请按「姓名-YYYY年MM月第N周周报YYYYMMDD.xlsx」命名）'}{dup_hint}",
+                    )
 
             # 最后做一次安全默认值
-            department = department or "未填写部门"
+            department = department or ""
             department_id = department_id or None
-            author_name = author_name or "匿名"
+            author_name = author_name or ""
 
             # === 同周重复提交检查：同一用户同一周只能有一条周报记录 ===
             dup_q = select(WeeklyReport).where(
@@ -608,8 +600,8 @@ async def list_reports(
 
 @router.post("/export")
 async def export_reports(
-    payload: dict,
     request: Request,
+    payload: Any = Body(...),
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_admin),
 ):
@@ -622,7 +614,7 @@ async def export_reports(
     if isinstance(payload, list):
         report_ids = payload
     else:
-        report_ids = payload.get("report_ids") or payload.get("ids") or []
+        report_ids = (payload or {}).get("report_ids") or (payload or {}).get("ids") or []
     if not isinstance(report_ids, list):
         raise HTTPException(status_code=400, detail="参数 report_ids 必须是数组")
 
@@ -679,8 +671,8 @@ async def export_reports(
 
 @router.post("/batch-delete")
 async def batch_delete_reports(
-    payload: dict,
     request: Request,
+    payload: Any = Body(...),
     db: AsyncSession = Depends(get_db),
     user: AdminUser = Depends(require_admin),
 ):
@@ -688,7 +680,7 @@ async def batch_delete_reports(
     if isinstance(payload, list):
         report_ids = payload
     else:
-        report_ids = payload.get("report_ids") or payload.get("ids") or []
+        report_ids = (payload or {}).get("report_ids") or (payload or {}).get("ids") or []
     if not isinstance(report_ids, list) or len(report_ids) == 0:
         raise HTTPException(status_code=400, detail="请选择要删除的周报")
     result = await db.execute(
@@ -709,12 +701,14 @@ async def batch_delete_reports(
     # 通过 report_score_id 匹配（直接关联） 或 author_name+week_start 匹配（间接关联）
     deleted_aggregates = 0
     if score_ids or reports:
+        author_week_pairs = [
+            (r.author_name, r.week_start)
+            for r in reports
+            if r.author_name and r.week_start
+        ]
         agg_q = select(WeeklyAggregate).where(
             (WeeklyAggregate.report_score_id.in_(score_ids))
-            | (
-                (WeeklyAggregate.author_name.in_([r.author_name for r in reports]))
-                & (WeeklyAggregate.week_start.in_([r.week_start for r in reports]))
-            )
+            | (tuple_(WeeklyAggregate.author_name, WeeklyAggregate.week_start).in_(author_week_pairs))
         )
         agg_r = await db.execute(agg_q)
         for agg in agg_r.scalars().all():
@@ -727,9 +721,13 @@ async def batch_delete_reports(
     # 级联删除对应的一周小结（按 author_name + week_start 匹配）
     deleted_summaries = 0
     if reports:
+        author_week_pairs = [
+            (r.author_name, r.week_start)
+            for r in reports
+            if r.author_name and r.week_start
+        ]
         summary_q = select(WeeklySummary).where(
-            (WeeklySummary.author_name.in_([r.author_name for r in reports]))
-            & (WeeklySummary.week_start.in_([r.week_start for r in reports]))
+            tuple_(WeeklySummary.author_name, WeeklySummary.week_start).in_(author_week_pairs)
         )
         summary_r = await db.execute(summary_q)
         for s in summary_r.scalars().all():
