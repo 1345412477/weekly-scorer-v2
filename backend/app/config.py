@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     AI_CONNECT_TIMEOUT: int = 10
 
     APP_TITLE: str = "智友辰周任务汇总系统"
-    APP_VERSION: str = "2.4.0"
+    APP_VERSION: str = "2.5.0"
     TEMPLATE_DIR: str = "./templates"
 
     # ⚠ 生产环境必须在 .env 中覆盖以下三项
