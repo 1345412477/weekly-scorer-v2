@@ -32,8 +32,8 @@
               <li>在右侧上传区点击或拖拽周报文件</li>
               <li>系统自动识别提交人姓名并匹配部门</li>
             </ol>
-            <div class="screenshot-wrapper" @click="openLightbox('/example/weekly_paper.png')">
-              <img src="/example/weekly_paper.png" alt="周报操作截图" class="screenshot-img" />
+            <div class="screenshot-wrapper" @click="openLightbox('/example/weekly_paper.png?v=2')">
+              <img src="/example/weekly_paper.png?v=2" alt="周报操作截图" class="screenshot-img" />
               <span class="zoom-hint"><i class="pi pi-search"></i></span>
             </div>
           </div>
