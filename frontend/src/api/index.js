@@ -94,11 +94,11 @@ function handleError(err) {
   let msg = '请求失败，请稍后重试'
   // 登录请求失败时完全不弹 toast，由页面内的红色横幅统一提示
   const isLoginRequest = url.toLowerCase().includes('/auth/login')
+  const isLoginPage = typeof window !== 'undefined' && window.location.pathname === '/admin/login'
   // 静默请求：页面用 _silent=true 标记表示失败不应在前端日志和 UI 中喧嚣
   const isSilent = err.config?._silent === true
 
   if (status === 401) {
-    const isLoginPage = typeof window !== 'undefined' && window.location.pathname === '/admin/login'
     if (isLoginRequest) {
       msg = parseDetail(detail) || '用户名或密码错误'
     } else {
@@ -109,7 +109,14 @@ function handleError(err) {
       }
     }
   } else if (status === 403) {
-    msg = parseDetail(detail) || '没有权限执行此操作'
+    // require_admin 在“用户不存在/角色不符”时返回 403，同样视为登录态失效
+    msg = parseDetail(detail) || '登录状态已失效，请重新登录'
+    if (!isLoginRequest) {
+      clearAuth()
+      if (typeof window !== 'undefined' && !isLoginPage && window.location.pathname.startsWith('/admin')) {
+        window.location.href = '/admin/login'
+      }
+    }
   } else if (status === 400) {
     msg = parseDetail(detail) || '请求参数错误'
   } else if (status === 404) {
