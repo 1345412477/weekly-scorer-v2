@@ -19,7 +19,7 @@
         <header class="panel-header">
           <div>
             <h3>上周异常人员</h3>
-            <p class="panel-sub-title">未提交 {{ notSubmittedCount }} 人 · 迟交 {{ lateSubmittedCount }} 人</p>
+            <p class="panel-sub-title">未提交 {{ notSubmittedCount }} 人 · 迟交 {{ lateSubmittedCount }} 人 · 补交 {{ makeUpSubmittedCount }} 人</p>
           </div>
           <span class="panel-count">{{ abnormalPersons.length }} 人</span>
         </header>
@@ -193,6 +193,7 @@ const emitConfirm = (msg, onOk) => {
 const abnormalPersons = ref([])
 const notSubmittedCount = ref(0)
 const lateSubmittedCount = ref(0)
+const makeUpSubmittedCount = ref(0)
 const submittedPersons = ref([])
 const currentProjects = ref([])
 const historyWeeks = ref([])
@@ -308,6 +309,7 @@ async function loadData() {
     abnormalPersons.value = overview.abnormal_persons || []
     notSubmittedCount.value = overview.not_submitted_count || 0
     lateSubmittedCount.value = overview.late_submitted_count || 0
+    makeUpSubmittedCount.value = overview.make_up_submitted_count || 0
     submittedPersons.value = overview.submitted_persons || []
     currentProjects.value = overview.current_projects || []
     historyWeeks.value = overview.history_weeks || []

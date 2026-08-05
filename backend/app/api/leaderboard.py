@@ -299,7 +299,7 @@ async def get_stats(db: AsyncSession = Depends(get_db)):
 
 @router.get("/dashboard")
 async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
-    """获取 Dashboard 聚合数据：异常人员（未提交+迟交）/ 公司项目 / 历史项目"""
+    """获取 Dashboard 聚合数据：异常人员（未提交+迟交+补交）/ 公司项目 / 历史项目"""
     # 本周（用于"本周项目任务"）
     this_monday, this_sunday = get_current_week()
     # 上周（用于异常人员、已提交统计）
@@ -340,8 +340,9 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
     persons_r = await db.execute(persons_q)
     persons = persons_r.scalars().all()
 
-    not_submitted = []  # 过了补交期限仍未提交
-    late_submitted = []  # 过了迟交期限但提交了（迟交）
+    not_submitted = []  # 至今未提交
+    late_submitted = []  # 超过正常期限但在补交期限内提交（迟交）
+    make_up_submitted = []  # 超过补交期限才提交（补交）
 
     for p in persons:
         if p.name not in submitted_names:
@@ -353,18 +354,26 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
                 "status": "未提交",
             })
         else:
-            # 已提交：判断是否迟交
+            # 已提交：按提交时间分为正常 / 迟交 / 补交
             st = submit_times.get(p.name)
-            if st and st >= deadline_time:
-                late_submitted.append({
-                    "name": p.name,
-                    "department": p.department_name or "",
-                    "position": p.position or "",
-                    "status": "迟交",
-                })
+            if st:
+                if st > late_deadline_time:
+                    make_up_submitted.append({
+                        "name": p.name,
+                        "department": p.department_name or "",
+                        "position": p.position or "",
+                        "status": "补交",
+                    })
+                elif st >= deadline_time:
+                    late_submitted.append({
+                        "name": p.name,
+                        "department": p.department_name or "",
+                        "position": p.position or "",
+                        "status": "迟交",
+                    })
 
-    # 合并异常人员：未提交在前，迟交在后
-    abnormal_persons = not_submitted + late_submitted
+    # 合并异常人员：未提交在前，迟交次之，补交最后
+    abnormal_persons = not_submitted + late_submitted + make_up_submitted
 
     # 已提交人员列表（含正常+迟交）
     submitted_persons = []
@@ -499,6 +508,7 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
         "abnormal_persons": abnormal_persons,
         "not_submitted_count": len(not_submitted),
         "late_submitted_count": len(late_submitted),
+        "make_up_submitted_count": len(make_up_submitted),
         "current_projects": current_projects,
         "history_weeks": history_weeks,
         "total_persons": len(persons),
