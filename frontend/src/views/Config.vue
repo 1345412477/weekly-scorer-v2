@@ -357,7 +357,7 @@
     <div class="config-sticky-bar">
       <span class="config-sticky-hint">修改配置后请点击保存才能生效</span>
       <div class="config-sticky-buttons">
-        <Button label="重置默认" severity="secondary" outlined @click="resetConfig" />
+        <Button label="重置默认并保存" severity="secondary" outlined @click="resetConfig" />
         <Button label="保存配置" icon="pi pi-save" @click="saveConfig" :loading="saving" />
       </div>
     </div>
@@ -519,6 +519,26 @@ function formatDeadlineHint(hours) {
   return `${weekLabel}${DEADLINE_WEEKDAY_LABELS[p.weekday]} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`
 }
 
+function resetDeadlines() {
+  submissionDeadlineHours.value = 159
+  lateDeadlineHours.value = 327
+  submissionWeekday.value = 6
+  submissionTime.value = makeTime(15, 0)
+  lateWeekOffset.value = 1
+  lateWeekday.value = 6
+  lateTime.value = makeTime(15, 0)
+}
+
+function resetSchedule() {
+  schedule.value = {
+    enabled: true,
+    hour: 3,
+    minute: 0,
+    recurrence: 'daily',
+    weekdays: [0, 1, 2, 3, 4],
+  }
+}
+
 watch(
   [submissionWeekday, submissionTime, lateWeekOffset, lateWeekday, lateTime],
   () => { syncDeadlineToHours() }
@@ -577,7 +597,7 @@ function gradeSeverity(g) {
   return 'danger'
 }
 
-function resetConfig() {
+async function resetConfig() {
   promptTemplate.value = `# 周报评分系统提示词
 
 ## 角色设定
@@ -746,8 +766,11 @@ function resetConfig() {
 请输出 JSON 格式的项目总结（先归并，再输出）：`
   resetSummaryPrompt()
   resetOcrPrompt()
+  resetDeadlines()
+  resetSchedule()
   weights.value = { report: 1, attendance: 1, chat: 1 }
-  toast.add({ severity: 'info', summary: '已重置为默认配置', life: 2000 })
+  // 与“保存配置”一致：把重置后的全部配置持久化，全局生效
+  await saveConfig()
 }
 
 function resetReportPrompt() {
