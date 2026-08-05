@@ -23,6 +23,30 @@ DB_PATH = os.path.join(_DATA_DIR, "weekly_scorer.db")
 BACKUP_DIR = os.path.join(_DATA_DIR, "backups")
 
 
+def _ensure_sqlite_parent(url: str) -> None:
+    """确保 SQLite 数据库文件所在目录存在，避免“unable to open database file”。"""
+    if not url.startswith("sqlite"):
+        return
+    if "://" not in url:
+        return
+    rest = url.split("://", 1)[1]
+    if rest.startswith("/"):
+        rest = rest[1:]
+    if rest in ("", ":memory:"):
+        return
+    if rest.startswith("/"):
+        path = rest
+    else:
+        backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+        path = os.path.abspath(os.path.join(backend_dir, rest))
+    parent = os.path.dirname(path)
+    if parent:
+        os.makedirs(parent, exist_ok=True)
+
+
+_ensure_sqlite_parent(settings.DATABASE_URL)
+
+
 def backup_database():
     """备份数据库文件（仅 SQLite 需要文件级备份）"""
     if not _IS_SQLITE or not os.path.exists(DB_PATH):

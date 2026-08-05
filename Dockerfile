@@ -29,7 +29,7 @@ COPY backend/ ./
 # 复制前端构建产物到后端期望的路径（backend/../frontend/dist → /frontend/dist）
 COPY --from=frontend-builder /app/frontend/dist /frontend/dist
 
-RUN mkdir -p /app/uploads /app/uploads/chat
+RUN mkdir -p /app/data /app/uploads /app/uploads/chat
 
 ENV TZ=Asia/Shanghai
 
