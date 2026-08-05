@@ -73,10 +73,10 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
         if report.submit_time is not None and report.week_start is not None:
             week_start_dt = datetime.combine(report.week_start, datetime.min.time())
             deadline = week_start_dt + timedelta(
-                hours=int(getattr(config, "submission_deadline_hours", 168) or 168)
+                hours=float(getattr(config, "submission_deadline_hours", 159) or 159)
             )
             late_deadline = week_start_dt + timedelta(
-                hours=int(getattr(config, "late_deadline_hours", 336) or 336)
+                hours=float(getattr(config, "late_deadline_hours", 327) or 327)
             )
             submit = report.submit_time
             if submit > late_deadline:

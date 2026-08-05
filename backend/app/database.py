@@ -129,8 +129,8 @@ async def _migrate_schema():
         "recurrence": "VARCHAR(16) DEFAULT 'daily'",
         "weekdays": "VARCHAR(32) DEFAULT ''",
         "last_run_date": "DATE",
-        "submission_deadline_hours": "INTEGER DEFAULT 168",
-        "late_deadline_hours": "INTEGER DEFAULT 336",
+        "submission_deadline_hours": "REAL DEFAULT 159",
+        "late_deadline_hours": "REAL DEFAULT 327",
         "ai_connection_status": "BOOLEAN",
         "ai_connection_provider": "VARCHAR(50)",
         "ai_connection_model": "VARCHAR(100)",
@@ -217,8 +217,8 @@ async def _migrate_schema():
         except Exception:
             sc_cols = set()
         sc_additions = [
-            ("submission_deadline_hours", "INTEGER DEFAULT 168"),
-            ("late_deadline_hours", "INTEGER DEFAULT 336"),
+            ("submission_deadline_hours", "REAL DEFAULT 159"),
+            ("late_deadline_hours", "REAL DEFAULT 327"),
             ("ai_connection_status", "BOOLEAN"),
             ("ai_connection_provider", "VARCHAR(50)"),
             ("ai_connection_model", "VARCHAR(100)"),
@@ -254,6 +254,24 @@ async def _migrate_schema():
                         logger.info("[migration] attendance_records.attendance_status 类型已改为 TEXT")
             except Exception as e:
                 logger.warning(f"[migration] attendance_records 列类型变更失败: {e}")
+
+            # 5b) scoring_configs 期限列改为 DOUBLE PRECISION（支持分钟级时间）
+            try:
+                deadline_cols = await _get_existing_columns(conn, "scoring_configs")
+                for col_name in ("submission_deadline_hours", "late_deadline_hours"):
+                    if col_name in deadline_cols:
+                        r = await conn.execute(text(
+                            "SELECT data_type FROM information_schema.columns "
+                            "WHERE table_name='scoring_configs' AND column_name=:col"
+                        ), {"col": col_name})
+                        row = r.fetchone()
+                        if row and row[0] and row[0].lower() in ("integer", "smallint", "bigint"):
+                            await conn.execute(text(
+                                f"ALTER TABLE scoring_configs ALTER COLUMN {col_name} TYPE DOUBLE PRECISION"
+                            ))
+                            logger.info(f"[migration] scoring_configs.{col_name} 类型已改为 DOUBLE PRECISION")
+            except Exception as e:
+                logger.warning(f"[migration] scoring_configs 期限列类型变更失败: {e}")
 
         # 6) chat_records 表：raw_messages 列
         try:

@@ -240,7 +240,7 @@
       <header class="panel-header clickable" @click="toggle('deadline')">
         <div class="header-left">
           <h3>提交期限设置</h3>
-          <p class="panel-desc">设置每周周报提交的截止时间，超过迟交期限算迟交，超过补交期限算未提交</p>
+          <p class="panel-desc">设置每周周报提交的截止时间，超过正常期限未提交视为迟交，超过补交期限提交视为补交（记 0 分）</p>
         </div>
         <div class="header-right">
           <i :class="['chevron', 'pi', expanded.deadline ? 'pi-chevron-up' : 'pi-chevron-down']"></i>
@@ -249,20 +249,22 @@
       <div class="panel-body" v-show="expanded.deadline">
         <div class="deadline-grid">
           <div class="deadline-item">
-            <label class="field-label">迟交期限</label>
+            <label class="field-label">正常提交期限（迟交起点）</label>
             <div class="deadline-input-row">
-              <InputNumber v-model.number="submissionDeadlineHours" :min="1" :step="1" :showButtons="false" size="large" class="deadline-num-input" />
-              <span class="deadline-unit">小时</span>
+              <span class="deadline-prefix">本周</span>
+              <Dropdown v-model="submissionWeekday" :options="deadlineWeekdayOptions" optionLabel="label" optionValue="value" class="deadline-picker" />
+              <DatePicker v-model="submissionTime" timeOnly :stepMinute="15" hourFormat="24" class="deadline-picker" />
             </div>
-            <span class="deadline-hint">从周一 00:00 起算，超过此时限未提交视为迟交（默认 168 小时 = 周日 00:00）</span>
+            <span class="deadline-hint">例：本周日 15:00 之前提交为正常，之后提交视为迟交（扣 5 分）</span>
           </div>
           <div class="deadline-item">
             <label class="field-label">补交期限</label>
             <div class="deadline-input-row">
-              <InputNumber v-model.number="lateDeadlineHours" :min="1" :step="1" :showButtons="false" size="large" class="deadline-num-input" />
-              <span class="deadline-unit">小时</span>
+              <Dropdown v-model="lateWeekOffset" :options="deadlineWeekOffsetOptions" optionLabel="label" optionValue="value" class="deadline-picker" />
+              <Dropdown v-model="lateWeekday" :options="deadlineWeekdayOptions" optionLabel="label" optionValue="value" class="deadline-picker" />
+              <DatePicker v-model="lateTime" timeOnly :stepMinute="15" hourFormat="24" class="deadline-picker" />
             </div>
-            <span class="deadline-hint">从周一 00:00 起算，超过此时限仍未提交视为未提交（默认 336 小时 = 下周日 00:00）</span>
+            <span class="deadline-hint">例：下周日 15:00 之前仍可补交，超过后提交记 0 分</span>
           </div>
         </div>
         <div class="deadline-summary">
@@ -410,10 +412,10 @@ import { useDataOperation } from '../composables/useDataOperation'
 import { DataEventType, emitDataChanged } from '../utils/dataEvents'
 import Button from 'primevue/button'
 import InputText from 'primevue/inputtext'
-import InputNumber from 'primevue/inputnumber'
 import InputSwitch from 'primevue/inputswitch'
 import Textarea from 'primevue/textarea'
 import Dropdown from 'primevue/dropdown'
+import DatePicker from 'primevue/datepicker'
 import Tag from 'primevue/tag'
 import Dialog from 'primevue/dialog'
 import { useToast } from 'primevue/usetoast'
@@ -461,21 +463,66 @@ const testFile = ref(null)
 const testFileInput = ref(null)
 const testResult = ref(null)
 
-// 提交期限设置
-const submissionDeadlineHours = ref(168)  // 迟交期限：默认周日 00:00（168h）
-const lateDeadlineHours = ref(336)        // 补交期限：默认下周日 00:00（336h）
+// 提交期限设置（按“周几 + 时间”展示，底层仍以“周一 00:00 起算的小时数”存储）
+const submissionDeadlineHours = ref(159)  // 默认本周日 15:00
+const lateDeadlineHours = ref(327)        // 默认下周日 15:00
+const submissionWeekday = ref(6)
+const submissionTime = ref(null)
+const lateWeekOffset = ref(1)
+const lateWeekday = ref(6)
+const lateTime = ref(null)
+
+const DEADLINE_WEEKDAY_LABELS = ['周一', '周二', '周三', '周四', '周五', '周六', '周日']
+const DEADLINE_WEEK_OFFSET_LABELS = ['本周', '下周', '下下周']
+const deadlineWeekdayOptions = DEADLINE_WEEKDAY_LABELS.map((label, value) => ({ label, value }))
+const deadlineWeekOffsetOptions = DEADLINE_WEEK_OFFSET_LABELS.map((label, value) => ({ label, value }))
+
+function makeTime(hour, minute) {
+  const d = new Date(2000, 0, 1, 0, 0, 0, 0)
+  d.setHours(hour, minute, 0, 0)
+  return d
+}
+
+function hoursToDeadlineParts(hours) {
+  const total = Math.max(0, Number(hours) || 0)
+  const weekOffset = Math.floor(total / 168)
+  const rem = total - weekOffset * 168
+  const weekday = Math.min(6, Math.floor(rem / 24))
+  const minutes = Math.round((rem - weekday * 24) * 60)
+  return { weekOffset, weekday, hour: Math.floor(minutes / 60), minute: minutes % 60 }
+}
+
+function deadlinePartsToHours(weekOffset, weekday, hour, minute) {
+  return weekOffset * 168 + weekday * 24 + hour + minute / 60
+}
+
+function syncDeadlineFromHours() {
+  const p = hoursToDeadlineParts(submissionDeadlineHours.value)
+  submissionWeekday.value = p.weekday
+  submissionTime.value = makeTime(p.hour, p.minute)
+  const q = hoursToDeadlineParts(lateDeadlineHours.value)
+  lateWeekOffset.value = Math.min(2, q.weekOffset)
+  lateWeekday.value = q.weekday
+  lateTime.value = makeTime(q.hour, q.minute)
+}
+
+function syncDeadlineToHours() {
+  const st = submissionTime.value || makeTime(15, 0)
+  const lt = lateTime.value || makeTime(15, 0)
+  submissionDeadlineHours.value = deadlinePartsToHours(0, submissionWeekday.value, st.getHours(), st.getMinutes())
+  lateDeadlineHours.value = deadlinePartsToHours(lateWeekOffset.value, lateWeekday.value, lt.getHours(), lt.getMinutes())
+}
 
 function formatDeadlineHint(hours) {
-  const days = Math.floor(hours / 24)
-  const remainingHours = hours % 24
-  if (days === 0) {
-    return `${hours}小时`
-  } else if (remainingHours === 0) {
-    return `${days}天`
-  } else {
-    return `${days}天${remainingHours}小时`
-  }
+  const p = hoursToDeadlineParts(hours)
+  const weekLabel = DEADLINE_WEEK_OFFSET_LABELS[Math.min(2, p.weekOffset)] || `第${p.weekOffset + 1}周`
+  return `${weekLabel}${DEADLINE_WEEKDAY_LABELS[p.weekday]} ${String(p.hour).padStart(2, '0')}:${String(p.minute).padStart(2, '0')}`
 }
+
+watch(
+  [submissionWeekday, submissionTime, lateWeekOffset, lateWeekday, lateTime],
+  () => { syncDeadlineToHours() }
+)
 
 // AI 模型管理
 const aiModels = ref([])
@@ -890,6 +937,7 @@ async function loadConfig() {
     // 提交期限设置
     if (d.submission_deadline_hours != null) submissionDeadlineHours.value = Number(d.submission_deadline_hours)
     if (d.late_deadline_hours != null) lateDeadlineHours.value = Number(d.late_deadline_hours)
+    syncDeadlineFromHours()
   } catch (e) { console.error('[Config] 加载失败:', e) }
 }
 
@@ -906,6 +954,13 @@ async function saveConfig() {
   if (emptyPrompts.length) {
     const names = emptyPrompts.map(p => p.name).join('、')
     toast.add({ severity: 'warn', summary: `提示词未填写完整`, detail: `请补充：${names}`, life: 5000 })
+    return
+  }
+
+  // 把“周几 + 时间”换算回小时并校验
+  syncDeadlineToHours()
+  if (lateDeadlineHours.value <= submissionDeadlineHours.value) {
+    toast.add({ severity: 'warn', summary: '补交期限必须晚于正常提交期限', life: 4000 })
     return
   }
 
@@ -2310,6 +2365,17 @@ useDataRefresh({
   display: flex;
   align-items: center;
   gap: 10px;
+}
+
+.deadline-picker {
+  width: 128px;
+}
+
+.deadline-prefix {
+  font-size: 14px;
+  color: #5a6481;
+  font-weight: 500;
+  white-space: nowrap;
 }
 
 .deadline-num-input :deep(.p-inputnumber-input) {

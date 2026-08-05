@@ -311,8 +311,8 @@ async def get_dashboard_overview(db: AsyncSession = Depends(get_db)):
         select(ScoringConfig).where(ScoringConfig.is_active == True).limit(1)
     )
     config = config_result.scalar_one_or_none()
-    submission_deadline_hours = getattr(config, "submission_deadline_hours", 168) or 168
-    late_deadline_hours = getattr(config, "late_deadline_hours", 336) or 336
+    submission_deadline_hours = getattr(config, "submission_deadline_hours", 159) or 159
+    late_deadline_hours = getattr(config, "late_deadline_hours", 327) or 327
 
     # 计算截止时间点（基于上周）
     deadline_time = datetime(last_monday.year, last_monday.month, last_monday.day) + timedelta(hours=submission_deadline_hours)

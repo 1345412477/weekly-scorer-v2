@@ -1,7 +1,7 @@
 """数据模型"""
 import uuid
 from datetime import datetime, date
-from sqlalchemy import Column, String, Text, DateTime, Date, DECIMAL, Boolean, Integer, JSON, Index, UniqueConstraint
+from sqlalchemy import Column, String, Text, DateTime, Date, DECIMAL, Boolean, Integer, Float, JSON, Index, UniqueConstraint
 from app.database import Base
 from app.utils.time_utils import bj_now
 
@@ -56,8 +56,8 @@ class ScoringConfig(Base):
     weights = Column(JSON, nullable=True, default=dict)
     min_content_length = Column(Integer, default=50)
     # 提交期限设置（小时数，从周一 00:00 起算）
-    submission_deadline_hours = Column(Integer, default=168)  # 迟交期限：默认周日 00:00（168h）
-    late_deadline_hours = Column(Integer, default=336)  # 补交期限：默认下周日 00:00（336h）
+    submission_deadline_hours = Column(Float, default=159)  # 迟交期限：默认本周日 15:00（159h）
+    late_deadline_hours = Column(Float, default=327)  # 补交期限：默认下周日 15:00（327h）
     is_active = Column(Boolean, default=True)
     # AI 连接状态缓存（避免频繁检测产生 token 消耗）
     ai_connection_status = Column(Boolean, nullable=True)   # True=已连接 / False=连接失败 / None=未检测

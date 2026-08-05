@@ -51,8 +51,8 @@ async def get_config(db: AsyncSession = Depends(get_db), user: AdminUser = Depen
         "business_summary_prompt": getattr(config, "business_summary_prompt", "") or "",
         "weights": weights,
         "min_content_length": config.min_content_length or 50,
-        "submission_deadline_hours": getattr(config, "submission_deadline_hours", 168) or 168,
-        "late_deadline_hours": getattr(config, "late_deadline_hours", 336) or 336,
+        "submission_deadline_hours": getattr(config, "submission_deadline_hours", 159) or 159,
+        "late_deadline_hours": getattr(config, "late_deadline_hours", 327) or 327,
         "sensitive_words": getattr(config, "sensitive_words", None) or [
             "脏话", "骂人", "人身攻击", "消极怠工", "推诿", "甩锅",
             "不配合", "拖延", "敷衍", "投诉", "冲突",
@@ -131,19 +131,19 @@ async def update_config(
     submission_deadline_hours = req.get("submission_deadline_hours")
     if submission_deadline_hours is not None:
         try:
-            val = int(submission_deadline_hours)
+            val = float(submission_deadline_hours)
             if val <= 0:
                 raise HTTPException(status_code=400, detail="迟交期限必须大于0")
             config.submission_deadline_hours = val
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=400, detail="迟交期限必须是整数")
+            raise HTTPException(status_code=400, detail="迟交期限必须是数字")
 
     late_deadline_hours = req.get("late_deadline_hours")
     if late_deadline_hours is not None:
         try:
-            val = int(late_deadline_hours)
+            val = float(late_deadline_hours)
             if val <= 0:
                 raise HTTPException(status_code=400, detail="补交期限必须大于0")
             if val <= config.submission_deadline_hours:
@@ -152,7 +152,7 @@ async def update_config(
         except HTTPException:
             raise
         except Exception:
-            raise HTTPException(status_code=400, detail="补交期限必须是整数")
+            raise HTTPException(status_code=400, detail="补交期限必须是数字")
 
     # v5：敏感词列表
     sensitive_words = req.get("sensitive_words")
