@@ -357,7 +357,7 @@
     <div class="config-sticky-bar">
       <span class="config-sticky-hint">修改配置后请点击保存才能生效</span>
       <div class="config-sticky-buttons">
-        <Button label="重置默认并保存" severity="secondary" outlined @click="resetConfig" />
+        <Button label="重置默认" severity="secondary" outlined @click="resetConfig" />
         <Button label="保存配置" icon="pi pi-save" @click="saveConfig" :loading="saving" />
       </div>
     </div>
@@ -597,7 +597,7 @@ function gradeSeverity(g) {
   return 'danger'
 }
 
-async function resetConfig() {
+function resetConfig() {
   promptTemplate.value = `# 周报评分系统提示词
 
 ## 角色设定
@@ -767,10 +767,11 @@ async function resetConfig() {
   resetSummaryPrompt()
   resetOcrPrompt()
   resetDeadlines()
+  scheduleResetGuard = true
   resetSchedule()
+  setTimeout(() => { scheduleResetGuard = false }, 0)
   weights.value = { report: 1, attendance: 1, chat: 1 }
-  // 与“保存配置”一致：把重置后的全部配置持久化，全局生效
-  await saveConfig()
+  toast.add({ severity: 'info', summary: '已重置为默认配置，请点击“保存配置”生效', life: 3000 })
 }
 
 function resetReportPrompt() {
@@ -1490,9 +1491,15 @@ onMounted(() => {
 
 // 监听定时评分开关变化，自动保存
 let scheduleLoaded = false
+let scheduleResetGuard = false
 watch(
   () => schedule.value.enabled,
   (newVal, oldVal) => {
+    // 重置默认时临时屏蔽“开关变化自动保存”，避免未点保存就入库
+    if (scheduleResetGuard) {
+      scheduleResetGuard = false
+      return
+    }
     // 页面刚加载时 loadSchedule 会设置 enabled 值，跳过首次
     if (!scheduleLoaded) {
       scheduleLoaded = true
