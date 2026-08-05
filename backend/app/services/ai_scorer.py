@@ -367,8 +367,10 @@ async def score_attendance(
             raise AIScoringError(f"AI 返回格式异常: 期望 dict，得到 {type(result).__name__}")
         score = float(result.get("score", 0)) if result.get("score") is not None else 0.0
         return {
-            "score": round(max(0.0, min(score, 100.0)), 1),
+            # 加班分在 100 分基础上累加，不设上限
+            "score": round(max(0.0, score), 1),
             "comment": result.get("comment", ""),
+            "overtime_points": float(result.get("overtime_points") or 0),
             "raw": raw,
         }
     except AIScoringError:

@@ -531,6 +531,15 @@ def summarize_attendance_for_person(
     不代替 AI 计算分数；扣分规则由考勤评分提示词定义。
     """
     _weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+
+    def _parse_hm(t):
+        if not t:
+            return None
+        m = re.match(r"^(\d{1,2}):(\d{2})$", str(t).strip())
+        if not m:
+            return None
+        return int(m.group(1)) * 60 + int(m.group(2))
+
     filtered = sorted(
         [r for r in records if r.get("author_name") == author_name],
         key=lambda r: r.get("record_date") or date.min,
@@ -580,6 +589,9 @@ def summarize_attendance_for_person(
             parts.append("日期 -")
         parts.append(f"上班 {(r.get('check_in_time') or '未打卡')}@{(r.get('check_in_location') or '无地点')}")
         parts.append(f"下班 {(r.get('check_out_time') or '未打卡')}@{(r.get('check_out_location') or '无地点')}")
+        out_min = _parse_hm(r.get("check_out_time"))
+        if out_min is not None and out_min > 18 * 60:
+            parts.append(f"18点后加班 {(out_min - 18 * 60) / 60:.1f}h")
         dur = r.get("work_duration_hours")
         if dur is not None:
             parts.append(f"工时 {dur}h")

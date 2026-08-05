@@ -157,7 +157,8 @@ async def _get_attendance_score(db: AsyncSession, author_name: str, week_start: 
         try:
             ai_result = await score_attendance(summary, author_name, "", prompt, db=db)
             score = float(ai_result["score"])
-            return max(0.0, min(100.0, score))
+            # 加班分在 100 分基础上累加，不设上限
+            return max(0.0, score)
         except AIScoringError as e:
             logger.error(
                 f"[聚合] 考勤 AI 评分失败 {author_name}（无规则兜底，"

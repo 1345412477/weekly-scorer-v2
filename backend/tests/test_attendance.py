@@ -74,6 +74,7 @@ class TestSheet1AttendanceParsing:
             assert "迟到 1 次" in summary
             assert "缺卡 2 次" in summary
             assert "整天双缺 1 天" in summary
+            assert "18点后加班 0.5h" in summary  # 6/4 下班 18:30
         finally:
             os.unlink(path)
 
@@ -103,3 +104,45 @@ class TestAttendanceNoRuleFallback:
             db, "张三", date(2026, 6, 1), date(2026, 6, 7), "prompt"
         )
         assert result is None
+
+
+@pytest.mark.asyncio
+class TestAttendanceScoreAbove100:
+    async def test_score_attendance_allows_overtime_over_100(self, monkeypatch):
+        from app.services.ai_scorer import score_attendance
+
+        async def fake_call(system_prompt, user_prompt, db=None):
+            return (
+                {"score": 112.0, "comment": "加班加分", "overtime_points": 12.0},
+                "raw",
+            )
+
+        monkeypatch.setattr("app.services.ai_scorer._call_ai_with_retry", fake_call)
+        result = await score_attendance("summary", "张三", "技术部", "prompt")
+        assert result["score"] == 112.0
+        assert result["overtime_points"] == 12.0
+
+    async def test_aggregate_attendance_allows_over_100(self, db, monkeypatch):
+        from app.models.models import AttendanceRecord
+        from app.services.aggregator import _get_attendance_score
+
+        rec = AttendanceRecord(
+            id="att-over",
+            author_name="李四",
+            week_start=date(2026, 6, 1),
+            week_end=date(2026, 6, 7),
+            record_date=date(2026, 6, 2),
+            check_in_time="09:00",
+            check_out_time="20:30",
+        )
+        db.add(rec)
+        await db.commit()
+
+        async def fake_score(*args, **kwargs):
+            return {"score": 105.0, "comment": "加班", "overtime_points": 5.0}
+
+        monkeypatch.setattr("app.services.aggregator.score_attendance", fake_score)
+        result = await _get_attendance_score(
+            db, "李四", date(2026, 6, 1), date(2026, 6, 7), "prompt"
+        )
+        assert result == 105.0
