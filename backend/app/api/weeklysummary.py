@@ -144,7 +144,11 @@ async def upload_summary(
     latest_time_parsed = None
     if parsed.get("latest_time"):
         try:
-            latest_time_parsed = datetime.strptime(str(parsed["latest_time"]), "%H:%M").time()
+            import re as _re
+            m = _re.search(r"(\d{1,2}):(\d{2})", str(parsed["latest_time"]))
+            if m:
+                t = datetime.strptime(f"{m.group(1)}:{m.group(2)}", "%H:%M").time()
+                latest_time_parsed = datetime.combine(week_start, t)
         except Exception:
             latest_time_parsed = None
 

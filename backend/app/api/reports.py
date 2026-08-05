@@ -115,9 +115,7 @@ async def _upload_multi_week_report(
             submit_time=bj_now(),
         )
         db.add(report)
-        await db.commit()
-        await db.refresh(report)
-        
+
         # 异步触发评分（不阻塞提交）
         try:
             from app.core.task_queue import submit_report_scoring
@@ -130,13 +128,16 @@ async def _upload_multi_week_report(
             "week_start": week_start.isoformat(),
             "week_end": week_end.isoformat(),
         })
-    
+
+    # 单事务提交，避免部分周写入成功、部分失败造成数据残留
+    await db.commit()
+
     return {
         "message": f"成功创建 {len(created_reports)} 条周报记录",
         "created_count": len(created_reports),
         "skipped_weeks": skipped_weeks,
-        "reports": created_reports,
-    }
+            "reports": created_reports,
+        }
 
 
 logger = logging.getLogger(__name__)

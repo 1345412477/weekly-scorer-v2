@@ -405,7 +405,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted, watch } from 'vue'
+import { ref, reactive, computed, onMounted, onUnmounted, watch } from 'vue'
 import { configAPI, departmentAPI, personAPI, reportAPI, aggregateAPI, aiModelAPI } from '../api'
 import { useDataRefresh, getConfigEvents } from '../composables/useDataRefresh'
 import { useDataOperation } from '../composables/useDataOperation'
@@ -459,6 +459,7 @@ const schedule = ref({
 const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 const scheduleSaving = ref(false)
 const scheduleMsg = ref(null)
+let scheduleMsgTimer = null
 const testFile = ref(null)
 const testFileInput = ref(null)
 const testResult = ref(null)
@@ -1306,7 +1307,7 @@ async function saveSchedule() {
     const res = await aggregateAPI.saveSchedule(payload)
     scheduleMsg.value = { type: 'success', text: res.data.message || '已保存' }
     toast.add({ severity: 'success', summary: '定时设置已更新', life: 2500 })
-    setTimeout(() => { scheduleMsg.value = null }, 4000)
+    scheduleMsgTimer = setTimeout(() => { scheduleMsg.value = null }, 4000)
   } catch (e) {
     const msg = e.response?.data?.detail || '保存失败，请重试'
     scheduleMsg.value = { type: 'error', text: msg }
@@ -1487,6 +1488,13 @@ onMounted(() => {
   checkAiStatus(false)
   loadSchedule()
   loadAiModels()
+})
+
+onUnmounted(() => {
+  if (scheduleMsgTimer) {
+    clearTimeout(scheduleMsgTimer)
+    scheduleMsgTimer = null
+  }
 })
 
 // 监听定时评分开关变化，自动保存

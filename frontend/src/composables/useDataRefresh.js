@@ -113,26 +113,11 @@ export function useDataRefresh(options = {}) {
   }
 }
 
-/**
- * 获取需要监听的事件类型列表（快捷方式）
- */
-export function getReportEvents() {
-  return [DataEventType.REPORTS_CHANGED, DataEventType.CONFIG_CHANGED]
-}
-
-export function getLeaderboardEvents() {
-  return [DataEventType.REPORTS_CHANGED, DataEventType.LEADERBOARD_CHANGED, DataEventType.CONFIG_CHANGED]
-}
-
 export function getDashboardEvents() {
   return [DataEventType.REPORTS_CHANGED, DataEventType.CONFIG_CHANGED, DataEventType.ALL_CHANGED]
 }
 
 export function getConfigEvents() {
-  return [DataEventType.DEPARTMENTS_CHANGED, DataEventType.PERSONS_CHANGED]
-}
-
-export function getManagementEvents() {
   return [DataEventType.DEPARTMENTS_CHANGED, DataEventType.PERSONS_CHANGED]
 }
 

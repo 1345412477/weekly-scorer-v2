@@ -116,6 +116,7 @@ async def _ocr_all_summaries(db: AsyncSession, valid_names: set) -> dict:
             parsed = await parse_summary_image(
                 image_bytes, summary.source_file,
                 override_author_name=summary.author_name,
+                db=db,
             )
             try:
                 summary.work_session_count = (

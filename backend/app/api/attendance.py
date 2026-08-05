@@ -198,13 +198,20 @@ async def upload_attendance(
         if name in person_by_exact:
             return person_by_exact[name]
         # 策略：前 N-1 个字符相同（中文姓名通常 2-4 字，末字可能因繁简/异体字不同）
+        matches = []
         for p in all_persons:
             if len(p.name) >= 2 and len(name) >= 2:
                 min_len = min(len(p.name), len(name))
                 if p.name[:min_len - 1] == name[:min_len - 1]:
-                    logger.info(f"[考勤匹配] 模糊匹配: '{name}' -> '{p.name}'")
-                    return p
-        return None
+                    matches.append(p)
+        if not matches:
+            return None
+        if len(matches) > 1:
+            logger.warning(
+                f"[考勤匹配] 姓名 '{name}' 模糊匹配到多个人员: {[m.name for m in matches]}，默认取第一个，请核对"
+            )
+        logger.info(f"[考勤匹配] 模糊匹配: '{name}' -> '{matches[0].name}'")
+        return matches[0]
 
     for r in records:
         author_name = r.get("author_name", "")

@@ -123,10 +123,10 @@ def get_client(api_key: str = None, base_url: str = None) -> AsyncOpenAI:
             max_retries=0,
         )
     elif deepseek_key:
-        logger.info(f"[AI] 使用 DeepSeek | model={settings.SCORING_MODEL} | base_url={settings.DEEPSEEK_BASE_URL} | key={_mask_key(deepseek_key)}")
+        logger.info(f"[AI] 使用 DeepSeek | model={settings.SCORING_MODEL} | base_url={getattr(settings, 'DEEPSEEK_BASE_URL', 'https://api.deepseek.com')} | key={_mask_key(deepseek_key)}")
         _client = AsyncOpenAI(
             api_key=deepseek_key,
-            base_url=settings.DEEPSEEK_BASE_URL,
+            base_url=getattr(settings, "DEEPSEEK_BASE_URL", "https://api.deepseek.com"),
             timeout=timeout,
             max_retries=0,
         )

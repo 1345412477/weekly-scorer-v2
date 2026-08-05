@@ -99,7 +99,7 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     for error in exc.errors():
         errors.append({"loc": list(error["loc"]), "msg": error["msg"], "type": error.get("type", "")})
     # 打印到后端日志，便于在现场精准定位哪一个字段缺失
-    print(f"[VALIDATION_ERROR] {request.method} {request.url.path} | body={body_text} | errors={errors}")
+    log_error(f"[VALIDATION_ERROR] {request.method} {request.url.path} | body={body_text} | errors={errors}")
     return JSONResponse(
         status_code=400,
         content={"detail": errors}

@@ -11,7 +11,6 @@ from app.database import get_db
 from app.models.models import DepartmentSummary, Department, AdminUser, WeeklyReport
 from app.core.auth import require_admin, write_operation_log
 from app.utils.time_utils import bj_now, bj_today
-from app.utils.response import success_response, error_response
 from app.utils.logger import log_error
 
 router = APIRouter(prefix="/api/v1/business-dashboard", tags=["业务盘"])
@@ -147,7 +146,7 @@ async def list_summaries(
     from app.services.business_summary_service import _generation_lock
     generation_in_progress = _generation_lock.locked()
     
-    return success_response(data={
+    return {
         "week_start": ws.isoformat(),
         "week_end": we.isoformat(),
         "items": items,
@@ -156,7 +155,7 @@ async def list_summaries(
             for item in items
         ),
         "generation_in_progress": generation_in_progress,
-    })
+    }
 
 
 @router.get("/{dept_id}")
@@ -194,7 +193,7 @@ async def get_summary(
         if not dept:
             raise HTTPException(status_code=404, detail="部门不存在")
         
-        return success_response(data={
+        return {
             "id": None,
             "department_id": dept_id,
             "department_name": dept.name,
@@ -209,7 +208,7 @@ async def get_summary(
             "error_message": None,
             "generated_at": None,
             "persons": [],
-        })
+        }
     
     # 查询部门人员
     from app.models.models import Person
@@ -221,7 +220,7 @@ async def get_summary(
     )
     persons = person_result.scalars().all()
     
-    return success_response(data={
+    return {
         "id": summary.id,
         "department_id": summary.department_id,
         "department_name": summary.department_name,
@@ -239,7 +238,7 @@ async def get_summary(
             {"name": p.name, "position": p.position or ""}
             for p in persons
         ],
-    })
+    }
 
 
 @router.post("/generate")
@@ -286,11 +285,11 @@ async def generate_all(
 
     asyncio.create_task(_run_generation())
 
-    return success_response(data={
+    return {
         "message": "生成任务已启动",
         "week_start": ws.isoformat(),
         "week_end": we.isoformat(),
-    })
+    }
 
 
 @router.post("/{dept_id}/generate")
@@ -347,13 +346,13 @@ async def generate_dept(
 
     asyncio.create_task(_run_generation())
     
-    return success_response(data={
+    return {
         "message": "生成任务已启动",
         "department_id": dept_id,
         "department_name": dept.name,
         "week_start": ws.isoformat(),
         "week_end": we.isoformat(),
-    })
+    }
 
 
 @router.patch("/{dept_id}/highlight")
@@ -438,4 +437,4 @@ async def update_highlight(
     summary.updated_at = bj_now()
     await db.commit()
     
-    return success_response(data={"message": "更新成功"})
+    return {"message": "更新成功"}

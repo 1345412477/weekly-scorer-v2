@@ -408,6 +408,10 @@ onUnmounted(() => {
     window.removeEventListener('resize', resizeHandler)
     resizeHandler = null
   }
+  if (trendChartInstance.value) {
+    trendChartInstance.value.dispose()
+    trendChartInstance.value = null
+  }
 })
 </script>
 
