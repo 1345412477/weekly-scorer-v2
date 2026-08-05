@@ -1,8 +1,12 @@
 # ── Stage 1: 构建前端 ──
 FROM node:20-alpine AS frontend-builder
+ARG NPM_REGISTRY=https://registry.npmmirror.com
 WORKDIR /app/frontend
 COPY frontend/package.json frontend/package-lock.json* ./
-RUN npm install --registry=https://registry.npmmirror.com
+RUN npm ci --registry="$NPM_REGISTRY" --no-audit --no-fund \
+      --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=120000 \
+  || npm ci --registry=https://registry.npmjs.org --no-audit --no-fund \
+      --fetch-retries=5 --fetch-retry-mintimeout=10000 --fetch-retry-maxtimeout=120000
 COPY frontend/ ./
 RUN npm run build
 

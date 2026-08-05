@@ -1,6 +1,9 @@
 services:
   weekly-scorer:
-    build: .
+    build:
+      context: .
+      args:
+        NPM_REGISTRY: ${NPM_REGISTRY:-https://registry.npmmirror.com}
     container_name: weekly-scorer
     restart: unless-stopped
     ports:

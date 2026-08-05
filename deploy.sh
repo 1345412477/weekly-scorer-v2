@@ -90,6 +90,10 @@ echo "✓ 环境配置检查完成"
 # 3. 构建 Docker 镜像
 echo ""
 echo "[3/6] 构建 Docker 镜像..."
+# npm 源可覆盖：NPM_REGISTRY=https://registry.npmjs.org ./deploy.sh
+# 默认使用 npmmirror，构建失败会自动回退官方源
+NPM_REGISTRY="${NPM_REGISTRY:-https://registry.npmmirror.com}"
+export NPM_REGISTRY
 docker compose build --no-cache
 
 # 4. 停止旧容器
