@@ -12,7 +12,7 @@
 """
 import os
 import tempfile
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import pytest
 import pytest_asyncio
@@ -807,3 +807,79 @@ class TestBatchDeleteSafety:
             await db.execute(select(WeeklyAggregate).where(WeeklyAggregate.id == "agg2"))
         ).scalar_one_or_none()
         assert remaining is not None
+
+
+@pytest.mark.asyncio
+class TestReportDeadlinePenalty:
+    """周报迟交扣5分、补交记0分（方案B：以提交时间与期限计算）"""
+
+    async def test_deadline_penalties(self, db, monkeypatch, seed_scoring_config):
+        from app.models.models import WeeklyReport, ReportScore
+        from app.services.scoring import trigger_scoring
+        from sqlalchemy import select
+
+        async def fake_score(content, author_name, department, prompt_template="", db=None):
+            return {
+                "total_score": 28.0,
+                "grade": "差",
+                "comment": "基础评语",
+                "suggestion": "改进建议",
+                "dimension_scores": [
+                    {"name": "工作反馈深度", "score": 7, "max": 12, "comment": "一般"}
+                ],
+                "raw": "{}",
+            }
+
+        monkeypatch.setattr("app.services.scoring.score_report", fake_score)
+
+        week_start = date(2026, 6, 1)  # 周一
+        week_end = date(2026, 6, 7)
+        reports = [
+            WeeklyReport(
+                id="ok-report",
+                author_name="张三",
+                department="技术部",
+                week_start=week_start,
+                week_end=week_end,
+                content="正常周报内容",
+                status="submitted",
+                submit_time=datetime(2026, 6, 2, 10, 0, 0),  # 期限内
+            ),
+            WeeklyReport(
+                id="late-report",
+                author_name="李四",
+                department="产品部",
+                week_start=week_start,
+                week_end=week_end,
+                content="迟交周报内容",
+                status="submitted",
+                submit_time=datetime(2026, 6, 9, 10, 0, 0),  # 超过正常期限、未超过补交期限
+            ),
+            WeeklyReport(
+                id="catchup-report",
+                author_name="王五",
+                department="技术部",
+                week_start=week_start,
+                week_end=week_end,
+                content="补交周报内容",
+                status="submitted",
+                submit_time=datetime(2026, 6, 16, 10, 0, 0),  # 超过补交期限
+            ),
+        ]
+        db.add_all(reports)
+        await db.commit()
+
+        for report in reports:
+            await trigger_scoring(report.id, db)
+
+        result = await db.execute(
+            select(ReportScore).where(ReportScore.report_id.in_(["ok-report", "late-report", "catchup-report"]))
+        )
+        scores = {s.report_id: s for s in result.scalars().all()}
+
+        assert float(scores["ok-report"].total_score) == 28.0
+        assert float(scores["late-report"].total_score) == 23.0
+        assert "迟交" in (scores["late-report"].ai_comment or "")
+        assert float(scores["catchup-report"].total_score) == 0.0
+        assert scores["catchup-report"].dimension_scores == []
+        assert "补交" in (scores["catchup-report"].ai_comment or "")

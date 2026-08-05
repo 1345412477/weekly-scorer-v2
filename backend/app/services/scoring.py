@@ -62,16 +62,44 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
             db=db,
         )
 
-        # 保存评分结果
-        total = ai_result["total_score"]
+        # 按提交时间应用迟交/补交规则（方案B：周一 00:00 起算期限）
+        base_total = float(ai_result["total_score"])
+        total = base_total
         grade = ai_result.get("grade", "一般")
+        comment = ai_result.get("comment", "")
+        suggestion = ai_result.get("suggestion", "")
+        dimension_scores = ai_result.get("dimension_scores", [])
+        penalty_note = ""
+        if report.submit_time is not None and report.week_start is not None:
+            week_start_dt = datetime.combine(report.week_start, datetime.min.time())
+            deadline = week_start_dt + timedelta(
+                hours=int(getattr(config, "submission_deadline_hours", 168) or 168)
+            )
+            late_deadline = week_start_dt + timedelta(
+                hours=int(getattr(config, "late_deadline_hours", 336) or 336)
+            )
+            submit = report.submit_time
+            if submit > late_deadline:
+                total = 0.0
+                grade = "差"
+                dimension_scores = []
+                penalty_note = "补交周报，按规则计 0 分"
+            elif submit > deadline:
+                total = max(0.0, total - 5)
+                if total < 28:
+                    grade = "差"
+                penalty_note = "迟交周报，扣 5 分"
+        if penalty_note:
+            comment = (comment + " | " if comment else "") + penalty_note
+
+        # 保存评分结果
         score_record = ReportScore(
             report_id=report.id,
-            dimension_scores=ai_result.get("dimension_scores", []),
+            dimension_scores=dimension_scores,
             total_score=total,
             grade=grade,
-            ai_comment=ai_result.get("comment", ""),
-            ai_suggestion=ai_result.get("suggestion", ""),
+            ai_comment=comment,
+            ai_suggestion=suggestion,
             raw_response=ai_result,
         )
         db.add(score_record)
@@ -90,8 +118,8 @@ async def trigger_scoring(report_id: str, db: AsyncSession) -> dict:
             "report_id": report.id,
             "total_score": total,
             "grade": grade,
-            "ai_comment": ai_result.get("comment", ""),
-            "ai_suggestion": ai_result.get("suggestion", ""),
+            "ai_comment": comment,
+            "ai_suggestion": suggestion,
         }
     except Exception as e:
         log_error(f"评分失败 - report_id={report_id}: {str(e)}")
