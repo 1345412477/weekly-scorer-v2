@@ -194,9 +194,7 @@
         <div class="schedule-row">
           <label class="field-label">运行时间</label>
           <div class="time-inputs">
-            <InputNumber v-model.number="schedule.hour" :min="0" :max="23" :step="1" :showButtons="false" size="large" :disabled="scheduleSaving" />
-            <span class="time-sep">:</span>
-            <InputNumber v-model.number="schedule.minute" :min="0" :max="59" :step="1" :showButtons="false" size="large" :disabled="scheduleSaving" />
+            <DatePicker v-model="scheduleTime" timeOnly :stepMinute="15" hourFormat="24" :disabled="scheduleSaving" class="schedule-time-picker" />
           </div>
         </div>
 
@@ -460,6 +458,7 @@ const schedule = ref({
   recurrence: 'daily',          // 'daily' / 'weekly'
   weekdays: [0, 1, 2, 3, 4],    // 0=周一 ... 6=周日
 })
+const scheduleTime = ref(null)
 const WEEKDAY_LABELS = ['一', '二', '三', '四', '五', '六', '日']
 const scheduleSaving = ref(false)
 const scheduleMsg = ref(null)
@@ -542,7 +541,20 @@ function resetSchedule() {
     recurrence: 'daily',
     weekdays: [0, 1, 2, 3, 4],
   }
+  scheduleTime.value = makeTime(3, 0)
 }
+
+function scheduleTimeToRef() {
+  scheduleTime.value = makeTime(schedule.value.hour, schedule.value.minute)
+}
+
+function scheduleTimeFromRef() {
+  const t = scheduleTime.value || makeTime(3, 0)
+  schedule.value.hour = t.getHours()
+  schedule.value.minute = t.getMinutes()
+}
+
+watch(scheduleTime, () => { scheduleTimeFromRef() })
 
 watch(
   [submissionWeekday, submissionTime, lateWeekOffset, lateWeekday, lateTime],
@@ -1288,6 +1300,7 @@ async function loadSchedule() {
       recurrence: res.data.recurrence === 'weekly' ? 'weekly' : 'daily',
       weekdays,
     }
+    scheduleTimeToRef()
   } catch (e) {
     console.warn('[schedule] 加载失败:', e)
   }
@@ -1296,6 +1309,7 @@ async function loadSchedule() {
 async function saveSchedule() {
   scheduleSaving.value = true
   scheduleMsg.value = null
+  scheduleTimeFromRef()
   try {
     const recurrence = schedule.value.recurrence === 'weekly' ? 'weekly' : 'daily'
     const weekdays = Array.isArray(schedule.value.weekdays)
@@ -2321,6 +2335,9 @@ useDataRefresh({
   display: flex;
   align-items: center;
   gap: 8px;
+}
+.schedule-time-picker {
+  width: 140px;
 }
 .time-sep {
   font-size: 24px;
