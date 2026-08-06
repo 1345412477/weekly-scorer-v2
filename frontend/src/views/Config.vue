@@ -185,7 +185,7 @@
             :options="[{ label: '每天', value: 'daily' }, { label: '每周（按星期）', value: 'weekly' }]"
             optionLabel="label"
             optionValue="value"
-            :disabled="!schedule.enabled || scheduleSaving"
+            :disabled="scheduleSaving"
             class="schedule-select"
             placeholder="选择频率"
           />
@@ -194,9 +194,9 @@
         <div class="schedule-row">
           <label class="field-label">运行时间</label>
           <div class="time-inputs">
-            <InputNumber v-model.number="schedule.hour" :min="0" :max="23" :step="1" :showButtons="false" size="large" :disabled="!schedule.enabled" />
+            <InputNumber v-model.number="schedule.hour" :min="0" :max="23" :step="1" :showButtons="false" size="large" :disabled="scheduleSaving" />
             <span class="time-sep">:</span>
-            <InputNumber v-model.number="schedule.minute" :min="0" :max="59" :step="1" :showButtons="false" size="large" :disabled="!schedule.enabled" />
+            <InputNumber v-model.number="schedule.minute" :min="0" :max="59" :step="1" :showButtons="false" size="large" :disabled="scheduleSaving" />
           </div>
         </div>
 
@@ -208,8 +208,8 @@
               :key="idx"
               type="button"
               class="weekday-btn"
-              :class="{ 'selected': isWeekdaySelected(idx), 'disabled': !schedule.enabled }"
-              :disabled="!schedule.enabled"
+              :class="{ 'selected': isWeekdaySelected(idx), 'disabled': scheduleSaving }"
+              :disabled="scheduleSaving"
               @click="toggleWeekday(idx)"
             >
               {{ label }}
@@ -226,6 +226,10 @@
               系统会在每周 {{ formatWeekdayHint() }} {{ String(schedule.hour).padStart(2, '0') }}:{{ String(schedule.minute).padStart(2, '0') }} 自动聚合本周的考勤与沟通数据
             </template>
           </span>
+        </div>
+
+        <div class="schedule-actions">
+          <Button label="保存定时设置" icon="pi pi-save" size="small" :loading="scheduleSaving" @click="saveSchedule" />
         </div>
 
         <div v-if="scheduleMsg" class="schedule-msg" :class="scheduleMsg.type">
@@ -1318,7 +1322,6 @@ async function saveSchedule() {
 }
 
 function toggleWeekday(day) {
-  if (!schedule.value.enabled) return
   const idx = schedule.value.weekdays.indexOf(day)
   if (idx >= 0) {
     if (schedule.value.weekdays.length > 1) {
