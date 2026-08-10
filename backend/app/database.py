@@ -150,6 +150,8 @@ async def _migrate_schema():
         "manual_override": "TEXT",
         "modified_by": "VARCHAR(100)",
         "modified_at": "TIMESTAMP",
+        "error_message": "TEXT DEFAULT ''",
+        "retry_count": "INTEGER NOT NULL DEFAULT 0",
         "recurrence": "VARCHAR(16) DEFAULT 'daily'",
         "weekdays": "VARCHAR(32) DEFAULT ''",
         "last_run_date": "DATE",
@@ -176,6 +178,8 @@ async def _migrate_schema():
             ("manual_override", "TEXT"),
             ("modified_by", "VARCHAR(100)"),
             ("modified_at", "TIMESTAMP"),
+            ("error_message", "TEXT DEFAULT ''"),
+            ("retry_count", "INTEGER NOT NULL DEFAULT 0"),
         ]
         for col_name, col_def in weekly_agg_additions:
             if col_name not in cols:
@@ -385,3 +389,27 @@ async def _migrate_schema():
                     logger.info("[migration] weekly_aggregates 添加唯一约束 uq_aggregate_author_week")
             except Exception as e:
                 logger.warning(f"[migration] weekly_aggregates 添加唯一约束失败: {e}")
+
+        # 10) weekly_aggregates 表：idx_aggregate_status 索引（加速按状态查询）
+        try:
+            if _IS_SQLITE:
+                idx_check = await conn.execute(text(
+                    "SELECT name FROM sqlite_master WHERE type='index' AND name='idx_aggregate_status'"
+                ))
+                if not idx_check.scalar():
+                    await conn.execute(text(
+                        "CREATE INDEX idx_aggregate_status ON weekly_aggregates (status)"
+                    ))
+                    logger.info("[migration] weekly_aggregates 已创建索引 idx_aggregate_status")
+            elif _IS_POSTGRES:
+                idx_check = await conn.execute(text("""
+                    SELECT indexname FROM pg_indexes
+                    WHERE tablename = 'weekly_aggregates' AND indexname = 'idx_aggregate_status'
+                """))
+                if not idx_check.scalar():
+                    await conn.execute(text(
+                        "CREATE INDEX idx_aggregate_status ON weekly_aggregates (status)"
+                    ))
+                    logger.info("[migration] weekly_aggregates 已创建索引 idx_aggregate_status")
+        except Exception as e:
+            logger.warning(f"[migration] weekly_aggregates 创建 idx_aggregate_status 索引失败: {e}")
