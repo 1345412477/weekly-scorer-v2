@@ -179,10 +179,10 @@
           </template>
         </Column>
 
-        <!-- 更新时间 -->
-        <Column header="更新时间" style="min-width:160px">
+        <!-- 提交时间（周报提交时间，非评分更新时间） -->
+        <Column header="提交时间" style="min-width:160px">
           <template #body="{ data }">
-            <span class="text-muted small">{{ formatBeijingTimeShort(data.modified_at || data.updated_at) }}</span>
+            <span class="text-muted small">{{ formatBeijingTimeShort(data.report_created_at) || '-' }}</span>
           </template>
         </Column>
 

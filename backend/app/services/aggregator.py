@@ -675,13 +675,14 @@ async def restore_ai_scores(db: AsyncSession, aggregate_id: str) -> Optional[Wee
 # 列表查询 & report_id 映射
 # ============================================================
 
-async def _get_report_ids_for_aggregates(db: AsyncSession, aggregates: List[WeeklyAggregate]) -> Dict[str, str]:
+async def _get_report_info_for_aggregates(db: AsyncSession, aggregates: List[WeeklyAggregate]) -> Dict[str, Dict[str, Any]]:
+    """批量查询聚合记录对应的周报id与创建（提交）时间。返回 {aggregate_id: {"id": report_id, "created_at": report.created_at}}"""
     if not aggregates:
         return {}
     pairs = [(a.author_name, a.week_start) for a in aggregates if a.author_name and a.week_start]
     if not pairs:
         return {}
-    id_map = {}
+    info_map: Dict[str, Dict[str, Any]] = {}
     try:
         q = select(WeeklyReport).where(
             tuple_(WeeklyReport.author_name, WeeklyReport.week_start).in_(pairs)
@@ -691,14 +692,14 @@ async def _get_report_ids_for_aggregates(db: AsyncSession, aggregates: List[Week
         for r in res.scalars().all():
             key = (r.author_name, r.week_start)
             if key not in reports_by_key:
-                reports_by_key[key] = r.id
+                reports_by_key[key] = {"id": r.id, "created_at": r.created_at}
         for a in aggregates:
             key = (a.author_name, a.week_start)
             if key in reports_by_key:
-                id_map[a.id] = reports_by_key[key]
+                info_map[a.id] = reports_by_key[key]
     except Exception as e:
-        logger.warning(f"[聚合] 批量查找周报id失败: {e}")
-    return id_map
+        logger.warning(f"[聚合] 批量查找周报信息失败: {e}")
+    return info_map
 
 
 async def list_aggregates(
@@ -751,7 +752,7 @@ async def list_aggregates(
 
     result = await db.execute(q.offset((page - 1) * size).limit(size))
     items = list(result.scalars().all())
-    report_id_map = await _get_report_ids_for_aggregates(db, items)
+    report_info_map = await _get_report_info_for_aggregates(db, items)
 
     # 获取有数据的周列表（用于前端筛选）
     weeks_q = select(WeeklyAggregate.week_start).distinct()
@@ -759,7 +760,10 @@ async def list_aggregates(
     available_weeks = [str(row[0]) for row in weeks_result.fetchall() if row[0]]
 
     return {
-        "items": [aggregate_to_dict(a, report_id_map.get(a.id)) for a in items],
+        "items": [aggregate_to_dict(a,
+                                    (report_info_map.get(a.id) or {}).get("id"),
+                                    (report_info_map.get(a.id) or {}).get("created_at"))
+                  for a in items],
         "total": total,
         "page": page,
         "size": size,
@@ -767,7 +771,8 @@ async def list_aggregates(
     }
 
 
-def aggregate_to_dict(a: WeeklyAggregate, report_id: Optional[str] = None) -> Dict[str, Any]:
+def aggregate_to_dict(a: WeeklyAggregate, report_id: Optional[str] = None,
+                      report_created_at: Optional[datetime] = None) -> Dict[str, Any]:
     return {
         "id": a.id,
         "author_name": a.author_name,
@@ -785,6 +790,7 @@ def aggregate_to_dict(a: WeeklyAggregate, report_id: Optional[str] = None) -> Di
         "modified_at": a.modified_at.isoformat() if a.modified_at else None,
         "created_at": a.created_at.isoformat() if hasattr(a, "created_at") and a.created_at else None,
         "updated_at": a.updated_at.isoformat() if hasattr(a, "updated_at") and a.updated_at else None,
+        "report_created_at": report_created_at.isoformat() if report_created_at else None,
         "status": getattr(a, "status", "done"),
         "error_message": getattr(a, "error_message", "") or "",
         "retry_count": int(getattr(a, "retry_count", 0) or 0),
