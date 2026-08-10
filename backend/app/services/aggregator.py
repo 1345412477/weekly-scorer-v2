@@ -751,11 +751,14 @@ async def list_aggregates(
 
     # 排序规则（稳定，不随评分更新而波动）：
     #   1. 周次倒序：最新的周排在前面
-    #   2. 提交时间升序：同一周内按提交先后排序（先提交的在前，未提交的兜底在后）
-    submit_sort_key = func.coalesce(WeeklyReport.submit_time, WeeklyReport.created_at, WeeklyAggregate.created_at)
+    #   2. 已提交优先：有周报提交记录的排在未提交的前面
+    #   3. 提交时间倒序：同一周内谁最后提交谁排在前面
+    has_report_flag = WeeklyReport.id.isnot(None)
+    submit_sort_key = func.coalesce(WeeklyReport.submit_time, WeeklyReport.created_at)
     q = q.order_by(
         WeeklyAggregate.week_start.desc(),
-        submit_sort_key.asc(),
+        has_report_flag.desc(),
+        submit_sort_key.desc(),
     )
 
     # 计数也要去重
