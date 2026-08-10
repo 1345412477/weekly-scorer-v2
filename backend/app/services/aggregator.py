@@ -728,6 +728,17 @@ async def list_aggregates(
         inner_q, WeeklyAggregate.id == inner_q.c.id
     ).where(inner_q.c.rn == 1)
 
+    # 为了按"提交时间"排序，需要 LEFT JOIN WeeklyReport 获取 submit_time/created_at
+    # 关联键：author_name + week_start
+    q = q.join(
+        WeeklyReport,
+        and_(
+            WeeklyReport.author_name == WeeklyAggregate.author_name,
+            WeeklyReport.week_start == WeeklyAggregate.week_start,
+        ),
+        isouter=True,
+    )
+
     conditions = []
     if author_name:
         conditions.append(WeeklyAggregate.author_name.contains(author_name))
@@ -738,7 +749,14 @@ async def list_aggregates(
     if conditions:
         q = q.where(and_(*conditions))
 
-    q = q.order_by(WeeklyAggregate.updated_at.desc())
+    # 排序规则（稳定，不随评分更新而波动）：
+    #   1. 周次倒序：最新的周排在前面
+    #   2. 提交时间升序：同一周内按提交先后排序（先提交的在前，未提交的兜底在后）
+    submit_sort_key = func.coalesce(WeeklyReport.submit_time, WeeklyReport.created_at, WeeklyAggregate.created_at)
+    q = q.order_by(
+        WeeklyAggregate.week_start.desc(),
+        submit_sort_key.asc(),
+    )
 
     # 计数也要去重
     count_q = select(WeeklyAggregate).join(
