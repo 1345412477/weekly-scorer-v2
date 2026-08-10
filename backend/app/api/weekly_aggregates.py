@@ -19,6 +19,7 @@ from app.core.auth import require_admin, write_operation_log
 from app.services.aggregator import list_aggregates, update_aggregate_scores, restore_ai_scores
 from app.utils.file_utils import is_safe_upload_path
 from app.utils.time_utils import bj_now
+from app.utils.logger import log_warning
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/v1/weekly-aggregates", tags=["周评列表"])
@@ -129,6 +130,86 @@ async def restore_ai(
 
     from app.services.aggregator import aggregate_to_dict
     return {"message": "已恢复 AI 评分", "aggregate": aggregate_to_dict(agg)}
+
+
+@router.post("/{aggregate_id}/rescore")
+async def rescore_aggregate(
+    aggregate_id: str,
+    request: Request,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """对单条周评记录（pending / failed 状态）强制重新执行 AI 周报评分 + 聚合."""
+    from app.services.scoring import trigger_scoring
+    from app.services.aggregator import auto_aggregate, aggregate_to_dict
+
+    agg_result = await db.execute(
+        select(WeeklyAggregate).where(WeeklyAggregate.id == aggregate_id).limit(1)
+    )
+    agg = agg_result.scalar_one_or_none()
+    if not agg:
+        raise HTTPException(status_code=404, detail="周评记录不存在")
+
+    # 找到该员工该周的 WeeklyReport
+    rep_result = await db.execute(
+        select(WeeklyReport).where(
+            WeeklyReport.author_name == agg.author_name,
+            WeeklyReport.week_start == agg.week_start,
+        ).limit(1)
+    )
+    report = rep_result.scalar_one_or_none()
+    if not report:
+        raise HTTPException(
+            status_code=400,
+            detail=f"未找到 {agg.author_name} {agg.week_start.isoformat()} 这一周的周报提交记录，无法重新评分。"
+                   f"请先让员工提交周报。"
+        )
+
+    # 重置失败状态：清错误、retry_count 归零，状态先置 pending
+    agg.error_message = ""
+    agg.retry_count = 0
+    agg.status = "pending"
+    await db.commit()
+
+    # 立即调用 trigger_scoring 重新评分（注意：可能比较慢）
+    try:
+        await trigger_scoring(report.id, db)
+    except Exception as e:
+        # 评分失败：将错误持久化并累加重试计数
+        err_msg = str(e)[:500]
+        agg.error_message = err_msg
+        agg.retry_count = 1
+        agg.status = "pending" if 1 < 3 else "failed"
+        await db.commit()
+        await db.refresh(agg)
+        log_warning(
+            f"[rescore] 管理员强制重试评分失败 author_name={agg.author_name}, "
+            f"aggregate_id={aggregate_id}: {err_msg}"
+        )
+        # 仍然继续聚合，保证其它分数（考勤/沟通）同步
+    finally:
+        # 重新聚合（force=False 会走同步逻辑，pending 分支可能再次触发评分）
+        await auto_aggregate(
+            db,
+            person_id=agg.person_id,
+            author_name=agg.author_name,
+            department=agg.department or "",
+            department_id=agg.department_id,
+            week_start=agg.week_start,
+            week_end=agg.week_end,
+            preserve_manual=True,
+            force=True,  # force=True 让它跳过 status in (done/manual/pending) 的早退
+        )
+
+    await db.commit()
+    await db.refresh(agg)
+
+    await write_operation_log(
+        db, admin, "rescore", "weekly_aggregate", aggregate_id, request,
+        {"author_name": agg.author_name, "week_start": str(agg.week_start),
+         "new_status": agg.status, "has_report_score": agg.report_score is not None},
+    )
+    return {"message": "重新评分完成", "aggregate": aggregate_to_dict(agg, report_id=report.id)}
 
 
 # ===============================

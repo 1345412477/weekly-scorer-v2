@@ -50,6 +50,7 @@ def submit_report_scoring(report_id: str) -> str:
     task_id = f"score_report_{report_id}_{uuid.uuid4().hex[:8]}"
 
     async def _do():
+        report_info = None  # (person_id, author_name, department, department_id, week_start, week_end)
         try:
             _running_tasks[task_id] = {"type": "report_scoring", "report_id": report_id,
                                         "status": "running", "started_at": bj_now().isoformat()}
@@ -58,6 +59,13 @@ def submit_report_scoring(report_id: str) -> str:
             from app.models.models import WeeklyReport
             from sqlalchemy import select
             async with async_session() as db:
+                # 先读一次报告信息，失败分支也要用
+                rep_result = await db.execute(select(WeeklyReport).where(WeeklyReport.id == report_id))
+                report = rep_result.scalar_one_or_none()
+                if report:
+                    report_info = (report.person_id, report.author_name, report.department or "",
+                                   report.department_id, report.week_start, report.week_end)
+
                 result = await trigger_scoring(report_id, db)
             log_info(f"[task] 周报评分完成 report_id={report_id}, total={result.get('total_score')}")
 
@@ -65,29 +73,117 @@ def submit_report_scoring(report_id: str) -> str:
             try:
                 from app.services.aggregator import auto_aggregate
                 async with async_session() as db:
-                    # 读取报告信息
-                    rep_result = await db.execute(select(WeeklyReport).where(WeeklyReport.id == report_id))
-                    report = rep_result.scalar_one_or_none()
-                    if report:
+                    if report_info:
+                        pid, name, dept, dept_id, ws, we = report_info
                         await auto_aggregate(
                             db,
-                            person_id=report.person_id,
-                            author_name=report.author_name,
-                            department=report.department,
-                            department_id=report.department_id,
-                            week_start=report.week_start,
-                            week_end=report.week_end,
+                            person_id=pid,
+                            author_name=name,
+                            department=dept,
+                            department_id=dept_id,
+                            week_start=ws,
+                            week_end=we,
                             preserve_manual=True,
                             force=False,
                         )
-                        log_info(f"[task] 聚合更新完成 author_name={report.author_name}")
+                        log_info(f"[task] 聚合更新完成 author_name={name}")
             except Exception as e:
                 log_warning(f"[task] 聚合更新失败 report_id={report_id}: {e}")
 
             _running_tasks[task_id]["status"] = "done"
         except Exception as e:
-            log_error(f"[task] 周报评分失败 report_id={report_id}: {e}")
-            _running_tasks[task_id]["status"] = f"failed: {str(e)[:100]}"
+            err_msg = str(e)[:500]
+            log_error(f"[task] 周报评分失败 report_id={report_id}: {err_msg}")
+            _running_tasks[task_id]["status"] = f"failed: {err_msg[:100]}"
+
+            # ===== 关键修复：评分失败后仍必须创建/更新聚合，持久化错误消息（防止永远卡 pending）=====
+            # 1. 先用 report_id 再尝试读一次 report_info
+            if report_info is None:
+                try:
+                    from app.database import async_session as _s
+                    from app.models.models import WeeklyReport as _WR
+                    from sqlalchemy import select as _sel
+                    async with _s() as _db:
+                        _rr = await _db.execute(_sel(_WR).where(_WR.id == report_id))
+                        _rpt = _rr.scalar_one_or_none()
+                        if _rpt:
+                            report_info = (_rpt.person_id, _rpt.author_name, _rpt.department or "",
+                                           _rpt.department_id, _rpt.week_start, _rpt.week_end)
+                except Exception as inner_e:
+                    log_warning(f"[task] 失败后二次读取周报信息也失败 report_id={report_id}: {inner_e}")
+
+            if report_info is not None:
+                try:
+                    from app.services.aggregator import auto_aggregate, WeeklyAggregate as _WAgg
+                    from app.database import async_session as _s2
+                    from sqlalchemy import select as _sel2
+                    from app.utils.time_utils import bj_now as _bjnow
+                    from datetime import datetime as _dt
+
+                    pid, name, dept, dept_id, ws, we = report_info
+
+                    # 2. 先执行一次聚合 → 创建出 pending 状态记录（若不存在）
+                    #    即使 pending 聚合内触发了评分并失败，也会把错误信息写进去
+                    async with _s2() as _db:
+                        try:
+                            await auto_aggregate(
+                                _db,
+                                person_id=pid, author_name=name, department=dept,
+                                department_id=dept_id, week_start=ws, week_end=we,
+                                preserve_manual=True, force=False,
+                            )
+                            await _db.commit()
+                            log_info(f"[task] 评分失败后已触发聚合 author_name={name}（将走重试/转失败逻辑）")
+                        except Exception:
+                            await _db.rollback()
+                            # 3. 兜底：如果 auto_aggregate 自身也失败，直接写 DB 记录错误
+                            rs = await _db.execute(
+                                _sel2(_WAgg).where(
+                                    _WAgg.author_name == name,
+                                    _WAgg.week_start == ws,
+                                ).limit(1)
+                            )
+                            agg = rs.scalar_one_or_none()
+                            if agg is None:
+                                agg = _WAgg(
+                                    person_id=pid,
+                                    author_name=name,
+                                    department=dept or "",
+                                    department_id=dept_id,
+                                    week_start=ws,
+                                    week_end=we,
+                                    report_score=None,
+                                    attendance_score=None,
+                                    chat_score=None,
+                                    composite_score=None,
+                                    status="failed",
+                                    error_message=err_msg,
+                                    retry_count=1,
+                                    manual_override={},
+                                )
+                                _db.add(agg)
+                            else:
+                                agg.error_message = err_msg
+                                agg.retry_count = int(getattr(agg, "retry_count", 0) or 0) + 1
+                                if agg.retry_count >= 3:
+                                    agg.status = "failed"
+                                else:
+                                    agg.status = "pending"
+                            agg.updated_at = _bjnow()
+                            await _db.commit()
+                            log_warning(
+                                f"[task] 评分失败+聚合也失败，已直接写入 WeeklyAggregate "
+                                f"status={agg.status}, retry_count={agg.retry_count} author_name={name}"
+                            )
+                except Exception as outer_e:
+                    log_error(
+                        f"[task] 评分失败后持久化错误到聚合表再次失败 report_id={report_id}: {outer_e}"
+                    )
+            else:
+                log_error(
+                    f"[task] 无法获取周报信息 report_id={report_id}，"
+                    f"错误信息无法持久化到聚合表（下次聚合需自行检查）"
+                )
 
     try:
         loop = asyncio.get_event_loop()

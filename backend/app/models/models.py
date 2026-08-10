@@ -244,6 +244,7 @@ class WeeklyAggregate(Base):
     __table_args__ = (
         Index("idx_aggregate_week_person", "week_start", "person_id"),
         Index("idx_aggregate_week_author", "week_start", "author_name"),
+        Index("idx_aggregate_status", "status"),
         UniqueConstraint("author_name", "week_start", name="uq_aggregate_author_week"),
     )
 
@@ -259,8 +260,13 @@ class WeeklyAggregate(Base):
     chat_score = Column(DECIMAL(5, 1), nullable=True)
     composite_score = Column(DECIMAL(6, 2), nullable=True)
 
-    # 评分状态：pending(待评分) / processing(评分中) / done(已完成) / manual(已手动覆盖)
+    # 评分状态：pending(待评分/评分中) / processing(评分中) / done(已完成)
+    #         / manual(已手动覆盖) / failed(评分失败，见 error_message)
     status = Column(String(20), nullable=False, default="pending")
+    # 最近一次失败原因（如：AI API 超时、JSON 解析失败、网络错误等）
+    error_message = Column(Text, nullable=True, default="")
+    # 重试次数（用于前端判断"卡很久的评分中"展示失败 Tag）
+    retry_count = Column(Integer, nullable=False, default=0)
 
     # 人工修改痕迹
     manual_override = Column(JSON, nullable=True, default=dict)

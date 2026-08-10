@@ -323,6 +323,7 @@ export const aggregateAPI = {
   list: (params) => api.get('/weekly-aggregates', { params }),
   update: (id, data) => api.put(`/weekly-aggregates/${id}`, data),
   restoreAI: (id) => api.post(`/weekly-aggregates/${id}/restore-ai`),
+  rescore: (id) => scoringApi.post(`/weekly-aggregates/${id}/rescore`),
   delete: (id) => api.delete(`/weekly-aggregates/${id}`),
   batchDelete: (ids) => api.post('/weekly-aggregates/batch-delete', { ids }),
   downloadReport: (id) => api.get(`/weekly-aggregates/${id}/download-report`, { responseType: 'blob' }),

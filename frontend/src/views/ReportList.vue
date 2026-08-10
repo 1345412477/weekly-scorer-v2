@@ -131,46 +131,46 @@
         <!-- 周报分 -->
         <Column header="周报分" style="min-width:100px">
           <template #body="{ data }">
-            <template v-if="data.status === 'pending'">
-              <span class="text-muted">评分中...</span>
-            </template>
-            <template v-else>
-              <span
-                v-if="data.report_score != null"
-                :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.report_score) === 0 }]"
-                @dblclick="openEdit(data, 'report_score')"
-                :title="'双击修改周报分'">
-                {{ Math.round(Number(data.report_score)) }}
-              </span>
-              <span v-else class="text-muted">/</span>
-            </template>
+            <span
+              v-if="data.report_score != null"
+              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.report_score) === 0 }]"
+              @dblclick="openEdit(data, 'report_score')"
+              :title="'双击修改周报分'">
+              {{ Math.round(Number(data.report_score)) }}
+            </span>
+            <span v-else-if="getStatusMeta(data)"
+                  class="status-inline"
+                  :class="getStatusMeta(data).severity === 'danger' ? 'text-danger' : (getStatusMeta(data).severity === 'warning' ? 'text-warning' : 'text-muted')"
+                  :title="getStatusMeta(data).tooltip">
+              <i :class="getStatusMeta(data).icon" :style="{ marginRight: '4px' }"></i>{{ getStatusMeta(data).text }}
+            </span>
+            <span v-else class="text-muted">/</span>
           </template>
         </Column>
 
         <!-- 沟通分 -->
         <Column header="沟通分" style="min-width:100px">
           <template #body="{ data }">
-            <template v-if="data.status === 'pending'">
-              <span class="text-muted">-</span>
-            </template>
-            <template v-else>
-              <span
-                v-if="data.chat_score != null"
-                :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.chat_score) === 0 }]"
-                @dblclick="openEdit(data, 'chat_score')"
-                :title="'双击修改沟通分'">
-                {{ Math.round(Number(data.chat_score)) }}
-              </span>
-              <span v-else class="text-muted">/</span>
-            </template>
+            <span
+              v-if="data.chat_score != null"
+              :class="['score-cell', 'editable', { 'score-cell-zero': Number(data.chat_score) === 0 }]"
+              @dblclick="openEdit(data, 'chat_score')"
+              :title="'双击修改沟通分'">
+              {{ Math.round(Number(data.chat_score)) }}
+            </span>
+            <span v-else class="text-muted">/</span>
           </template>
         </Column>
 
         <!-- 总分 -->
         <Column header="总分" style="min-width:110px">
           <template #body="{ data }">
-            <template v-if="data.status === 'pending'">
-              <Tag value="评分中" severity="warn" icon="pi pi-spin pi-spinner" />
+            <template v-if="getStatusMeta(data)">
+              <Tag :value="getStatusMeta(data).text"
+                   :severity="getStatusMeta(data).severity"
+                   :icon="getStatusMeta(data).icon"
+                   :pt="getStatusMeta(data).severity === 'danger' ? { root: { style: 'background:#fde2e2;color:#b71c1c;border:1px solid #f5b7b7' } } : undefined"
+                   :title="getStatusMeta(data).tooltip" />
             </template>
             <template v-else>
               <ScoreBadge v-if="data.composite_score != null" :score="Number(data.composite_score)" size="sm" />
@@ -187,9 +187,17 @@
         </Column>
 
         <!-- 操作 -->
-        <Column header="操作" style="min-width:320px" :frozen="false">
+        <Column header="操作" style="min-width:420px" :frozen="false">
           <template #body="{ data }">
             <div class="row-actions">
+              <Button
+                v-if="data.status === 'failed' || isPendingTimeout(data)"
+                label="重新评分"
+                :icon="rescoringIds.has(data.id) ? 'pi pi-spin pi-spinner' : 'pi pi-replay'"
+                size="small" outlined severity="warning"
+                :disabled="rescoringIds.has(data.id)"
+                :loading="rescoringIds.has(data.id)"
+                @click="onRescore(data)" />
               <Button label="查看周报" icon="pi pi-eye"
                       size="small" text severity="info" @click="viewReport(data)" />
               <Button label="下载周报" icon="pi pi-download"
@@ -268,6 +276,7 @@ const scoringStatus = reactive({
 let scoringPollTimer = null
 let dataPollTimer = null
 const triggerLoading = ref(false)
+const rescoringIds = ref(new Set())  // 单条重新评分的 loading 状态
 
 async function fetchScoringStatus() {
   try {
@@ -691,6 +700,83 @@ function onDelete(data) {
       const msg = e.response?.data?.detail || '删除失败'
       toast.add({ severity: 'error', summary: msg, life: 3000 })
     }
+  }
+}
+
+/** 判断 pending 是否超时（>=20分钟 或 retry_count>=1） */
+function isPendingTimeout(data) {
+  if (!data || data.status !== 'pending') return false
+  if (Number(data.retry_count || 0) >= 1) return true
+  const ts = data.modified_at || data.updated_at || data.created_at
+  if (!ts) return false
+  try {
+    const t = typeof ts === 'string' ? Date.parse(ts.replace('Z', '')) : Number(ts)
+    if (!t) return false
+    return Date.now() - t > 20 * 60 * 1000
+  } catch {
+    return false
+  }
+}
+
+/** 获取状态 Tag 的元数据（failed / pending 超时 / 评分中）*/
+function getStatusMeta(data) {
+  if (!data) return null
+  if (data.status === 'failed') {
+    return {
+      text: '评分失败',
+      severity: 'danger',
+      icon: 'pi pi-times-circle',
+      tooltip: data.error_message || '评分连续失败，已停止自动重试'
+    }
+  }
+  if (data.status === 'pending') {
+    const retryCount = Number(data.retry_count || 0)
+    if (isPendingTimeout(data)) {
+      return {
+        text: retryCount ? `重试中(${retryCount})` : '评分超时',
+        severity: 'warning',
+        icon: 'pi pi-exclamation-triangle',
+        tooltip: data.error_message || '评分时间过长，建议点击"重新评分"手动重试'
+      }
+    }
+    return {
+      text: '评分中',
+      severity: 'warn',
+      icon: 'pi pi-spin pi-spinner',
+      tooltip: 'AI 正在评分，请稍候…'
+    }
+  }
+  return null
+}
+
+async function onRescore(data) {
+  const id = data.id
+  const set = new Set(rescoringIds.value)
+  set.add(id)
+  rescoringIds.value = set
+  try {
+    const res = await aggregateAPI.rescore(id)
+    const newAgg = res.data?.aggregate || {}
+    if (newAgg.status === 'done' || newAgg.report_score != null) {
+      toast.add({ severity: 'success', summary: `${data.author_name} 重新评分成功`, life: 3000 })
+    } else if (newAgg.status === 'failed') {
+      toast.add({
+        severity: 'warn',
+        summary: `${data.author_name} 仍评分失败：${(newAgg.error_message || '').slice(0, 60)}`,
+        life: 4500
+      })
+    } else {
+      toast.add({ severity: 'info', summary: `${data.author_name} 已提交重新评分`, life: 2500 })
+    }
+    loadData()
+  } catch (e) {
+    const msg = e.response?.data?.detail || '重新评分失败，请稍后重试'
+    toast.add({ severity: 'error', summary: msg, life: 4500 })
+    loadData()
+  } finally {
+    const next = new Set(rescoringIds.value)
+    next.delete(id)
+    rescoringIds.value = next
   }
 }
 

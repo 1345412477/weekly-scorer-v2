@@ -377,10 +377,82 @@ async def auto_aggregate(
             if status == "pending" and new_report_score is not None:
                 agg.status = "done"
             elif status == "pending" and new_report_score is None:
-                logger.warning(
-                    f"[聚合] {author_name} 该周状态=pending 但无 report_score（week_start={week_start}），"
-                    f"无法自动转为 done，请检查该员工是否已提交周报"
-                )
+                # 有周报对象但未评分 → 主动重试 AI 评分（修复"评分中"卡住）
+                if new_report_obj is not None:
+                    from app.services.scoring import trigger_scoring
+                    try:
+                        logger.info(
+                            f"[聚合] {author_name} 该周状态=pending 且无评分，"
+                            f"主动重试 AI 评分（report_id={new_report_obj.id}）"
+                        )
+                        await trigger_scoring(new_report_obj.id, db)
+                        # 评分成功后，重新读取 report_score
+                        retry_score, retry_rep, retry_sid = await _get_report_score(
+                            db, author_name, week_start, week_end
+                        )
+                        if retry_score is not None:
+                            agg.report_score = Decimal(str(round(retry_score, 1)))
+                            if retry_sid:
+                                agg.report_score_id = retry_sid
+                            needs_update = True
+                            # 重算总分（之前的 needs_update 分支已执行过，此处补算）
+                            total = (
+                                float(agg.report_score or 0)
+                                + float(agg.attendance_score or 0)
+                                + float(agg.chat_score or 0)
+                            )
+                            agg.composite_score = Decimal(str(round(total, 2)))
+                            agg.status = "done"
+                            logger.info(
+                                f"[聚合] {author_name} 该周重试 AI 评分成功，report_score={retry_score}，"
+                                f"composite={float(agg.composite_score)}，状态 pending→done"
+                            )
+                        else:
+                            # 重试评分完成但仍无分数（如 trigger_scoring 未报错但 ReportScore 未写入）
+                            # → 累加 retry_count 并转 failed
+                            current_retry = int(getattr(agg, "retry_count", 0) or 0) + 1
+                            agg.retry_count = current_retry
+                            agg.error_message = (
+                                "AI 评分执行完成但未生成分数记录（请检查 ReportScore 写入逻辑、"
+                                "或 AI 返回内容不符合评分格式）"
+                            )
+                            if current_retry >= 2:
+                                agg.status = "failed"
+                                logger.warning(
+                                    f"[聚合] {author_name} 该周重试 AI 评分 {current_retry} 次后仍无分数，"
+                                    f"状态 pending→failed"
+                                )
+                            else:
+                                logger.warning(
+                                    f"[聚合] {author_name} 该周第 {current_retry} 次重试 AI 评分后仍无分数，"
+                                    f"状态保持 pending"
+                                )
+                            needs_update = True
+                    except Exception as e:
+                        err_msg = str(e)[:500]
+                        # 累加 retry_count，持久化错误消息；超过 3 次转 failed
+                        current_retry = int(getattr(agg, "retry_count", 0) or 0) + 1
+                        agg.retry_count = current_retry
+                        agg.error_message = err_msg
+                        if current_retry >= 3:
+                            agg.status = "failed"
+                            logger.warning(
+                                f"[聚合] {author_name} 该周重试 AI 评分已达 {current_retry} 次，"
+                                f"状态 pending→failed，错误：{err_msg}"
+                            )
+                        else:
+                            logger.warning(
+                                f"[聚合] {author_name} 该周第 {current_retry} 次重试 AI 评分失败：{err_msg}，"
+                                f"状态保持 pending（下一次聚合继续重试，上限 3 次）"
+                            )
+                        needs_update = True
+                else:
+                    # 连周报对象都没有，pending 不合理 → 降级为 done
+                    agg.status = "done"
+                    logger.warning(
+                        f"[聚合] {author_name} 该周状态=pending 但无任何周报对象，"
+                        f"降级为 done（避免前端永远显示评分中）"
+                    )
 
             agg.updated_at = bj_now()
             await db.commit()
@@ -714,4 +786,6 @@ def aggregate_to_dict(a: WeeklyAggregate, report_id: Optional[str] = None) -> Di
         "created_at": a.created_at.isoformat() if hasattr(a, "created_at") and a.created_at else None,
         "updated_at": a.updated_at.isoformat() if hasattr(a, "updated_at") and a.updated_at else None,
         "status": getattr(a, "status", "done"),
+        "error_message": getattr(a, "error_message", "") or "",
+        "retry_count": int(getattr(a, "retry_count", 0) or 0),
     }
