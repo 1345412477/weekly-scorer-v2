@@ -129,7 +129,7 @@
               </div>
               <div class="summary-thumb" @click="previewVisible = true" title="点击放大查看">
                 <img :src="summaryImageUrl" alt="一周小结截图" />
-                <div class="summary-thumb-mask"><i class="pi pi-window-maximize"></i> 点击放大</div>
+                <span class="zoom-hint"><i class="pi pi-search"></i></span>
               </div>
             </template>
             <div v-else class="empty-hint">该员工本周未上传一周小结</div>
@@ -138,22 +138,13 @@
       </div>
     </div>
 
-    <!-- 一周小结放大预览 -->
-    <Dialog v-model:visible="previewVisible" modal :style="{ width: '90vw', maxWidth: '1100px' }"
-            :contentStyle="{ padding: '0' }" class="summary-preview-dialog">
-      <template #header>
-        <div class="preview-header">
-          <i class="pi pi-image"></i>
-          <span>一周小结 · {{ report.author_name }}（{{ report.week_start }} ~ {{ report.week_end }}）</span>
-        </div>
-      </template>
-      <div class="preview-body" @click="previewVisible = false">
-        <img :src="summaryImageUrl" alt="一周小结截图（放大）" @click.stop />
+    <!-- 一周小结放大查看（与首页操作指南 Lightbox 交互一致） -->
+    <div v-if="previewVisible" class="lightbox-overlay" @click.self="previewVisible = false">
+      <div class="lightbox-content">
+        <button class="lightbox-close" @click="previewVisible = false"><i class="pi pi-times"></i></button>
+        <img :src="summaryImageUrl" alt="一周小结放大查看" class="lightbox-img" />
       </div>
-      <template #footer>
-        <div class="preview-footer-hint">点击空白处或按 ESC 关闭</div>
-      </template>
-    </Dialog>
+    </div>
   </div>
 </template>
 
@@ -165,7 +156,6 @@ import { formatBeijingTimeShort } from '../utils/timeUtil'
 import Card from 'primevue/card'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
-import Dialog from 'primevue/dialog'
 import ScoreBadge from '../components/ui/ScoreBadge.vue'
 import GradeTag from '../components/ui/GradeTag.vue'
 
@@ -310,11 +300,20 @@ async function loadSummary() {
   }
 }
 
-onMounted(loadReport)
+onMounted(() => {
+  loadReport()
+  document.addEventListener('keydown', handleKeydown)
+})
 
 onUnmounted(() => {
+  document.removeEventListener('keydown', handleKeydown)
   if (summaryImageUrl.value) URL.revokeObjectURL(summaryImageUrl.value)
 })
+
+/** ESC 关闭放大查看（与首页操作指南 Lightbox 一致） */
+function handleKeydown(e) {
+  if (e.key === 'Escape') previewVisible.value = false
+}
 </script>
 
 <style scoped>
@@ -675,60 +674,91 @@ onUnmounted(() => {
   width: 100%;
   max-height: 320px;
   object-fit: contain;
-  transition: opacity 0.15s;
 }
 
-.summary-thumb-mask {
+/* 放大镜提示（与首页操作指南一致：右上角蓝色圆点） */
+.zoom-hint {
   position: absolute;
-  inset: 0;
+  top: 8px;
+  right: 8px;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  background: rgba(79, 107, 255, 0.85);
+  color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 6px;
-  background: rgba(0, 0, 0, 0.45);
-  color: #fff;
-  font-size: var(--text-sm);
+  font-size: 13px;
   opacity: 0;
-  transition: opacity 0.2s;
+  transition: opacity 0.25s ease;
+  pointer-events: none;
 }
 
-.summary-thumb:hover .summary-thumb-mask {
+.summary-thumb:hover .zoom-hint {
   opacity: 1;
 }
 
-.summary-thumb:hover img {
-  opacity: 0.75;
-}
-
-/* 放大预览 */
-.preview-header {
+/* ========== Lightbox 放大查看（与首页操作指南一致） ========== */
+.lightbox-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background: rgba(0, 0, 0, 0.75);
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: var(--text-sm);
-  font-weight: var(--font-semibold);
-  color: var(--text-primary);
-}
-
-.preview-body {
-  display: flex;
   justify-content: center;
-  background: #0f1117;
-  cursor: zoom-out;
-  max-height: 78vh;
-  overflow: auto;
+  animation: lightbox-fade-in 0.2s ease;
 }
 
-.preview-body img {
-  display: block;
-  max-width: 100%;
-  height: auto;
+@keyframes lightbox-fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
 }
 
-.preview-footer-hint {
-  font-size: var(--text-xs);
-  color: var(--text-muted);
-  text-align: center;
+.lightbox-content {
+  position: relative;
+  max-width: 90vw;
+  max-height: 90vh;
+  animation: lightbox-zoom-in 0.25s cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes lightbox-zoom-in {
+  from { transform: scale(0.85); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.lightbox-img {
+  max-width: 90vw;
+  max-height: 85vh;
+  object-fit: contain;
+  border-radius: 8px;
+  box-shadow: 0 8px 40px rgba(0, 0, 0, 0.4);
+}
+
+.lightbox-close {
+  position: absolute;
+  top: -14px;
+  right: -14px;
+  width: 36px;
+  height: 36px;
+  border-radius: 50%;
+  border: none;
+  background: #fff;
+  color: #333;
+  font-size: 16px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
+  transition: transform 0.2s ease, background 0.2s ease;
+  z-index: 1;
+}
+
+.lightbox-close:hover {
+  transform: scale(1.1);
+  background: #f5f5f5;
 }
 
 /* ========== 响应式断点 ========== */
