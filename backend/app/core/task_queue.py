@@ -24,6 +24,7 @@ _SUMMARY_UPLOAD_DIR = os.path.abspath(
 # --- 任务状态内存记录（小量够用，重启不丢失评分结果本身在 DB）---
 _running_tasks: Dict[str, Dict[str, Any]] = {}  # task_id -> {type, ref, status, started_at}
 _scheduler_thread: Optional["AggregateSchedulerThread"] = None
+_pending_retry_thread: Optional["PendingRetryThread"] = None  # P0-2: pending 自动重试线程
 _pending_schedule_cfg: Optional[Dict[str, Any]] = None  # 调度线程未启动时保存配置
 _main_event_loop: Optional[asyncio.AbstractEventLoop] = None  # 主事件循环引用（避免线程用 asyncpg 冲突）
 
@@ -67,14 +68,18 @@ def submit_report_scoring(report_id: str) -> str:
                                    report.department_id, report.week_start, report.week_end)
 
                 result = await trigger_scoring(report_id, db)
-            log_info(f"[task] 周报评分完成 report_id={report_id}, total={result.get('total_score')}")
+                log_info(f"[task] 周报评分完成 report_id={report_id}, total={result.get('total_score')}")
 
-            # 评分完成后触发聚合更新（同步周报分到聚合表）
-            try:
-                from app.services.aggregator import auto_aggregate
-                async with async_session() as db:
-                    if report_info:
-                        pid, name, dept, dept_id, ws, we = report_info
+                # ===== P0 修复 1：评分成功后在同一 session 内推进聚合状态 =====
+                # 旧实现：评分 commit 后关闭 session，再开新 session 调 auto_aggregate，
+                #         跨 session 可能读不到刚写入的 ReportScore → 误判"未评分" →
+                #         二次触发 AI 评分 → 失败后 status 卡 pending（前端显示"评分超时"）。
+                # 新实现：同 session 聚合（必然能读到刚 commit 的 ReportScore），
+                #         再用兜底函数强制把滞留 pending 推进为 done。
+                if report_info:
+                    pid, name, dept, dept_id, ws, we = report_info
+                    try:
+                        from app.services.aggregator import auto_aggregate
                         await auto_aggregate(
                             db,
                             person_id=pid,
@@ -86,9 +91,17 @@ def submit_report_scoring(report_id: str) -> str:
                             preserve_manual=True,
                             force=False,
                         )
-                        log_info(f"[task] 聚合更新完成 author_name={name}")
-            except Exception as e:
-                log_warning(f"[task] 聚合更新失败 report_id={report_id}: {e}")
+                        log_info(f"[task] 聚合更新完成（同 session）author_name={name}")
+                    except Exception as agg_e:
+                        await db.rollback()
+                        log_warning(f"[task] 聚合更新失败 report_id={report_id}: {agg_e}")
+
+                    # 兜底：若聚合后仍卡 pending 但评分已写入 → 直接同步分数并置 done
+                    try:
+                        await _force_done_if_scored(db, report_id, report_info)
+                    except Exception as fin_e:
+                        await db.rollback()
+                        log_warning(f"[task] 兜底状态推进失败 report_id={report_id}: {fin_e}")
 
             _running_tasks[task_id]["status"] = "done"
         except Exception as e:
@@ -201,6 +214,49 @@ def submit_report_scoring(report_id: str) -> str:
 
     log_info(f"[task] 已提交周报评分任务: {task_id}")
     return task_id
+
+
+async def _force_done_if_scored(db, report_id: str, report_info):
+    """P0 修复 1 兜底：评分已写入但聚合仍卡 pending 时，直接同步周报分并置 done。
+
+    保证"评分成功"与"状态完成"强一致，不依赖二次聚合是否正确推进状态。
+    必须在 trigger_scoring 同一 session 内调用（评分已 commit，此处必能读到）。
+    """
+    from app.models.models import WeeklyAggregate, ReportScore
+    from sqlalchemy import select
+    from decimal import Decimal
+
+    pid, name, dept, dept_id, ws, we = report_info
+    agg_r = await db.execute(
+        select(WeeklyAggregate).where(
+            WeeklyAggregate.author_name == name,
+            WeeklyAggregate.week_start == ws,
+        ).limit(1)
+    )
+    agg = agg_r.scalar_one_or_none()
+    if agg is None or agg.status != "pending":
+        return  # 聚合已正常推进（done/manual/failed），无需兜底
+
+    score_r = await db.execute(
+        select(ReportScore).where(ReportScore.report_id == report_id).limit(1)
+    )
+    score = score_r.scalar_one_or_none()
+    if score is None or score.total_score is None:
+        return  # 评分确实未写入，交给 P0-2 重试线程处理
+
+    agg.report_score = Decimal(str(round(float(score.total_score), 1)))
+    agg.report_score_id = score.id
+    total = (
+        float(agg.report_score or 0)
+        + float(agg.attendance_score or 0)
+        + float(agg.chat_score or 0)
+    )
+    agg.composite_score = Decimal(str(round(total, 2)))
+    agg.status = "done"
+    agg.error_message = ""
+    agg.updated_at = bj_now()
+    await db.commit()
+    log_info(f"[task] 兜底推进：{name} {ws} pending→done（report_score={agg.report_score}）")
 
 
 def submit_summary_ocr(summary_id: str) -> str:
@@ -543,13 +599,100 @@ async def _aggregate_worker_coro():
         _aggregate_status["last_run_at"] = bj_now().isoformat()
 
 
+class PendingRetryThread(threading.Thread):
+    """P0 修复 2：后台重试线程 — 周期扫描滞留 pending 的聚合记录并自动重评。
+
+    解决问题：评分失败后 retry_count<3 时状态保持 pending，但系统此前无自动重试入口，
+    只能等次日定时聚合（默认 24h）或管理员手动重试 → 前端长时间显示"评分超时"。
+
+    策略：每 5 分钟扫描一次 status=pending 且 updated_at 超过 5 分钟未变化的记录，
+    逐条调用 auto_aggregate：
+    - 若 ReportScore 已存在（历史卡住记录）→ 直接同步分数并置 done（不调 AI，秒级）
+    - 若确实未评分 → 内部自动重试 AI 评分；连续失败达上限后转 failed，不再被扫描
+    """
+
+    SCAN_INTERVAL = 300   # 扫描间隔（秒）
+    STALE_MINUTES = 5     # pending 超过 N 分钟未变化才重试（避开正在评分中的记录）
+    BATCH_LIMIT = 10      # 每轮最多处理条数（防止单轮耗时过长）
+
+    def __init__(self):
+        super().__init__(daemon=True, name="PendingRetry")
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        log_info(f"[pending-retry] pending 自动重试线程已启动（每 {self.SCAN_INTERVAL}s 扫描一次）")
+        while not self._stop_event.is_set():
+            try:
+                self._check_once()
+            except Exception as e:
+                log_error(f"[pending-retry] 重试线程异常: {e}")
+            self._stop_event.wait(self.SCAN_INTERVAL)
+        log_info("[pending-retry] pending 自动重试线程已退出")
+
+    def _check_once(self):
+        global _main_event_loop
+        if not (_main_event_loop and _main_event_loop.is_running()):
+            return
+        future = asyncio.run_coroutine_threadsafe(_retry_pending_coro(), _main_event_loop)
+        future.result(timeout=600)  # 单轮最多等 10 分钟，超时后协程继续在主循环中执行
+
+
+async def _retry_pending_coro():
+    """扫描滞留 pending 的聚合记录并自动重试（auto_aggregate 内部自带失败计数与转 failed 逻辑）"""
+    from app.database import async_session
+    from app.services.aggregator import auto_aggregate
+    from app.models.models import WeeklyAggregate
+    from sqlalchemy import select
+
+    cutoff = bj_now() - timedelta(minutes=PendingRetryThread.STALE_MINUTES)
+    async with async_session() as db:
+        result = await db.execute(
+            select(WeeklyAggregate)
+            .where(
+                WeeklyAggregate.status == "pending",
+                WeeklyAggregate.updated_at < cutoff,
+            )
+            .order_by(WeeklyAggregate.updated_at.asc())
+            .limit(PendingRetryThread.BATCH_LIMIT)
+        )
+        pendings = list(result.scalars().all())
+        if not pendings:
+            return
+
+        log_info(f"[pending-retry] 发现 {len(pendings)} 条滞留 pending 记录，开始自动重试")
+        for agg in pendings:
+            try:
+                await auto_aggregate(
+                    db,
+                    person_id=agg.person_id,
+                    author_name=agg.author_name,
+                    department=agg.department or "",
+                    department_id=agg.department_id,
+                    week_start=agg.week_start,
+                    week_end=agg.week_end,
+                    preserve_manual=True,
+                    force=False,
+                )
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                log_error(
+                    f"[pending-retry] 重试失败 author_name={agg.author_name} "
+                    f"week={agg.week_start}: {e}"
+                )
+        log_info(f"[pending-retry] 本轮重试完成，共处理 {len(pendings)} 条")
+
+
 # ============================================================
 # 启动/关闭
 # ============================================================
 
 async def init_scheduler():
     """在 FastAPI lifespan 中调用 - 启动调度线程"""
-    global _scheduler_thread, _pending_schedule_cfg, _main_event_loop
+    global _scheduler_thread, _pending_schedule_cfg, _main_event_loop, _pending_retry_thread
     _main_event_loop = asyncio.get_running_loop()
     if _scheduler_thread is None or not _scheduler_thread.is_alive():
         _scheduler_thread = AggregateSchedulerThread()
@@ -615,13 +758,21 @@ async def init_scheduler():
         _scheduler_thread.start()
         log_info("[scheduler] 调度系统已就绪，将在下一个配置时间点自动触发聚合评分")
 
+    # P0 修复 2：启动 pending 自动重试线程（每 5 分钟扫描滞留 pending 记录并重试）
+    if _pending_retry_thread is None or not _pending_retry_thread.is_alive():
+        _pending_retry_thread = PendingRetryThread()
+        _pending_retry_thread.start()
+
 
 async def shutdown_scheduler():
     """在 FastAPI lifespan shutdown 中调用"""
-    global _scheduler_thread
+    global _scheduler_thread, _pending_retry_thread
     if _scheduler_thread and _scheduler_thread.is_alive():
         _scheduler_thread.stop()
         _scheduler_thread.join(timeout=5)
+    if _pending_retry_thread and _pending_retry_thread.is_alive():
+        _pending_retry_thread.stop()
+        _pending_retry_thread.join(timeout=5)
     log_info("[scheduler] 调度系统已关闭")
 
 
