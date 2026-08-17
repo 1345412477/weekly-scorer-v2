@@ -3,6 +3,7 @@
 设计原则：
 - 仅接受图片文件上传（.png / .jpg / .jpeg）
 - OCR 失败或关键字段缺失时返回明确 400 错误，不做任何兜底策略
+- 提供管理员端按员工+周查询小结与查看原始截图的接口
 """
 import os
 import uuid
@@ -10,12 +11,14 @@ import logging
 from datetime import datetime, date
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, UploadFile, File
+from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Query
+from fastapi.responses import FileResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
 from app.database import get_db
 from app.models.models import WeeklySummary, Person
+from app.core.auth import require_admin
 from app.services.ocr_service import parse_summary_image, infer_week_range, OCRParseError
 from app.services.aggregator import auto_aggregate
 from app.utils.time_utils import bj_now
@@ -220,3 +223,68 @@ async def upload_summary(
             "composite_score": float(aggregate.composite_score) if aggregate and aggregate.composite_score is not None else None,
         } if aggregate else None,
     }
+
+
+@router.get("/by-week")
+async def get_summary_by_week(
+    author_name: str = Query(..., description="员工姓名"),
+    week_start: str = Query(..., description="周起始日期 YYYY-MM-DD"),
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """管理员：查询某员工某周的一周小结元数据（周报详情页展示截图用）"""
+    try:
+        ws = date.fromisoformat(week_start)
+    except Exception:
+        raise HTTPException(status_code=400, detail="week_start 格式错误，应为 YYYY-MM-DD")
+
+    res = await db.execute(
+        select(WeeklySummary).where(
+            WeeklySummary.author_name == author_name,
+            WeeklySummary.week_start == ws,
+        ).order_by(WeeklySummary.updated_at.desc()).limit(1)
+    )
+    summary = res.scalar_one_or_none()
+    if not summary:
+        return {"found": False, "summary": None}
+
+    return {
+        "found": True,
+        "summary": {
+            "id": summary.id,
+            "author_name": summary.author_name,
+            "week_start": summary.week_start.isoformat(),
+            "week_end": summary.week_end.isoformat(),
+            "work_session_count": summary.work_session_count,
+            "total_minutes": summary.total_minutes,
+            "latest_time": summary.latest_time,
+            "has_image": bool(summary.source_file),
+        },
+    }
+
+
+@router.get("/{summary_id}/image")
+async def get_summary_image(
+    summary_id: str,
+    db: AsyncSession = Depends(get_db),
+    admin=Depends(require_admin),
+):
+    """管理员：获取一周小结原始截图文件"""
+    res = await db.execute(
+        select(WeeklySummary).where(WeeklySummary.id == summary_id).limit(1)
+    )
+    summary = res.scalar_one_or_none()
+    if not summary:
+        raise HTTPException(status_code=404, detail="一周小结记录不存在")
+    if not summary.source_file:
+        raise HTTPException(status_code=404, detail="该小结未保存原始截图")
+
+    # 防路径穿越：仅取文件名，且必须在上传目录内（is_safe_upload_path 已含文件存在检查）
+    from app.utils.file_utils import is_safe_upload_path
+    image_path = os.path.join(UPLOAD_DIR, os.path.basename(summary.source_file))
+    if not is_safe_upload_path(image_path):
+        raise HTTPException(status_code=404, detail="小结截图文件不存在或已被清理")
+
+    ext = os.path.splitext(image_path)[1].lower()
+    media_type = {".png": "image/png", ".jpg": "image/jpeg", ".jpeg": "image/jpeg"}.get(ext, "image/jpeg")
+    return FileResponse(path=image_path, media_type=media_type)

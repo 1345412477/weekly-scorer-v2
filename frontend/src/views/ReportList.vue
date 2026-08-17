@@ -198,7 +198,7 @@
                 :disabled="rescoringIds.has(data.id)"
                 :loading="rescoringIds.has(data.id)"
                 @click="onRescore(data)" />
-              <Button label="查看周报" icon="pi pi-eye"
+              <Button label="查看详情" icon="pi pi-eye"
                       size="small" text severity="info" @click="viewReport(data)" />
               <Button label="下载周报" icon="pi pi-download"
                       size="small" text severity="success" @click="onDownloadReport(data)" />

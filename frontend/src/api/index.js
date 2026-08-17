@@ -260,6 +260,16 @@ export const weeklySummaryAPI = {
     formData.append('file', file)
     return uploadApi.post('/weeklysummary/upload', formData)
   },
+  // 管理员：查询某员工某周的小结元数据（周报详情页展示截图用）
+  getByWeek: (authorName, weekStart) => api.get('/weeklysummary/by-week', {
+    params: { author_name: authorName, week_start: weekStart },
+    _silent: true,
+  }),
+  // 管理员：获取小结原始截图（blob，带 token）
+  getImage: (summaryId) => api.get(`/weeklysummary/${summaryId}/image`, {
+    responseType: 'blob',
+    _silent: true,
+  }),
 }
 
 // 员工首页：周报 + 一周小结 联合上传；统一用周报文件名识别员工

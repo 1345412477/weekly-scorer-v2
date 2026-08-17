@@ -115,25 +115,69 @@
             </div>
           </template>
         </Card>
+
+        <!-- 一周小结截图 -->
+        <Card class="detail-card" style="margin-top:16px">
+          <template #title><i class="pi pi-image" style="color:#4f6bff;margin-right:6px"></i>一周小结截图</template>
+          <template #content>
+            <div v-if="summaryLoading" class="empty-hint">加载中...</div>
+            <template v-else-if="summaryInfo && summaryImageUrl">
+              <div class="summary-meta">
+                <span v-if="summaryInfo.work_session_count != null">工作次数 {{ summaryInfo.work_session_count }} 次</span>
+                <span v-if="summaryInfo.total_minutes != null">总时长 {{ Math.round(summaryInfo.total_minutes / 60 * 10) / 10 }} 小时</span>
+                <span v-if="summaryInfo.latest_time">最晚时间 {{ summaryInfo.latest_time }}</span>
+              </div>
+              <div class="summary-thumb" @click="previewVisible = true" title="点击放大查看">
+                <img :src="summaryImageUrl" alt="一周小结截图" />
+                <div class="summary-thumb-mask"><i class="pi pi-window-maximize"></i> 点击放大</div>
+              </div>
+            </template>
+            <div v-else class="empty-hint">该员工本周未上传一周小结</div>
+          </template>
+        </Card>
       </div>
     </div>
+
+    <!-- 一周小结放大预览 -->
+    <Dialog v-model:visible="previewVisible" modal :style="{ width: '90vw', maxWidth: '1100px' }"
+            :contentStyle="{ padding: '0' }" class="summary-preview-dialog">
+      <template #header>
+        <div class="preview-header">
+          <i class="pi pi-image"></i>
+          <span>一周小结 · {{ report.author_name }}（{{ report.week_start }} ~ {{ report.week_end }}）</span>
+        </div>
+      </template>
+      <div class="preview-body" @click="previewVisible = false">
+        <img :src="summaryImageUrl" alt="一周小结截图（放大）" @click.stop />
+      </div>
+      <template #footer>
+        <div class="preview-footer-hint">点击空白处或按 ESC 关闭</div>
+      </template>
+    </Dialog>
   </div>
 </template>
 
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
-import { reportAPI } from '../api'
+import { reportAPI, weeklySummaryAPI } from '../api'
 import { formatBeijingTimeShort } from '../utils/timeUtil'
 import Card from 'primevue/card'
 import Tag from 'primevue/tag'
 import Button from 'primevue/button'
+import Dialog from 'primevue/dialog'
 import ScoreBadge from '../components/ui/ScoreBadge.vue'
 import GradeTag from '../components/ui/GradeTag.vue'
 
 const route = useRoute()
 const loading = ref(true)
 const report = ref({})
+
+// 一周小结截图
+const summaryLoading = ref(false)
+const summaryInfo = ref(null)
+const summaryImageUrl = ref('')
+const previewVisible = ref(false)
 
 /**
  * 解析周报内容为结构化表格数据
@@ -233,6 +277,8 @@ async function loadReport() {
     const res = await reportAPI.get(route.params.id)
     if (!res || !res.data) return
     report.value = res.data
+    // 周报加载完成后拉取该员工该周的一周小结截图
+    loadSummary()
   } catch (e) {
     console.error('[ReportDetail] 加载失败:', e)
   } finally {
@@ -240,7 +286,35 @@ async function loadReport() {
   }
 }
 
+/** 加载该员工该周的一周小结元数据与截图（blob → objectURL） */
+async function loadSummary() {
+  const { author_name, week_start } = report.value
+  if (!author_name || !week_start) return
+  summaryLoading.value = true
+  try {
+    const res = await weeklySummaryAPI.getByWeek(author_name, week_start)
+    const summary = res?.data?.summary
+    if (!summary || !summary.has_image) return
+
+    const imgRes = await weeklySummaryAPI.getImage(summary.id)
+    if (!imgRes || !imgRes.data) return
+    // 释放旧的 objectURL，避免内存泄漏
+    if (summaryImageUrl.value) URL.revokeObjectURL(summaryImageUrl.value)
+    summaryImageUrl.value = URL.createObjectURL(imgRes.data)
+    summaryInfo.value = summary
+  } catch (e) {
+    // 静默失败：小结缺失不影响周报详情展示
+    console.warn('[ReportDetail] 一周小结加载失败:', e?.response?.status === 404 ? '本周无小结' : e)
+  } finally {
+    summaryLoading.value = false
+  }
+}
+
 onMounted(loadReport)
+
+onUnmounted(() => {
+  if (summaryImageUrl.value) URL.revokeObjectURL(summaryImageUrl.value)
+})
 </script>
 
 <style scoped>
@@ -569,6 +643,92 @@ onMounted(loadReport)
   background: var(--danger-bg);
   color: var(--danger);
   border: 1px solid rgba(220, 38, 38, 0.2);
+}
+
+/* ========== 一周小结截图 ========== */
+.summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--spacing-sm) var(--spacing-lg);
+  font-size: var(--text-xs);
+  color: var(--text-secondary);
+  margin-bottom: var(--spacing-md);
+}
+
+.summary-meta span::before {
+  content: '•';
+  margin-right: 4px;
+  color: var(--primary);
+}
+
+.summary-thumb {
+  position: relative;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  border: 1px solid var(--border-light);
+  cursor: zoom-in;
+  background: #000;
+}
+
+.summary-thumb img {
+  display: block;
+  width: 100%;
+  max-height: 320px;
+  object-fit: contain;
+  transition: opacity 0.15s;
+}
+
+.summary-thumb-mask {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  background: rgba(0, 0, 0, 0.45);
+  color: #fff;
+  font-size: var(--text-sm);
+  opacity: 0;
+  transition: opacity 0.2s;
+}
+
+.summary-thumb:hover .summary-thumb-mask {
+  opacity: 1;
+}
+
+.summary-thumb:hover img {
+  opacity: 0.75;
+}
+
+/* 放大预览 */
+.preview-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm);
+  font-weight: var(--font-semibold);
+  color: var(--text-primary);
+}
+
+.preview-body {
+  display: flex;
+  justify-content: center;
+  background: #0f1117;
+  cursor: zoom-out;
+  max-height: 78vh;
+  overflow: auto;
+}
+
+.preview-body img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+.preview-footer-hint {
+  font-size: var(--text-xs);
+  color: var(--text-muted);
+  text-align: center;
 }
 
 /* ========== 响应式断点 ========== */
