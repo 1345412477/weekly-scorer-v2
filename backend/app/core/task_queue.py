@@ -544,7 +544,11 @@ async def _aggregate_worker_coro():
     _aggregate_status["processed"] = 0
     _aggregate_status["last_result"] = None
     _aggregate_status["last_message"] = ""
-    week_start, week_end = _get_week_range_for_date(bj_today())
+    # 目标周 = 最近一个已结束的完整周（上周一 ~ 上周日）
+    # 修复：此前用 bj_today() 直接算本周，导致周一凌晨 3 点执行时聚合"刚开始的新一周"，
+    #       为所有员工创建 0 分占位记录。改为聚合已提交完成的上一周数据；
+    #       新一周的聚合记录由员工提交周报时按周报所在周创建。
+    week_start, week_end = _get_week_range_for_date(bj_today() - timedelta(days=7))
 
     try:
         async with async_session() as db:

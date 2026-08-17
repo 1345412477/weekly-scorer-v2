@@ -553,17 +553,20 @@ async def auto_aggregate(
 
 
 # ============================================================
-# 对最新一周的所有员工进行聚合（定时任务入口）
+# 对最近已结束一周的所有员工进行聚合（定时任务入口）
 # ============================================================
 
 async def auto_aggregate_for_latest_week(db: AsyncSession) -> int:
     """
-    对本周（以今天为参照）的所有启用员工进行一次聚合评分。
+    对最近一个已结束的完整周（上周）的所有启用员工进行一次聚合评分。
     - 已完成评分的跳过（status=done/manual）
     - 空数据=0分也会写入（保证每人每周一条完整记录）
     - 返回处理的人数
+
+    注意：目标周为"上周"而非"本周"。若用本周，周一凌晨执行时会为
+    尚未提交的新一周创建全 0 分占位记录。
     """
-    week_start, week_end = _get_week_range_for_date(bj_today())
+    week_start, week_end = _get_week_range_for_date(bj_today() - timedelta(days=7))
 
     # 获取所有启用员工
     result = await db.execute(select(Person).where(Person.is_active == True))
