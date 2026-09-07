@@ -229,7 +229,7 @@ async def call_ai_summary(
 
         # 解析 JSON 响应
         result = parse_ai_summary(raw_text)
-        log_info(f"[业务盘] 解析结果: last_week={len(result.get('last_week_summary', []))}条, this_week={len(result.get('this_week_summary', []))}条")
+        log_info(f"[业务盘] 解析结果: last_week={len(result.get('last_week_projects', []))}条, this_week={len(result.get('this_week_projects', []))}条")
         return result
     except AIScoringError:
         raise
