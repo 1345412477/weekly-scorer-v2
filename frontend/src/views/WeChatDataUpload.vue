@@ -403,12 +403,9 @@ const pendingUploadMode = ref('append')
 const pendingUploadWeek = ref('')
 const pendingUploadFile = ref(null)
 
-// 重新计算
-const showRecalculateBtn = computed(() => {
-  const atNotCurrent = attendanceStatus.value?.last_upload && !attendanceStatus.value?.is_current_week
-  const chatNotCurrent = chatStatus.value?.last_upload && !chatStatus.value?.is_current_week
-  return atNotCurrent || chatNotCurrent
-})
+// 重新计算：只针对本次刚上传的非本周数据
+const lastUploadedWeek = ref('') // 本次刚上传的非本周数据的 week_start
+const showRecalculateBtn = computed(() => !!lastUploadedWeek.value)
 const recalculating = ref(false)
 const showRecalcResult = ref(false)
 const recalcResultMessage = ref('')
@@ -538,6 +535,7 @@ async function confirmWeekUpload() {
         summary: '考勤数据上传成功',
         life: 3000,
       })
+      lastUploadedWeek.value = res.data.week_start // 记录刚上传的周次用于重新计算
       attendanceFile.value = null
     } else {
       const res = await chatAPI.upload(file, mode)
@@ -559,6 +557,7 @@ async function confirmWeekUpload() {
         summary: '会话记录上传成功',
         life: 3000,
       })
+      lastUploadedWeek.value = res.data.week_start // 记录刚上传的周次用于重新计算
       chatFile.value = null
     }
     refreshStatus()
@@ -685,14 +684,7 @@ async function cancelChat() {
 
 // ---------- 重新计算 ----------
 async function recalculate() {
-  // 获取需要重新计算的周（优先考勤，其次聊天）
-  let weekStart = null
-  if (attendanceStatus.value?.last_upload && !attendanceStatus.value?.is_current_week) {
-    weekStart = attendanceStatus.value.last_upload.week_start
-  } else if (chatStatus.value?.last_upload && !chatStatus.value?.is_current_week) {
-    weekStart = chatStatus.value.last_upload.week_start
-  }
-
+  const weekStart = lastUploadedWeek.value
   if (!weekStart) {
     toast.add({ severity: 'warn', summary: '没有需要重新计算的非本周数据', life: 3000 })
     return
@@ -708,6 +700,7 @@ async function recalculate() {
       summary: '重新计算完成',
       life: 3000,
     })
+    lastUploadedWeek.value = '' // 重新计算完成后隐藏按钮
   } catch (e) {
     errorMessage.value = e.response?.data?.detail || '重新计算失败，请稍后重试'
     showError.value = true
