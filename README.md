@@ -8,28 +8,6 @@
 ![PostgreSQL](https://img.shields.io/badge/PostgreSQL-12+-336791)
 ![License](https://img.shields.io/badge/License-Private-red)
 
-## 界面预览
-
-### 首页仪表盘
-
-![首页](https://trae-api-cn.mchost.guru/api/ide/v1/text_to_image?prompt=A%20modern%20web%20dashboard%20interface%20for%20a%20smart%20weekly%20report%20scoring%20system%2C%20showing%20charts%2C%20statistics%2C%20employee%20list%2C%20clean%20UI%20design%2C%20blue%20theme%2C%20professional%20look&image_size=landscape_16_9)
-
-### 周报操作指引
-
-![周报操作](example/weekly_paper.png)
-
-1. **选择周报模板** - 上传或在线填写周报内容
-
-![步骤一](example/weekly_settle_1.jpg)
-
-2. **AI 智能评分** - 系统自动从多个维度对周报进行评分
-
-![步骤二](example/weekly_settle_2.jpg)
-
-3. **查看评分结果** - 查看综合得分、等级和详细评语
-
-![步骤三](example/weekly_settle_3.jpg)
-
 ## 功能概览
 
 | 模块 | 功能 |
@@ -42,7 +20,7 @@
 | 系统设置 | 评分配置、模板管理、部门/人员管理、AI 模型管理、定时任务 |
 | 员工端 | 在线写周报、文件上传（Excel/Word/PDF/图片）、周报详情查看 |
 
-## 技术栈
+## 技术架构
 
 | 层 | 技术 |
 |----|------|
@@ -50,103 +28,8 @@
 | 后端 | FastAPI + SQLAlchemy (async) + Pydantic v2 |
 | 数据库 | PostgreSQL (生产) / SQLite (开发) |
 | 定时任务 | APScheduler（异步调度，独立事务） |
-| AI | 豆包 (火山引擎) / DeepSeek / OpenAI 兼容接口 |
+| AI 模型 | 豆包 (火山引擎) / DeepSeek / OpenAI 兼容接口 |
 | 部署 | Docker (多阶段构建) + docker-compose |
-
-## 服务器部署（推荐）
-
-### 环境要求
-
-- Docker 20.10+
-- Docker Compose 2.0+
-- PostgreSQL 12+ (端口 5433)
-
-### 部署步骤
-
-```bash
-# 1. SSH 登录服务器
-ssh zyc-lmt@192.168.1.119
-
-# 2. 进入 web 目录并克隆代码
-cd /home/zyc-lmt/web
-git clone https://gitee.com/yostore/weekly-scorer-v2.git
-cd weekly-scorer-v2
-
-# 3. 创建环境配置文件
-cp .env.example .env
-nano .env  # 编辑配置，必填项见下方说明
-
-# 4. 创建上传目录
-mkdir -p uploads
-
-# 5. 执行部署脚本
-chmod +x deploy.sh
-./deploy.sh
-```
-
-### 环境配置说明
-
-编辑 `.env` 文件，修改以下配置：
-
-| 变量 | 说明 | 必填 | 示例 |
-|------|------|------|------|
-| `AUTH_SECRET_KEY` | JWT 签名密钥 | 是 | 随机字符串 |
-| `ADMIN_PASSWORD` | 管理员密码 | 是 | your-password |
-| `CORS_ALLOW_ORIGINS` | 允许的前端地址 | 是 | http://192.168.1.119 |
-| `ARK_API_KEY` | 火山引擎豆包 API Key | 是 | your-api-key |
-| `DATABASE_URL` | PostgreSQL 连接 | 是 | 见下方 |
-
-**数据库连接格式：**
-
-```
-postgresql+asyncpg://user_tScewp:password_jaMRPK@host.docker.internal:5433/weekly_scorer
-```
-
-> 注意：Docker 容器访问宿主机数据库使用 `host.docker.internal` 而非 `localhost`
-
-### 更新部署
-
-```bash
-cd /home/zyc-lmt/web/weekly-scorer-v2
-./deploy.sh  # 自动拉取最新代码并重新部署
-```
-
-### 访问地址
-
-- 系统首页：http://192.168.1.119
-- 健康检查：http://192.168.1.119/health
-- API 文档：http://192.168.1.119/docs
-
-### 默认账号
-
-- 用户名：`admin`
-- 密码：`admin123`
-
-> 首次登录后请在系统设置中修改默认密码。
-
-## 本地开发
-
-### 后端
-
-```bash
-cd backend
-python -m venv venv
-source venv/bin/activate        # Linux/Mac
-# venv\Scripts\activate         # Windows
-pip install -r requirements.txt
-cp .env.example .env            # 使用 SQLite 配置
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-### 前端
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-
-访问 http://localhost:3001
 
 ## 项目结构
 
@@ -172,7 +55,7 @@ weekly-scorer-v2/
 │   │   └── router/               # 路由配置
 │   └── package.json
 ├── Dockerfile                    # 多阶段构建
-├── docker-compose.yml            # 编排配置
+├── docker-compose.yml             # 编排配置
 ├── .env.example                  # 环境变量模板
 └── deploy.sh                     # 一键部署脚本
 ```
@@ -195,12 +78,96 @@ AI 不可用 → 自动切换规则兜底评分
 定时任务聚合（周报 + 考勤 + 沟通）→ 产出周评
 ```
 
+## 部署方式
+
+### 环境要求
+
+- Docker 20.10+
+- Docker Compose 2.0+
+- PostgreSQL 12+
+
+### 部署步骤
+
+```bash
+# 1. 克隆代码
+git clone <仓库地址>
+cd weekly-scorer-v2
+
+# 2. 创建环境配置文件
+cp .env.example .env
+# 编辑 .env 文件，填入必要配置
+
+# 3. 创建上传目录
+mkdir -p uploads
+
+# 4. 执行部署脚本
+chmod +x deploy.sh
+./deploy.sh
+```
+
+### 环境配置
+
+编辑 `.env` 文件，主要配置项：
+
+| 变量 | 说明 | 必填 |
+|------|------|------|
+| `AUTH_SECRET_KEY` | JWT 签名密钥（随机字符串） | 是 |
+| `ADMIN_PASSWORD` | 初始管理员密码 | 是 |
+| `CORS_ALLOW_ORIGINS` | 允许的前端访问地址 | 是 |
+| `ARK_API_KEY` | 火山引擎豆包 API Key | 是 |
+| `DATABASE_URL` | PostgreSQL 数据库连接串 | 是 |
+
+**数据库连接格式：**
+
+```
+postgresql+asyncpg://<用户名>:<密码>@<数据库主机>:<端口>/<数据库名>
+```
+
+> 注意：Docker 容器内访问宿主机数据库使用 `host.docker.internal` 而非 `localhost`
+
+### 更新部署
+
+```bash
+cd weekly-scorer-v2
+./deploy.sh
+```
+
+### 访问入口
+
+- 系统首页：部署后通过配置的域名或 IP 访问
+- 健康检查：`/health`
+- API 文档：`/docs`
+
+## 本地开发
+
+### 后端
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate        # Linux/Mac
+# venv\Scripts\activate         # Windows
+pip install -r requirements.txt
+cp .env.example .env            # 使用 SQLite 配置
+python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+### 前端
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+前端开发服务器默认运行在 3001 端口，通过 Vite 代理访问后端 API。
+
 ## 开发约定
 
 - **时间**：所有时间以北京时间（Asia/Shanghai）为准，JWT exp 除外（RFC 7519 UTC）
 - **数据库**：PostgreSQL（生产）/ SQLite（开发），自动迁移新增列
-- **前端代理**：`vite.config.js` 将 `/api/*` 代理到 `http://localhost:8000`
-- **AI 状态检测**：`GET /api/v1/config/ai-status`，30 分钟缓存，支持 `?force=true` 强制刷新
+- **前端代理**：`vite.config.js` 将 `/api/*` 代理到后端服务
+- **AI 状态检测**：提供接口查询 AI 模型可用性，支持强制刷新
 
 ## 许可证
 
